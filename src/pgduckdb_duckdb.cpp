@@ -1,5 +1,6 @@
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 
+#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pg/db.hpp"
 #include <duckdb/common/string_util.hpp>
 #include <filesystem>
@@ -28,6 +29,7 @@
 #include "pgduckdb/utility/cpp_wrapper.hpp"
 #include "pgduckdb/utility/signal_guard.hpp"
 #include "pgduckdb/vendor/pg_list.hpp"
+#include <storage/ducklake_metadata_manager.hpp>
 
 extern "C" {
 #include "postgres.h"
@@ -213,6 +215,8 @@ DuckDBManager::Initialize() {
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE ':memory:' AS pg_temp;");
 	{
+		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
+
 		std::string conn_str = "host=";
 		if (host && strlen(host) > 0) {
 			conn_str += host;
@@ -223,7 +227,9 @@ DuckDBManager::Initialize() {
 		conn_str += port ? port : "5432";
 		conn_str += " dbname=";
 		conn_str += dbname ? dbname : "postgres";
-		std::string attach_sql = duckdb::StringUtil::Format("ATTACH 'ducklake:postgres:%s' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '%s')", conn_str, "/tmp/pgducklake");
+		std::string attach_sql = duckdb::StringUtil::Format(
+		    "ATTACH 'ducklake:pgducklake:%s' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '%s')", conn_str,
+		    "/tmp/pgducklake");
 		pgduckdb::DuckDBQueryOrThrow(context, attach_sql);
 	}
 
