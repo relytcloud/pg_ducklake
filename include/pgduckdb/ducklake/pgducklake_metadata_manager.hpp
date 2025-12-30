@@ -1,6 +1,8 @@
 #pragma once
 
+#include <common/ducklake_snapshot.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <storage/ducklake_metadata_info.hpp>
 #include <storage/ducklake_metadata_manager.hpp>
 #include <storage/ducklake_transaction.hpp>
 
@@ -22,6 +24,9 @@ public:
 	duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
 
 	bool IsInitialized() override;
+
+	// Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewite them in PGSQL.
+	duckdb::DuckLakeCatalogInfo GetCatalogForSnapshot(duckdb::DuckLakeSnapshot snapshot) override;
 };
 
 } // namespace pgduckdb
