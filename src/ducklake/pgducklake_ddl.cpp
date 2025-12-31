@@ -3,24 +3,21 @@
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_utils.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
-#include <common/ducklake_encryption.hpp>
-#include <storage/ducklake_metadata_manager.hpp>
+#include "pgduckdb/pgduckdb_metadata_cache.hpp"
 
 extern "C" {
 #include "pgduckdb/vendor/pg_ruleutils.h"
-#include <utils/builtins.h>
-#include <utils/syscache.h>
-#include <access/relation.h>
-#include <utils/elog.h>
-#include <fmgr.h>
-#include <commands/event_trigger.h>
-#include <utils/lsyscache.h>
-#include <executor/spi.h>
-#include <utils/guc.h>
+#include "utils/builtins.h"
+#include "access/relation.h"
+#include "utils/elog.h"
+#include "fmgr.h"
+#include "commands/event_trigger.h"
+#include "utils/lsyscache.h"
+#include "executor/spi.h"
+#include "utils/guc.h"
+
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
-
-#include "pgduckdb/pgduckdb_metadata_cache.hpp"
 
 static char *
 pgducklake_get_tabledef(Oid relation_oid) {

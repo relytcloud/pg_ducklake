@@ -1,230 +1,201 @@
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
-#include "pgduckdb/pg/string_utils.hpp"
+
+#include "duckdb/common/enums/statement_type.hpp"
+#include "duckdb/common/types.hpp"
+#include "duckdb/common/types/value.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/common/types/data_chunk.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/allocator.hpp"
+
+#include "common/ducklake_util.hpp"
+
 #include "pgduckdb/pgduckdb_types.hpp"
-#include <catalog/pg_class_d.h>
-#include <duckdb/common/enums/statement_type.hpp>
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/value.hpp>
-#include <duckdb/main/client_context.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/types/column/column_data_collection.hpp>
-#include <duckdb/common/exception.hpp>
-#include <duckdb/common/allocator.hpp>
-#include <utils/fmgroids.h>
-#include <common/ducklake_util.hpp>
+#include "pgduckdb/pg/string_utils.hpp"
+#include "pgduckdb/pgduckdb_detoast.hpp"
+#include <duckdb/common/assert.hpp>
 
 extern "C" {
 #include "postgres.h"
-#include <catalog/pg_namespace.h>
-#include <access/table.h>
-#include <access/skey.h>
+#include "catalog/pg_namespace.h"
+#include "access/table.h"
+#include "utils/fmgroids.h"
+#include "access/skey.h"
+#include "catalog/pg_class_d.h"
 #include "utils/syscache.h"
-#include "utils/guc.h"
 #include "access/genam.h"
 #include "utils/elog.h"
 #include "executor/spi.h"
-#include "utils/tuplesort.h"
-#include "access/tupdesc_details.h"
 }
 
 namespace pgduckdb {
+using namespace duckdb;
 
-namespace {
-
-static duckdb::StatementType
-ConvertSPIStatementTypeToDuckDB(int result) {
+static StatementType
+ConvertSPIResultToDuckStatementType(int result) {
 	switch (result) {
 	case SPI_OK_UTILITY:
-		return duckdb::StatementType::EXECUTE_STATEMENT;
+		return StatementType::EXECUTE_STATEMENT;
 	case SPI_OK_SELECT:
 	case SPI_OK_SELINTO:
-		return duckdb::StatementType::SELECT_STATEMENT;
+		return StatementType::SELECT_STATEMENT;
 	case SPI_OK_INSERT:
 	case SPI_OK_INSERT_RETURNING:
-		return duckdb::StatementType::INSERT_STATEMENT;
+		return StatementType::INSERT_STATEMENT;
 	case SPI_OK_DELETE:
 	case SPI_OK_DELETE_RETURNING:
-		return duckdb::StatementType::DELETE_STATEMENT;
+		return StatementType::DELETE_STATEMENT;
 	case SPI_OK_UPDATE:
 	case SPI_OK_UPDATE_RETURNING:
-		return duckdb::StatementType::UPDATE_STATEMENT;
+		return StatementType::UPDATE_STATEMENT;
 	default:
 		// For now, we should not use other types query in SPI.
-		return duckdb::StatementType::INVALID_STATEMENT;
+		return StatementType::INVALID_STATEMENT;
 	}
 }
 
-// Helper class to create SPI result
-class SPI_Result_Helper {
-public:
-	static duckdb::unique_ptr<duckdb::QueryResult>
-	Create(const duckdb::string &query) {
-		elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
+static void
+InsertSPITupleTableIntoChunk(DataChunk &output, SPITupleTable *tuptable, idx_t start_idx, int num_tuples) {
+	D_ASSERT(tuptable);
+	D_ASSERT(start_idx + num_tuples <= tuptable->numvals);
 
-		SPI_connect();
-		PushActiveSnapshot(GetTransactionSnapshot());
+	if (num_tuples == 0) {
+		return;
+	}
 
-		// Execute the query in read-only mode
-		int ret = SPI_execute(query.c_str(), false, 0);
+	int natts = tuptable->tupdesc->natts;
 
-		if (ret < 0) {
-			elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
-		}
+	for (int duckdb_output_index = 0; duckdb_output_index < natts; duckdb_output_index++) {
+		auto &result = output.data[duckdb_output_index];
+		auto attr = TupleDescAttr(tuptable->tupdesc, duckdb_output_index);
 
-		// Get the result table
-		SPITupleTable *tuptable = SPI_tuptable;
-		if (!tuptable) {
-			PopActiveSnapshot();
-			SPI_finish();
-
-			// Return an empty result
-			duckdb::vector<duckdb::string> names;
-			duckdb::StatementProperties properties;
-			duckdb::ClientProperties client_properties;
-
-			// Create an empty ColumnDataCollection instead of passing nullptr
-			auto &allocator = duckdb::Allocator::DefaultAllocator();
-			auto empty_collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator);
-
-			return duckdb::make_uniq<duckdb::MaterializedQueryResult>(ConvertSPIStatementTypeToDuckDB(ret), properties,
-			                                                          names, std::move(empty_collection),
-			                                                          client_properties);
-		}
-
-		TupleDesc tupdesc = tuptable->tupdesc;
-		int num_columns = tupdesc->natts;
-		uint64 num_rows = tuptable->numvals;
-
-		// Convert column types and names
-		duckdb::vector<duckdb::LogicalType> types;
-		duckdb::vector<duckdb::string> names;
-
-		for (int i = 0; i < num_columns; i++) {
-			Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
-
-			if (attr->attisdropped) {
-				continue;
-			}
-
-			// Get column name
-			names.push_back(NameStr(attr->attname));
-
-			// Convert Postgres type to DuckDB type
-			types.push_back(ConvertPostgresToDuckColumnType(attr));
-		}
-
-		// Create a ColumnDataCollection to store the results
-		duckdb::ClientProperties client_properties;
-		auto &allocator = duckdb::Allocator::DefaultAllocator();
-		auto collection_p = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator, types);
-
-		// Convert SPI rows to DuckDB DataChunks and append them
-		for (duckdb::idx_t row_idx = 0; row_idx < num_rows; row_idx += STANDARD_VECTOR_SIZE) {
-			duckdb::idx_t chunk_size = duckdb::MinValue<duckdb::idx_t>(STANDARD_VECTOR_SIZE, num_rows - row_idx);
-			auto chunk = ConvertSPIRowToDataChunk(tuptable, row_idx, chunk_size, types);
-
-			if (chunk) {
-				collection_p->Append(*chunk);
+		for (int row = 0; row < num_tuples; row++) {
+			HeapTuple tuple = tuptable->vals[start_idx + row];
+			bool isnull = false;
+			Datum datum = SPI_getbinval(tuple, tuptable->tupdesc, duckdb_output_index + 1, &isnull);
+			if (isnull) {
+				auto &array_mask = duckdb::FlatVector::Validity(result);
+				array_mask.SetInvalid(start_idx + row);
+			} else {
+				if (attr->attlen == -1) {
+					bool should_free = false;
+					Datum detoasted_value = DetoastPostgresDatum(reinterpret_cast<varlena *>(datum), &should_free);
+					ConvertPostgresToDuckValue(attr->atttypid, detoasted_value, result, start_idx + row);
+					if (should_free) {
+						duckdb_free(reinterpret_cast<void *>(detoasted_value));
+					}
+				} else {
+					ConvertPostgresToDuckValue(attr->atttypid, datum, result, start_idx + row);
+				}
 			}
 		}
+	}
+}
 
+static unique_ptr<QueryResult>
+CreateSPIResult(const string &query) {
+	elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
+
+	SPI_connect();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	// Execute the query in read-only mode
+	int ret = SPI_execute(query.c_str(), false, 0);
+
+	if (ret < 0) {
+		elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
+	}
+
+	// Get the result table
+	SPITupleTable *tuptable = SPI_tuptable;
+	if (!tuptable) {
 		PopActiveSnapshot();
 		SPI_finish();
 
-		// Create and return the MaterializedQueryResult
-		duckdb::StatementProperties properties;
-		return duckdb::make_uniq<duckdb::MaterializedQueryResult>(duckdb::StatementType::SELECT_STATEMENT, properties,
-		                                                          names, std::move(collection_p), client_properties);
-	}
+		// Return an empty result
+		vector<string> names;
+		StatementProperties properties;
+		ClientProperties client_properties;
 
-private:
-	static duckdb::unique_ptr<duckdb::DataChunk>
-	ConvertSPIRowToDataChunk(SPITupleTable *tuptable, duckdb::idx_t start_idx, duckdb::idx_t count,
-	                         const duckdb::vector<duckdb::LogicalType> &types);
-};
+		// Create an empty ColumnDataCollection instead of passing nullptr
+		auto &allocator = Allocator::DefaultAllocator();
+		auto empty_collection = make_uniq<ColumnDataCollection>(allocator);
 
-duckdb::unique_ptr<duckdb::DataChunk>
-SPI_Result_Helper::ConvertSPIRowToDataChunk(SPITupleTable *tuptable, duckdb::idx_t start_idx, duckdb::idx_t count,
-                                            const duckdb::vector<duckdb::LogicalType> &types) {
-	if (!tuptable || !tuptable->tupdesc) {
-		return nullptr;
+		return make_uniq<MaterializedQueryResult>(ConvertSPIResultToDuckStatementType(ret), properties, names,
+		                                          std::move(empty_collection), client_properties);
 	}
 
 	TupleDesc tupdesc = tuptable->tupdesc;
 	int num_columns = tupdesc->natts;
+	uint64 num_rows = tuptable->numvals;
 
-	// Determine the number of valid (non-dropped) columns
-	duckdb::vector<int> valid_columns;
+	// Convert column types and names
+	vector<LogicalType> types;
+	vector<string> names;
+
 	for (int i = 0; i < num_columns; i++) {
 		Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
-		if (!attr->attisdropped) {
-			valid_columns.push_back(i);
-		}
+
+		D_ASSERT(!attr->attisdropped);
+
+		// Get column name
+		names.push_back(NameStr(attr->attname));
+
+		// Convert Postgres type to DuckDB type
+		types.push_back(ConvertPostgresToDuckColumnType(attr));
 	}
 
-	if (valid_columns.empty()) {
-		return nullptr;
+	// Create a ColumnDataCollection to store the results
+	ClientProperties client_properties;
+	auto &allocator = Allocator::DefaultAllocator();
+	auto collection_p = make_uniq<ColumnDataCollection>(allocator, types);
+
+	// Convert SPI rows to DuckDB DataChunks and append them
+	for (idx_t row_idx = 0; row_idx < num_rows; row_idx += STANDARD_VECTOR_SIZE) {
+		idx_t chunk_size = MinValue<int>(STANDARD_VECTOR_SIZE, num_rows - row_idx);
+		auto chunk = make_uniq<DataChunk>();
+		chunk->Initialize(allocator, types, chunk_size);
+		InsertSPITupleTableIntoChunk(*chunk, tuptable, row_idx, chunk_size);
+
+		chunk->SetCardinality(chunk_size);
+		collection_p->Append(*chunk);
 	}
 
-	// Create a DataChunk
-	auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
-	auto &allocator = duckdb::Allocator::DefaultAllocator();
-	chunk->Initialize(allocator, types, count);
+	PopActiveSnapshot();
+	SPI_finish();
 
-	// Fill the DataChunk with data
-	duckdb::idx_t output_col = 0;
-	for (int col_idx : valid_columns) {
-		Form_pg_attribute attr = TupleDescAttr(tupdesc, col_idx);
-		auto &result_vector = chunk->data[output_col];
-
-		for (duckdb::idx_t row = 0; row < count; row++) {
-			HeapTuple tuple = tuptable->vals[start_idx + row];
-			bool isnull = false;
-			Datum datum = SPI_getbinval(tuple, tupdesc, col_idx + 1, &isnull);
-
-			if (isnull) {
-				auto &validity = duckdb::FlatVector::Validity(result_vector);
-				validity.SetInvalid(row);
-			} else {
-				// Convert Postgres Datum to DuckDB Value
-				ConvertPostgresToDuckValue(attr->atttypid, datum, result_vector, row);
-			}
-		}
-		output_col++;
-	}
-
-	chunk->SetCardinality(count);
-	chunk->Verify();
-	return chunk;
+	// Create and return the MaterializedQueryResult
+	StatementProperties properties;
+	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, properties, names,
+	                                          std::move(collection_p), client_properties);
 }
 
-} // anonymous namespace
-
-PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction)
+PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(DuckLakeTransaction &transaction)
     : DuckLakeMetadataManager(transaction) {
 }
 
 PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {
 }
 
-duckdb::unique_ptr<duckdb::QueryResult>
-PgDuckLakeMetadataManager::Query(duckdb::string query) {
+unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::Query(string query) {
 	DuckLakeMetadataManager::FillCatalogArgs(query, transaction.GetCatalog());
 	DuckLakeMetadataManager::FillSnapshotCommitArgs(query, transaction.GetCommitInfo());
 	// Execute the query using SPI and wrap the result
-	return SPI_Result_Helper::Create(query);
+	return CreateSPIResult(query);
 }
 
-duckdb::unique_ptr<duckdb::QueryResult>
-PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) {
+unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::Query(DuckLakeSnapshot snapshot, duckdb::string query) {
 	// Fill snapshot args into the query
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
 	return Query(query);
 }
 
-duckdb::unique_ptr<duckdb::QueryResult>
-PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string &query) {
+unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::Execute(DuckLakeSnapshot snapshot, duckdb::string &query) {
 	// Fill snapshot args into the query
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
 	return Query(query);
@@ -270,8 +241,8 @@ PgDuckLakeMetadataManager::IsInitialized() {
 }
 
 static bool
-AddChildColumn(duckdb::vector<duckdb::DuckLakeColumnInfo> &columns, duckdb::FieldIndex parent_id,
-               duckdb::DuckLakeColumnInfo &column_info) {
+AddChildColumn(vector<duckdb::DuckLakeColumnInfo> &columns, duckdb::FieldIndex parent_id,
+               DuckLakeColumnInfo &column_info) {
 	for (auto &col : columns) {
 		if (col.id == parent_id) {
 			col.children.push_back(std::move(column_info));
@@ -284,20 +255,20 @@ AddChildColumn(duckdb::vector<duckdb::DuckLakeColumnInfo> &columns, duckdb::Fiel
 	return false;
 }
 
-static duckdb::vector<duckdb::DuckLakeTag>
-LoadTags(const duckdb::Value &tag_map) {
+static vector<duckdb::DuckLakeTag>
+LoadTags(const Value &tag_map) {
 
-	static const duckdb::LogicalType tags_type =
-	    duckdb::LogicalType::STRUCT({{"key", duckdb::LogicalType::VARCHAR}, {"value", duckdb::LogicalType::VARCHAR}});
+	static const LogicalType tags_type =
+	    LogicalType::STRUCT({{"key", duckdb::LogicalType::VARCHAR}, {"value", duckdb::LogicalType::VARCHAR}});
 
-	duckdb::vector<duckdb::DuckLakeTag> result;
-	for (auto &tag : duckdb::ListValue::GetChildren(tag_map)) {
+	vector<duckdb::DuckLakeTag> result;
+	for (auto &tag : ListValue::GetChildren(tag_map)) {
 		auto tag_struct = tag.DefaultCastAs(tags_type);
-		auto &struct_children = duckdb::StructValue::GetChildren(tag);
+		auto &struct_children = StructValue::GetChildren(tag);
 		if (struct_children[1].IsNull()) {
 			continue;
 		}
-		duckdb::DuckLakeTag tag_info;
+		DuckLakeTag tag_info;
 		tag_info.key = struct_children[0].ToString();
 		tag_info.value = struct_children[1].ToString();
 		result.push_back(std::move(tag_info));
@@ -305,29 +276,29 @@ LoadTags(const duckdb::Value &tag_map) {
 	return result;
 }
 
-static duckdb::vector<duckdb::DuckLakeInlinedTableInfo>
-LoadInlinedDataTables(const duckdb::Value &list) {
+static vector<duckdb::DuckLakeInlinedTableInfo>
+LoadInlinedDataTables(const Value &list) {
 
-	static const duckdb::LogicalType val_type = duckdb::LogicalType::STRUCT(
-	    {{"name", duckdb::LogicalType::VARCHAR}, {"schema_version", duckdb::LogicalType::BIGINT}});
+	static const LogicalType val_type =
+	    duckdb::LogicalType::STRUCT({{"name", LogicalType::VARCHAR}, {"schema_version", duckdb::LogicalType::BIGINT}});
 
-	duckdb::vector<duckdb::DuckLakeInlinedTableInfo> result;
-	for (auto &val : duckdb::ListValue::GetChildren(list)) {
+	vector<duckdb::DuckLakeInlinedTableInfo> result;
+	for (auto &val : ListValue::GetChildren(list)) {
 		auto val_struct = val.DefaultCastAs(val_type);
-		auto &struct_children = duckdb::StructValue::GetChildren(val_struct);
-		duckdb::DuckLakeInlinedTableInfo inlined_data_table;
-		inlined_data_table.table_name = duckdb::StringValue::Get(struct_children[0]);
+		auto &struct_children = StructValue::GetChildren(val_struct);
+		DuckLakeInlinedTableInfo inlined_data_table;
+		inlined_data_table.table_name = StringValue::Get(struct_children[0]);
 		inlined_data_table.schema_version = struct_children[1].GetValue<idx_t>();
 		result.push_back(std::move(inlined_data_table));
 	}
 	return result;
 }
 
-duckdb::DuckLakeCatalogInfo
-PgDuckLakeMetadataManager::GetCatalogForSnapshot(duckdb::DuckLakeSnapshot snapshot) {
+DuckLakeCatalogInfo
+PgDuckLakeMetadataManager::GetCatalogForSnapshot(DuckLakeSnapshot snapshot) {
 	auto &ducklake_catalog = transaction.GetCatalog();
 	auto &base_data_path = ducklake_catalog.DataPath();
-	duckdb::DuckLakeCatalogInfo catalog;
+	DuckLakeCatalogInfo catalog;
 	// load the schema information
 	auto result = Query(snapshot, R"(
 SELECT schema_id, schema_uuid::VARCHAR, schema_name, path, path_is_relative
@@ -337,19 +308,19 @@ WHERE {SNAPSHOT_ID} >= begin_snapshot AND ({SNAPSHOT_ID} < end_snapshot OR end_s
 	if (result->HasError()) {
 		result->GetErrorObject().Throw("Failed to get schema information from DuckLake: ");
 	}
-	duckdb::map<duckdb::SchemaIndex, idx_t> schema_map;
+	map<duckdb::SchemaIndex, idx_t> schema_map;
 	for (auto &row : *result) {
-		duckdb::DuckLakeSchemaInfo schema;
-		schema.id = duckdb::SchemaIndex(row.GetValue<uint64_t>(0));
-		schema.uuid = row.GetValue<duckdb::string>(1);
-		schema.name = row.GetValue<duckdb::string>(2);
+		DuckLakeSchemaInfo schema;
+		schema.id = SchemaIndex(row.GetValue<uint64_t>(0));
+		schema.uuid = row.GetValue<string>(1);
+		schema.name = row.GetValue<string>(2);
 		if (row.IsNull(3)) {
 			// no path provided - fallback to base data path
 			schema.path = base_data_path;
 		} else {
 			// path is provided - load it
-			duckdb::DuckLakePath path;
-			path.path = row.GetValue<duckdb::string>(3);
+			DuckLakePath path;
+			path.path = row.GetValue<string>(3);
 			path.path_is_relative = row.GetValue<bool>(4);
 
 			schema.path = FromRelativePath(path);
@@ -392,28 +363,28 @@ ORDER BY table_id, parent_column NULLS FIRST, column_order
 	const idx_t COLUMN_INDEX_START = 8;
 	auto &tables = catalog.tables;
 	for (auto &row : *result) {
-		auto table_id = duckdb::TableIndex(row.GetValue<uint64_t>(1));
+		auto table_id = TableIndex(row.GetValue<uint64_t>(1));
 
 		// check if this column belongs to the current table or not
 		if (tables.empty() || tables.back().id != table_id) {
 			// new table
-			duckdb::DuckLakeTableInfo table_info;
+			DuckLakeTableInfo table_info;
 			table_info.id = table_id;
-			table_info.schema_id = duckdb::SchemaIndex(row.GetValue<uint64_t>(0));
-			table_info.uuid = row.GetValue<duckdb::string>(2);
-			table_info.name = row.GetValue<duckdb::string>(3);
+			table_info.schema_id = SchemaIndex(row.GetValue<uint64_t>(0));
+			table_info.uuid = row.GetValue<string>(2);
+			table_info.name = row.GetValue<string>(3);
 			if (!row.IsNull(4)) {
-				auto tags = row.GetValue<duckdb::Value>(4);
+				auto tags = row.GetValue<Value>(4);
 				table_info.tags = LoadTags(tags);
 			}
 			if (!row.IsNull(5)) {
-				auto inlined_data_tables = row.GetValue<duckdb::Value>(5);
+				auto inlined_data_tables = row.GetValue<Value>(5);
 				table_info.inlined_data_tables = LoadInlinedDataTables(inlined_data_tables);
 			}
 			// find the schema
 			auto schema_entry = schema_map.find(table_info.schema_id);
 			if (schema_entry == schema_map.end()) {
-				throw duckdb::InvalidInputException(
+				throw InvalidInputException(
 				    "Failed to load DuckLake - table with id %d references schema id %d that does not exist",
 				    table_info.id.index, table_info.schema_id.index);
 			}
@@ -423,8 +394,8 @@ ORDER BY table_id, parent_column NULLS FIRST, column_order
 				table_info.path = schema.path;
 			} else {
 				// path is provided - load it
-				duckdb::DuckLakePath path;
-				path.path = row.GetValue<duckdb::string>(6);
+				DuckLakePath path;
+				path.path = row.GetValue<string>(6);
 				path.path_is_relative = row.GetValue<bool>(7);
 
 				table_info.path = FromRelativePath(path, schema.path);
@@ -432,23 +403,23 @@ ORDER BY table_id, parent_column NULLS FIRST, column_order
 			tables.push_back(std::move(table_info));
 		}
 		auto &table_entry = tables.back();
-		if (row.GetValue<duckdb::Value>(COLUMN_INDEX_START).IsNull()) {
-			throw duckdb::InvalidInputException(
-			    "Failed to load DuckLake - Table entry \"%s\" does not have any columns", table_entry.name);
+		if (row.GetValue<Value>(COLUMN_INDEX_START).IsNull()) {
+			throw InvalidInputException("Failed to load DuckLake - Table entry \"%s\" does not have any columns",
+			                            table_entry.name);
 		}
-		duckdb::DuckLakeColumnInfo column_info;
-		column_info.id = duckdb::FieldIndex(row.GetValue<uint64_t>(COLUMN_INDEX_START));
-		column_info.name = row.GetValue<duckdb::string>(COLUMN_INDEX_START + 1);
-		column_info.type = row.GetValue<duckdb::string>(COLUMN_INDEX_START + 2);
+		DuckLakeColumnInfo column_info;
+		column_info.id = FieldIndex(row.GetValue<uint64_t>(COLUMN_INDEX_START));
+		column_info.name = row.GetValue<string>(COLUMN_INDEX_START + 1);
+		column_info.type = row.GetValue<string>(COLUMN_INDEX_START + 2);
 		if (!row.IsNull(COLUMN_INDEX_START + 3)) {
-			column_info.initial_default = duckdb::Value(row.GetValue<duckdb::string>(COLUMN_INDEX_START + 3));
+			column_info.initial_default = Value(row.GetValue<duckdb::string>(COLUMN_INDEX_START + 3));
 		}
 		if (!row.IsNull(COLUMN_INDEX_START + 4)) {
-			column_info.default_value = duckdb::Value(row.GetValue<duckdb::string>(COLUMN_INDEX_START + 4));
+			column_info.default_value = Value(row.GetValue<duckdb::string>(COLUMN_INDEX_START + 4));
 		}
 		column_info.nulls_allowed = row.GetValue<bool>(COLUMN_INDEX_START + 5);
 		if (!row.IsNull(COLUMN_INDEX_START + 7)) {
-			auto tags = row.GetValue<duckdb::Value>(COLUMN_INDEX_START + 7);
+			auto tags = row.GetValue<Value>(COLUMN_INDEX_START + 7);
 			column_info.tags = LoadTags(tags);
 		}
 
@@ -456,10 +427,10 @@ ORDER BY table_id, parent_column NULLS FIRST, column_order
 			// base column - add the column to this table
 			table_entry.columns.push_back(std::move(column_info));
 		} else {
-			auto parent_id = duckdb::FieldIndex(row.GetValue<idx_t>(COLUMN_INDEX_START + 6));
+			auto parent_id = FieldIndex(row.GetValue<idx_t>(COLUMN_INDEX_START + 6));
 			if (!AddChildColumn(table_entry.columns, parent_id, column_info)) {
-				throw duckdb::InvalidInputException(
-				    "Failed to load DuckLake - Could not find parent column for column %s", column_info.name);
+				throw InvalidInputException("Failed to load DuckLake - Could not find parent column for column %s",
+				                            column_info.name);
 			}
 		}
 	}
@@ -480,16 +451,16 @@ WHERE {SNAPSHOT_ID} >= begin_snapshot AND ({SNAPSHOT_ID} < view.end_snapshot OR 
 	}
 	auto &views = catalog.views;
 	for (auto &row : *result) {
-		duckdb::DuckLakeViewInfo view_info;
-		view_info.id = duckdb::TableIndex(row.GetValue<uint64_t>(0));
-		view_info.uuid = row.GetValue<duckdb::string>(1);
-		view_info.schema_id = duckdb::SchemaIndex(row.GetValue<uint64_t>(2));
-		view_info.name = row.GetValue<duckdb::string>(3);
-		view_info.dialect = row.GetValue<duckdb::string>(4);
-		view_info.sql = row.GetValue<duckdb::string>(5);
-		view_info.column_aliases = duckdb::DuckLakeUtil::ParseQuotedList(row.GetValue<duckdb::string>(6));
+		DuckLakeViewInfo view_info;
+		view_info.id = TableIndex(row.GetValue<uint64_t>(0));
+		view_info.uuid = row.GetValue<string>(1);
+		view_info.schema_id = SchemaIndex(row.GetValue<uint64_t>(2));
+		view_info.name = row.GetValue<string>(3);
+		view_info.dialect = row.GetValue<string>(4);
+		view_info.sql = row.GetValue<string>(5);
+		view_info.column_aliases = DuckLakeUtil::ParseQuotedList(row.GetValue<duckdb::string>(6));
 		if (!row.IsNull(7)) {
-			auto tags = row.GetValue<duckdb::Value>(7);
+			auto tags = row.GetValue<Value>(7);
 			view_info.tags = LoadTags(tags);
 		}
 		views.push_back(std::move(view_info));
@@ -509,20 +480,20 @@ ORDER BY part.table_id, partition_id, partition_key_index
 	auto &partitions = catalog.partitions;
 	for (auto &row : *result) {
 		auto partition_id = row.GetValue<uint64_t>(0);
-		auto table_id = duckdb::TableIndex(row.GetValue<uint64_t>(1));
+		auto table_id = TableIndex(row.GetValue<uint64_t>(1));
 
 		if (partitions.empty() || partitions.back().table_id != table_id) {
-			duckdb::DuckLakePartitionInfo partition_info;
+			DuckLakePartitionInfo partition_info;
 			partition_info.id = partition_id;
 			partition_info.table_id = table_id;
 			partitions.push_back(std::move(partition_info));
 		}
 		auto &partition_entry = partitions.back();
 
-		duckdb::DuckLakePartitionFieldInfo partition_field;
+		DuckLakePartitionFieldInfo partition_field;
 		partition_field.partition_key_index = row.GetValue<uint64_t>(2);
-		partition_field.field_id = duckdb::FieldIndex(row.GetValue<uint64_t>(3));
-		partition_field.transform = row.GetValue<duckdb::string>(4);
+		partition_field.field_id = FieldIndex(row.GetValue<uint64_t>(3));
+		partition_field.transform = row.GetValue<string>(4);
 		partition_entry.fields.push_back(std::move(partition_field));
 	}
 	return catalog;
