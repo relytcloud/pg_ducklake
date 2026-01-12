@@ -1,3 +1,5 @@
+#include <filesystem>
+
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_types.hpp"
 #include "pgduckdb/pgduckdb_table_am.hpp"
@@ -11,6 +13,8 @@ extern "C" {
 #include "access/relation.h"
 #include "utils/elog.h"
 #include "fmgr.h"
+#include "miscadmin.h"
+#include "utils/relcache.h"
 #include "commands/event_trigger.h"
 #include "utils/lsyscache.h"
 #include "executor/spi.h"
@@ -18,6 +22,27 @@ extern "C" {
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
+
+namespace pgduckdb {
+static struct {
+	bool valid;
+
+	bool initialized;
+
+	bool initializing;
+} cache = {};
+
+static bool
+IsDuckLakeExists() {
+	if (!cache.valid) {
+		return false;
+	}
+	if (cache.initializing) {
+		return false;
+	}
+	return cache.initialized;
+}
+} // namespace pgduckdb
 
 static char *
 pgducklake_get_tabledef(Oid relation_oid) {
@@ -258,6 +283,10 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 		PG_RETURN_NULL();
 	}
 
+	if (!pgduckdb::IsDuckLakeExists()) {
+		elog(ERROR, "DuckLake metadata is not initialized");
+	}
+
 	if (SPI_processed != 1) {
 		elog(ERROR, "Expected single table to be created, but found %" PRIu64, static_cast<uint64_t>(SPI_processed));
 	}
@@ -304,7 +333,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 	if (!CALLED_AS_EVENT_TRIGGER(fcinfo)) /* internal error */
 		elog(ERROR, "not fired by event trigger manager");
 
-	if (!pgduckdb::IsExtensionRegistered()) {
+	if (!pgduckdb::IsExtensionRegistered() || !pgduckdb::IsDuckLakeExists()) {
 		/*
 		 * We're not installed, so don't mess with the query. Normally this
 		 * shouldn't happen, but better safe than sorry.
@@ -358,5 +387,160 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 	SPI_finish();
 
 	PG_RETURN_NULL();
+}
+
+DECLARE_PG_FUNCTION(ducklake_create_metadata) {
+	if (!pgduckdb::IsExtensionRegistered()) {
+		elog(ERROR, "ducklake_create_metadata requires the extension pg_duckdb");
+	}
+
+	if (pgduckdb::IsDuckLakeExists()) {
+		elog(ERROR, "ducklake already exists");
+	}
+
+	auto &cache = pgduckdb::cache;
+	cache.initializing = true;
+
+	const char *data_path = PG_GETARG_CSTRING(0);
+
+	std::string data_path_string;
+
+	if (!data_path) {
+		data_path_string = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+		elog(NOTICE, "No data path provided, using default: DataDir/pg_ducklake");
+		std::filesystem::create_directory(data_path_string);
+	} else {
+		data_path_string = data_path;
+	}
+
+	pgduckdb::DuckDBQueryOrThrow(
+	    "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" + data_path_string +
+	    "')");
+
+	cache.initialized = true;
+	cache.initializing = false;
+	cache.valid = true;
+
+	PG_RETURN_VOID();
+}
+
+DECLARE_PG_FUNCTION(ducklake_drop_metadata) {
+	if (!pgduckdb::IsExtensionRegistered()) {
+		elog(ERROR, "ducklake_drop_metadata requires the extension pg_duckdb");
+	}
+
+	if (!pgduckdb::IsDuckLakeExists()) {
+		elog(ERROR, "ducklake does not exist");
+	}
+
+	auto &cache = pgduckdb::cache;
+	cache.initializing = true;
+
+	bool delete_files = PG_GETARG_BOOL(0);
+
+	if (delete_files) {
+		elog(WARNING, "Deleting all ducklake files");
+
+		// TODO: we shall delete all files here.
+	} else {
+		elog(NOTICE, "ducklake files are not deleted");
+	}
+
+	pgduckdb::DuckDBQueryOrThrow("DETACH pgducklake");
+
+	SPI_connect();
+
+	auto save_nestlevel = NewGUCNestLevel();
+	SetConfigOption("search_path", "ducklake, pg_catalog", PGC_USERSET, PGC_S_SESSION);
+	SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
+
+	/* Drop metadata tables */
+	{
+		int ret = SPI_exec(R"(
+			DROP TABLE ducklake_metadata;
+			DROP TABLE ducklake_snapshot;
+			DROP TABLE ducklake_snapshot_changes;
+			DROP TABLE ducklake_schema;
+			DROP TABLE ducklake_table;
+			DROP TABLE ducklake_view;
+			DROP TABLE ducklake_tag;
+			DROP TABLE ducklake_column_tag;
+			DROP TABLE ducklake_data_file;
+			DROP TABLE ducklake_file_column_stats;
+			DROP TABLE ducklake_delete_file;
+			DROP TABLE ducklake_column;
+			DROP TABLE ducklake_table_stats;
+			DROP TABLE ducklake_table_column_stats;
+			DROP TABLE ducklake_partition_info;
+			DROP TABLE ducklake_partition_column;
+			DROP TABLE ducklake_file_partition_value;
+			DROP TABLE ducklake_files_scheduled_for_deletion;
+			DROP TABLE ducklake_inlined_data_tables;
+			DROP TABLE ducklake_column_mapping;
+			DROP TABLE ducklake_name_mapping;
+			DROP TABLE ducklake_schema_versions;
+	)",
+		                   0);
+
+		if (ret != SPI_OK_UTILITY) {
+			elog(ERROR, "Failed to drop ducklake schema");
+		}
+	}
+
+	/* Drop all tables using ducklake AM */
+	{
+		int ret = SPI_exec(R"(
+			SELECT DISTINCT oid
+			FROM pg_catalog.pg_class
+			WHERE relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake')
+			AND relkind = 'r'
+		)",
+		                   0);
+
+		if (ret != SPI_OK_SELECT) {
+			elog(ERROR, "SPI_exec failed to find ducklake tables: error code %s", SPI_result_code_string(ret));
+		}
+
+		duckdb::vector<duckdb::string> relation_name_list;
+		relation_name_list.reserve(SPI_processed);
+		for (uint64_t proc = 0; proc < SPI_processed; ++proc) {
+			HeapTuple tuple = SPI_tuptable->vals[proc];
+			bool isnull;
+			Datum relid_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+			if (isnull) {
+				elog(ERROR, "Expected relid to be returned, but found NULL");
+			}
+			Oid relid = DatumGetObjectId(relid_datum);
+
+			Relation rel = RelationIdGetRelation(relid);
+			Oid nspid = RelationGetNamespace(rel);
+			char *nspname = get_namespace_name(nspid);
+
+			relation_name_list.push_back(duckdb::StringUtil::Format("%s.%s", nspname, RelationGetRelationName(rel)));
+
+			RelationClose(rel);
+		}
+
+		/* Now drop each table */
+		for (auto &relation_name : relation_name_list) {
+			auto drop_query = duckdb::StringUtil::Format("DROP TABLE IF EXISTS %s", relation_name.c_str());
+			elog(DEBUG1, "drop query: %s", drop_query.c_str());
+
+			int drop_ret = SPI_exec(drop_query.c_str(), 0);
+			if (drop_ret != SPI_OK_UTILITY) {
+				elog(ERROR, "Failed to drop table %s: error code %s", relation_name.c_str(),
+				     SPI_result_code_string(drop_ret));
+			}
+		}
+	}
+
+	AtEOXact_GUC(false, save_nestlevel);
+	SPI_finish();
+
+	cache.initialized = false;
+	cache.initializing = false;
+	cache.valid = false;
+
+	PG_RETURN_VOID();
 }
 }

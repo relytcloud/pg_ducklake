@@ -212,13 +212,7 @@ DuckDBManager::Initialize() {
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE ':memory:' AS pg_temp;");
 
-	{
-		auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
-		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
-		pgduckdb::DuckDBQueryOrThrow(
-		    context,
-		    "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" + data_path + "/')");
-	}
+	duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
 
 	if (pgduckdb::IsMotherDuckEnabled()) {
 		auto timeout = FindMotherDuckBackgroundCatalogRefreshInactivityTimeout();
