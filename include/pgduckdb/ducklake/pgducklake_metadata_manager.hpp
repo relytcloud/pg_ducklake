@@ -1,5 +1,6 @@
 #pragma once
 
+#include <common/ducklake_options.hpp>
 #include <common/ducklake_snapshot.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <storage/ducklake_metadata_info.hpp>
@@ -23,7 +24,7 @@ public:
 	duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::string query) override;
 	duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
 
-	bool IsInitialized() override;
+	bool IsInitialized(duckdb::DuckLakeOptions &options) override;
 
 	// Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewite them in PGSQL.
 
