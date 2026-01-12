@@ -3,4 +3,4 @@
 	url = https://github.com/duckdb/duckdb.git
 [submodule "third_party/ducklake"]
 	path = third_party/ducklake
-	url = https://github.com/duckdb/ducklake
+	url = https://github.com/relytcloud/ducklake.git
