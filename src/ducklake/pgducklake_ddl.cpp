@@ -8,6 +8,8 @@
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 
 extern "C" {
+#include "postgres.h"
+#include "catalog/pg_class.h"
 #include "pgduckdb/vendor/pg_ruleutils.h"
 #include "utils/builtins.h"
 #include "access/relation.h"
