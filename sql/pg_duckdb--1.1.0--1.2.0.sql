@@ -41,9 +41,6 @@ CREATE FUNCTION ducklake._drop_trigger() RETURNS event_trigger
 CREATE EVENT TRIGGER ducklake_drop_trigger ON sql_drop
     EXECUTE FUNCTION ducklake._drop_trigger();
 
--- Ensure that the metadata manager is initialized.
-SELECT duckdb.raw_query('SELECT 1');
-
 CREATE FUNCTION ducklake.create_metadata(data_path cstring = NULL) RETURNS void
     SET search_path = pg_catalog, pg_temp
     AS 'MODULE_PATHNAME', 'ducklake_create_metadata' LANGUAGE C;

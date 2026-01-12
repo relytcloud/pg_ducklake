@@ -1,11 +1,14 @@
 #include <filesystem>
 
+#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_types.hpp"
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_utils.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
+
+#include "storage/ducklake_metadata_manager.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -34,8 +37,26 @@ static struct {
 	bool initializing;
 } cache = {};
 
+static void
+InitializeCache() {
+	if (!IsExtensionRegistered()) {
+		return;
+	}
+
+	if (!cache.valid) {
+		cache.valid = true;
+		cache.initializing = true;
+		cache.initialized = false;
+
+		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
+	}
+}
+
 static bool
 IsDuckLakeExists() {
+	if (!cache.valid) {
+		InitializeCache();
+	}
 	if (!cache.valid) {
 		return false;
 	}
