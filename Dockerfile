@@ -30,7 +30,7 @@ USER postgres
 COPY --chown=postgres:postgres Makefile Makefile.global pg_duckdb.control ./
 COPY --chown=postgres:postgres .git/modules/third_party/duckdb/HEAD .git/modules/third_party/duckdb/HEAD
 COPY --chown=postgres:postgres .git/modules/third_party/duckdb/HEAD .git/modules/third_party/abc/HEAD
-COPY --chown=postgres:postgres .git/modules/third_party/ducklake/HEAD .git/modules/third_party/ducklake/HEAD
+COPY --chown=postgres:postgres /home/runner/work/pg_ducklake/pg_ducklake/.git/modules/third_party/ducklake/HEAD .git/modules/third_party/ducklake/HEAD
 COPY --chown=postgres:postgres sql sql
 COPY --chown=postgres:postgres src src
 COPY --chown=postgres:postgres include include
