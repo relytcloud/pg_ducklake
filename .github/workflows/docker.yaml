@@ -101,6 +101,7 @@ jobs:
           targets: pg_ducklake_${{ matrix.postgres }}
           push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           no-cache: true
+          source: /home/runner/work/pg_ducklake/pg_ducklake
           set: |
             *.platform=linux/${{ steps.params.outputs.platform }}
             postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
