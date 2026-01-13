@@ -85,34 +85,18 @@ jobs:
         with:
           platforms: linux/${{ steps.params.outputs.platform }}
 
-      - name: Debug
-        run: |
-          pwd
-          ls
-          ls .git
-          ls .git/modules
-          ls .git/modules/third_party
-          ls .git/modules/third_party/ducklake
-          cat .git/modules/third_party/ducklake/HEAD
-
       - name: docker bake
-        run: |
-          pwd
-          if [ "${{ github.event_name }}" != "pull_request" ] || \
-             [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
-            PUSH_FLAG="--push"
-          else
-            PUSH_FLAG=""
-          fi
-          /usr/bin/docker buildx bake \
-            --allow fs=* \
-            --set "*.platform=linux/${{ steps.params.outputs.platform }}" \
-            --set "*.cache-from=type=gha,scope=Build Docker" \
-            --set "*.cache-to=type=gha,mode=max,scope=Build Docker" \
-            --set "postgres.tags=pgduckdb/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}" \
-            --set "postgres.tags=${{ steps.params.outputs.latest_image }}" \
-            $PUSH_FLAG \
-            "pg_ducklake_${{ matrix.postgres }}"
+        uses: docker/bake-action@v5
+        with:
+          targets: pg_ducklake_${{ matrix.postgres }}
+          push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          set: |
+            *.platform=linux/${{ steps.params.outputs.platform }}
+            *.cache-from=type=registry,ref=${{ steps.params.outputs.latest_image }}
+            *.cache-from=type=gha,scope=${{ github.workflow }}
+            *.cache-to=type=gha,mode=max,scope=${{ github.workflow }}
+            postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+            postgres.tags=${{ steps.params.outputs.latest_image }}
 
   docker_merge:
     name: Merge Docker image for Postgres ${{ matrix.postgres }}

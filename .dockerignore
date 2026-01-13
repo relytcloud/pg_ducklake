@@ -1,5 +1,6 @@
 .git
 !.git/modules/third_party/duckdb/HEAD
+!.git/modules/third_party/ducklake/HEAD
 *.o
 *.so
 *.dylib
