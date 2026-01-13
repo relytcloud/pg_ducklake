@@ -85,6 +85,16 @@ jobs:
         with:
           platforms: linux/${{ steps.params.outputs.platform }}
 
+      - name: Debug
+        run: |
+          pwd
+          ls
+          ls .git
+          ls .git/submodule
+          ls .git/modules/third_party
+          ls .git/modules/third_party/ducklake
+          cat .git/modules/third_party/ducklake/HEAD
+
       - name: docker bake
         uses: docker/bake-action@v5
         with:
