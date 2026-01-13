@@ -96,16 +96,23 @@ jobs:
           cat .git/modules/third_party/ducklake/HEAD
 
       - name: docker bake
-        uses: docker/bake-action@v5
-        with:
-          targets: pg_ducklake_${{ matrix.postgres }}
-          push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          no-cache: true
-          workdir: /home/runner/work/pg_ducklake/pg_ducklake
-          set: |
-            *.platform=linux/${{ steps.params.outputs.platform }}
-            postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
-            postgres.tags=${{ steps.params.outputs.latest_image }}
+        run: |
+          pwd
+          if [ "${{ github.event_name }}" != "pull_request" ] || \
+             [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            PUSH_FLAG="--push"
+          else
+            PUSH_FLAG=""
+          fi
+          /usr/bin/docker buildx bake \
+            --allow fs=* \
+            --set "*.platform=linux/${{ steps.params.outputs.platform }}" \
+            --set "*.cache-from=type=gha,scope=Build Docker" \
+            --set "*.cache-to=type=gha,mode=max,scope=Build Docker" \
+            --set "postgres.tags=pgduckdb/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}" \
+            --set "postgres.tags=${{ steps.params.outputs.latest_image }}" \
+            $PUSH_FLAG \
+            "pg_ducklake_${{ matrix.postgres }}"
 
   docker_merge:
     name: Merge Docker image for Postgres ${{ matrix.postgres }}
