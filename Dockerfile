@@ -29,6 +29,7 @@ USER postgres
 # directory into the target directory, and not the directory itself too.
 COPY --chown=postgres:postgres Makefile Makefile.global pg_duckdb.control ./
 COPY --chown=postgres:postgres .git/modules/third_party/duckdb/HEAD .git/modules/third_party/duckdb/HEAD
+COPY --chown=postgres:postgres .git/modules/third_party/duckdb/HEAD .git/modules/third_party/abc/HEAD
 COPY --chown=postgres:postgres .git/modules/third_party/ducklake/HEAD .git/modules/third_party/ducklake/HEAD
 COPY --chown=postgres:postgres sql sql
 COPY --chown=postgres:postgres src src
