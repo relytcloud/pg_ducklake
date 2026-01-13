@@ -90,7 +90,7 @@ jobs:
           pwd
           ls
           ls .git
-          ls .git/submodule
+          ls .git/modules
           ls .git/modules/third_party
           ls .git/modules/third_party/ducklake
           cat .git/modules/third_party/ducklake/HEAD
