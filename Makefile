@@ -72,7 +72,7 @@ endif
 
 COMPILER_FLAGS=-Wno-sign-compare -Wshadow -Wswitch -Wunused-parameter -Wunreachable-code -Wno-unknown-pragmas -Wall -Wextra ${ERROR_ON_WARNING}
 
-override PG_CPPFLAGS += -Iinclude -isystem third_party/duckdb/src/include -isystem third_party/duckdb/third_party/re2 -isystem $(INCLUDEDIR_SERVER) ${COMPILER_FLAGS}
+override PG_CPPFLAGS += -Iinclude -isystem third_party/duckdb/src/include -isystem third_party/duckdb/third_party/re2 -isystem third_party/ducklake/src/include -isystem $(INCLUDEDIR_SERVER) ${COMPILER_FLAGS}
 override PG_CXXFLAGS += -std=c++17 ${DUCKDB_BUILD_CXX_FLAGS} ${COMPILER_FLAGS} -Wno-register -Weffc++
 # Ignore declaration-after-statement warnings in our code. Postgres enforces
 # this because their ancient style guide requires it, but we don't care. It
@@ -95,7 +95,7 @@ src/pgduckdb.o: PG_CPPFLAGS += -DPG_DUCKDB_VERSION="\"$(PG_DUCKDB_VERSION)\""
 # includes those header files. This does mean that we rebuild our .o files
 # whenever we change the DuckDB version, but that seems like a fairly
 # reasonable thing to do anyway, even if not always strictly necessary always.
-$(OBJS): .git/modules/third_party/duckdb/HEAD
+$(OBJS): .git/modules/third_party/duckdb/HEAD .git/modules/third_party/ducklake/HEAD
 
 COMPILE.cc.bc += $(PG_CPPFLAGS)
 COMPILE.cxx.bc += $(PG_CXXFLAGS)
@@ -110,12 +110,17 @@ PYTEST_CONCURRENCY = auto
 check-regression-duckdb:
 	$(MAKE) -C test/regression check-regression-duckdb
 
+check-regression-ducklake:
+	$(MAKE) -C test/regression_ducklake check-regression-ducklake
+
 clean-regression:
 	$(MAKE) -C test/regression clean-regression
+	$(MAKE) -C test/regression_ducklake clean-regression
 
 # Specify AWS_REGION to make sure test output the same thing regardless of where they are run
 installcheck: all install
 	AWS_REGION=us-east-1 $(MAKE) check-regression-duckdb
+	$(MAKE) check-regression-ducklake
 
 pycheck: all install
 	LD_LIBRARY_PATH=$(PG_LIBDIR):${LD_LIBRARY_PATH} pytest -n $(PYTEST_CONCURRENCY)
@@ -128,9 +133,12 @@ schedulecheck:
 duckdb: $(FULL_DUCKDB_LIB)
 
 .git/modules/third_party/duckdb/HEAD:
-	git submodule update --init --recursive
+	git submodule update --init --recursive third_party/duckdb
 
-$(FULL_DUCKDB_LIB): .git/modules/third_party/duckdb/HEAD third_party/pg_duckdb_extensions.cmake
+.git/modules/third_party/ducklake/HEAD:
+	git submodule update --init --depth=0 third_party/ducklake
+
+$(FULL_DUCKDB_LIB): .git/modules/third_party/duckdb/HEAD .git/modules/third_party/ducklake/HEAD third_party/pg_duckdb_extensions.cmake
 ifeq ($(DUCKDB_BUILD), ReleaseStatic)
 	mkdir -p third_party/duckdb/build/release/vcpkg_installed
 endif

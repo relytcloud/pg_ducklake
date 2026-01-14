@@ -1,5 +1,5 @@
 variable "REPO" {
-  default = "pgduckdb/pgduckdb"
+  default = "pgducklake/pgducklake"
 }
 
 variable "POSTGRES_VERSION" {
@@ -29,45 +29,45 @@ target "postgres" {
   ]
 }
 
-target "pg_duckdb" {
+target "pg_ducklake" {
   inherits = ["postgres"]
   target = "output"
 }
 
-target "pg_duckdb_14" {
-  inherits = ["pg_duckdb"]
+target "pg_ducklake_14" {
+  inherits = ["pg_ducklake"]
 
   args = {
     POSTGRES_VERSION = "14"
   }
 }
 
-target "pg_duckdb_15" {
-  inherits = ["pg_duckdb"]
+target "pg_ducklake_15" {
+  inherits = ["pg_ducklake"]
 
   args = {
     POSTGRES_VERSION = "15"
   }
 }
 
-target "pg_duckdb_16" {
-  inherits = ["pg_duckdb"]
+target "pg_ducklake_16" {
+  inherits = ["pg_ducklake"]
 
   args = {
     POSTGRES_VERSION = "16"
   }
 }
 
-target "pg_duckdb_17" {
-  inherits = ["pg_duckdb"]
+target "pg_ducklake_17" {
+  inherits = ["pg_ducklake"]
 
   args = {
     POSTGRES_VERSION = "17"
   }
 }
 
-target "pg_duckdb_18" {
-  inherits = ["pg_duckdb"]
+target "pg_ducklake_18" {
+  inherits = ["pg_ducklake"]
 
   args = {
     POSTGRES_VERSION = "18"
@@ -75,5 +75,5 @@ target "pg_duckdb_18" {
 }
 
 target "default" {
-  inherits = ["pg_duckdb_18"]
+  inherits = ["pg_ducklake_18"]
 }
