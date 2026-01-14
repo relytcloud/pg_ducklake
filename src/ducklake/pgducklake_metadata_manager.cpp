@@ -1,5 +1,4 @@
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
-#include "pgduckdb/pgduckdb_types.hpp"
 
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
@@ -13,8 +12,11 @@
 
 #include "common/ducklake_util.hpp"
 
-#include "pgduckdb/pg/string_utils.hpp"
+#include "pgduckdb/pgduckdb_utils.hpp"
+#include "pgduckdb/pgduckdb_types.hpp"
+
 #include "pgduckdb/pgduckdb_detoast.hpp"
+#include "pgduckdb/pg/string_utils.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -104,6 +106,8 @@ InsertSPITupleTableIntoChunk(duckdb::DataChunk &output, SPITupleTable *tuptable,
 static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIResult(const duckdb::string &query) {
 	elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
+
+	PostgresScopedStackReset scoped_stack_reset;
 
 	CommandId cid_before_commit = pg::GetCurrentCommandId();
 	SPI_connect();
