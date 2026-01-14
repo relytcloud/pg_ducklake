@@ -1,12 +1,12 @@
 # Building from Source
 
-This guide provides detailed instructions for building `pg_duckdb` from source on different platforms.
+This guide provides detailed instructions for building `pg_ducklake` from source on different platforms.
 
 **First things first, clone the repo**:
 
 ```bash
-git clone https://github.com/duckdb/pg_duckdb
-cd pg_duckdb
+git clone https://github.com/relytcloud/pg_ducklake
+cd pg_ducklake
 git submodule update --init --recursive
 ```
 
@@ -31,7 +31,7 @@ For full dependency details, see our [GitHub Actions workflow](../.github/workfl
 
 ## Static Compilation
 
-pg_duckdb supports statically linking the DuckDB library into the extension. This is mostly useful to ensure that the right DuckDB version is used if you have installed different versions, and/or to avoid installation conflicts with other Postgres extensions that require different versions of DuckDB.
+Statically linking the DuckDB library is NOT supported yet, since pg_ducklake relies on DuckDB DuckLake extension.
 
 
 # Build on Ubuntu 24.04
