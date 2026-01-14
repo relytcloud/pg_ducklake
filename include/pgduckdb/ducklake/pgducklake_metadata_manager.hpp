@@ -24,7 +24,11 @@ public:
 	duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::string query) override;
 	duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
 
-	bool IsInitialized(duckdb::DuckLakeOptions &options) override;
+	static bool IsInitialized();
+	bool
+	IsInitialized(duckdb::DuckLakeOptions & /*options*/) override {
+		return IsInitialized();
+	}
 
 	// Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewite them in PGSQL.
 

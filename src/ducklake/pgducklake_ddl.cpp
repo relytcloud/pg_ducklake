@@ -47,10 +47,14 @@ InitializeCache() {
 
 	if (!cache.valid) {
 		cache.valid = true;
-		cache.initializing = true;
-		cache.initialized = false;
+		cache.initializing = false;
+		cache.initialized = PgDuckLakeMetadataManager::IsInitialized();
 
 		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
+
+		if (cache.initialized) {
+			pgduckdb::DuckDBQueryOrThrow("ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
+		}
 	}
 }
 
