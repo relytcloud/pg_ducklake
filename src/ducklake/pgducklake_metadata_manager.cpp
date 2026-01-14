@@ -1,34 +1,34 @@
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
+#include "pgduckdb/pgduckdb_types.hpp"
 
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/types.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
-#include "duckdb/common/types/data_chunk.hpp"
-#include "duckdb/common/types/column/column_data_collection.hpp"
-#include "duckdb/common/exception.hpp"
-#include "duckdb/common/allocator.hpp"
 
 #include "common/ducklake_util.hpp"
 
-#include "pgduckdb/pgduckdb_types.hpp"
 #include "pgduckdb/pg/string_utils.hpp"
 #include "pgduckdb/pgduckdb_detoast.hpp"
 
 extern "C" {
 #include "postgres.h"
-#include "catalog/pg_namespace.h"
-#include "access/table.h"
-#include "utils/fmgroids.h"
-#include "utils/snapmgr.h"
-#include "access/skey.h"
-#include "catalog/pg_class.h"
-#include "utils/syscache.h"
 #include "access/genam.h"
-#include "utils/elog.h"
-#include "utils/guc.h"
+#include "access/skey.h"
+#include "access/table.h"
+#include "catalog/pg_class.h"
+#include "catalog/pg_namespace.h"
 #include "executor/spi.h"
+#include "utils/elog.h"
+#include "utils/fmgroids.h"
+#include "utils/guc.h"
+#include "utils/snapmgr.h"
+#include "utils/syscache.h"
 }
 
 /* Referenced from pgduckdb_xact.cpp */

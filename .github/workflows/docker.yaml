@@ -63,7 +63,7 @@ jobs:
           fi
 
           # If main or tag, then push to `pgducklake/pgducklake`
-          git fetch --tags --force
+          git fetch --tags --force --no-recurse-submodules
           if [ "$BRANCH" = "main" ] || git rev-parse --verify $BRANCH^{tag} > /dev/null 2>&1; then
             TARGET_REPO='pgducklake/pgducklake'
           else

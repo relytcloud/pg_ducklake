@@ -18,9 +18,9 @@
 extern "C" {
 #include "postgres.h"
 
-#include "access/tableam.h"
-#include "access/heapam.h"
 #include "access/amapi.h"
+#include "access/heapam.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/index.h"
 #include "commands/vacuum.h"
