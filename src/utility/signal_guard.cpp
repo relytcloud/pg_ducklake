@@ -6,9 +6,7 @@ namespace pgduckdb {
 
 ThreadSignalBlockGuard::ThreadSignalBlockGuard() : _blocked(false), _saved_set() {
 	sigset_t new_set;
-	if (sigfillset(&new_set) < 0) {
-		throw std::runtime_error("sigfillset() failed");
-	}
+	sigfillset(&new_set);
 
 	const int err = pthread_sigmask(SIG_BLOCK, &new_set, &_saved_set);
 	if (err != 0) {

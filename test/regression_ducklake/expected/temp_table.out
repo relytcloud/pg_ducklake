@@ -1,0 +1,17 @@
+SELECT ducklake.create_metadata();
+NOTICE:  No data path provided, using default: DataDir/pg_ducklake
+NOTICE:  schema "ducklake" already exists, skipping
+ create_metadata 
+-----------------
+ 
+(1 row)
+
+CREATE TEMP TABLE tt (a int, b int) using ducklake;
+ERROR:  TODO: create a DuckLake table as a temporary table is not supported yet
+SELECT ducklake.drop_metadata();
+NOTICE:  ducklake files are not deleted
+ drop_metadata 
+---------------
+ 
+(1 row)
+
