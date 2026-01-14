@@ -222,7 +222,7 @@ PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::st
 }
 
 bool
-PgDuckLakeMetadataManager::IsInitialized(duckdb::DuckLakeOptions & /* options */) {
+PgDuckLakeMetadataManager::IsInitialized() {
 
 	auto tup = SearchSysCache1(NAMESPACENAME, CStringGetDatum("ducklake"));
 
