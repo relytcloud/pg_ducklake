@@ -11,13 +11,14 @@ PostgreSQL Extension for DuckLake
 
 _This project is under high development and is not yet ready for production use._
 
-**pg_ducklake** integrates [DuckLake](https://ducklake.select) lakehouse format and DuckDB's columnar-vectorized analytics engine into PostgreSQL, enabling columnar storage and lakehouse scalability.
+**pg_ducklake** brings a native datalake experience into PostgreSQL, powered by [pg_duckdb](https://github.com/duckdb/pg_duckdb) and [DuckLake](https://ducklake.select) (a DuckDB lakehouse format with SQL catalog metadata and open Parquet data files).
 
 ## Key Features
 
-- **Write and analyze DuckLake** just in PostgreSQL, or anywhere with DuckDB.
-- **Columnar storage** in PostgreSQL table interface. Data files (parquet) could be stored in local filesystem or cloud storage (S3, GCS, Azure, R2).
-- **Performance boost from DuckDB**!
+- **Managed DuckLake tables**: create, write, and query DuckLake tables in PostgreSQL via SQL (e.g., psql/JDBC).
+- **DuckDB compatibility**: tables created by `pg_ducklake` are directly queryable from DuckDB clients.
+- **Cloud storage**: store DuckLake table data in remote object storage (e.g., S3, GCS, R2) to decouple storage and compute for serverless analytics.
+- **Fast analytics**: columnar storage + DuckDB vectorized execution, with hybrid queries over PostgreSQL heap tables supported.
 
 ## See it in action
 
@@ -58,7 +59,7 @@ SELECT * FROM my_ducklake.my_table;
 Run PostgreSQL with pg_ducklake pre-installed in a docker container:
 
 ```bash
-docker run -d -e POSTGRES_PASSWORD=duckdb -name pgducklake pgducklake/pgducklake:18-main
+docker run -d -e POSTGRES_PASSWORD=duckdb --name pgducklake pgducklake/pgducklake:18-main
 
 docker exec -it pgducklake psql
 ```
@@ -78,18 +79,60 @@ make install
 
 _See [compilation guide](docs/compilation.md) for detailed instructions._
 
-## Features
+## Usecases
 
-- Local filesystem and S3-compatible object stores (MinIO, S3)
+### Convert a Postgres Heap table into DuckLake Table 
 
-## Milestones
+TODO: some background intro, why convertion, what it brings
 
-- Complete docs
-- Performance
-    - Bypass access to metadata tables
-    - Bypass inline table writes
-    - Direct parquet writes
-- Fine-grained access control
+```
+
+-- create a Postgres row-store table 
+CREATE TABLE row_store_table AS SELECT i, 'hello pg_ducklake' generate_series(10000) i;
+
+-- create the DuckLake table through a ETL
+CREATE TABLE col_store_table AS SELECT * FROM row_store_table;
+
+-- Run analytics against the converted table
+SELECT max(id) FROM col_store_table;
+```
+
+### Load External DataSet
+
+TODO: some background.
+
+```
+CREATE TABLE titanic AS SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
+
+SELECT pclass, sex, COUNT(*), AVG(survived) AS survival_rate FROM titanic GROUP BY pclass, sex;
+```
+
+## Roadmap
+
+### Docs
+
+- [ ] Access control behavior for DuckLake tables[^1]
+
+[^1]: DuckLake tables are exposed via PostgreSQL table access methods (AM), so PostgreSQL table/column privileges may already apply; the current behavior and gaps will be reviewed and documented. DuckLake itself relies on its metadata service for ACL management.
+
+### Features
+
+- [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
+- [ ] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
+- [ ] Time-travel queries
+- [ ] Partitioned tables
+- [ ] Read-only `pg_ducklake` tables referencing shared DuckLake datasets (e.g., frozen DuckLake)
+- [ ] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs)[^2]
+- [ ] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake)
+- [ ] Complex types
+
+[^2]: Table maintenance can be carried out by standalone DuckDB clients (preferable, since it is serverless and avoids burdening the PostgreSQL server); `pg_ducklake` still plans to expose these operations for ease of use.
+
+### Performance
+
+- [ ] Native inlined (heap) table for small writes
+- [ ] Better transaction concurrency model (based on PostgreSQL XID)
+
 
 ## Contributing
 
