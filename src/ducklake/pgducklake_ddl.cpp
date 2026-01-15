@@ -323,12 +323,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 		elog(ERROR, "Expected single table to be created, but found %" PRIu64, static_cast<uint64_t>(SPI_processed));
 	}
 
-	CreateTableAsStmt *ctas_stmt = nullptr;
-	if (IsA(parsetree, CreateStmt)) {
-		/* handled below */
-	} else if (IsA(parsetree, CreateTableAsStmt)) {
-		ctas_stmt = castNode(CreateTableAsStmt, parsetree);
-	} else {
+	if (!IsA(parsetree, CreateStmt) && !IsA(parsetree, CreateTableAsStmt)) {
 		ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 		                errmsg("Cannot create a DuckLake table this way, use CREATE TABLE or CREATE TABLE AS")));
 	}
@@ -362,7 +357,8 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 	auto connection = pgduckdb::DuckDBManager::GetConnection(false);
 
 	pgduckdb::DuckDBQueryOrThrow(*connection, create_table_string);
-	if (ctas_stmt && !pgduckdb::ducklake_ctas_skip_data) {
+	if (IsA(parsetree, CreateTableAsStmt) && !pgduckdb::ducklake_ctas_skip_data) {
+		auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
 		auto ctas_query = (Query *)ctas_stmt->query;
 		const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
 		std::string insert_string =
