@@ -25,10 +25,10 @@ _This project is under high development and is not yet ready for production use.
 ### Your first Data Lake in PostgreSQL
 
 ```sql
--- Use AWS S3 as data storage.
-SELECT ducklake.create_metadata('s3://my-bucket/prefix/');
--- Or defaultly use local filesystem.
--- SELECT ducklake.create_metadata();
+-- Use local filesystem.
+SELECT ducklake.create_metadata();
+-- Or use AWS S3 as data storage.
+-- SELECT ducklake.create_metadata('s3://my-bucket/prefix/');
 
 CREATE TABLE my_table (
     id INT,
@@ -105,9 +105,12 @@ SELECT max(id) FROM col_store_table;
 External datasets (e.g., CSV/Parquet) can be ingested with DuckDB readers and materialized as tables for analytics.
 
 ```sql
-CREATE TABLE titanic USING ducklake AS SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
+CREATE TABLE titanic USING ducklake AS
+SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
 
-SELECT pclass, sex, COUNT(*), AVG(survived) AS survival_rate FROM titanic GROUP BY pclass, sex;
+SELECT "Pclass", "Sex", COUNT(*), AVG("Survived") AS survival_rate
+FROM titanic
+GROUP BY "Pclass", "Sex";
 ```
 
 ## Roadmap

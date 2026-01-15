@@ -504,7 +504,7 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 				 */
 				ctas_skip_data = stmt->into->skipData;
 				stmt->into->skipData = true;
-			} else {
+			} else if (is_ducklake_table) {
 				/*
 				 * Force skipData to false for ducklake tables, so that Postgres does
 				 * not execute the query, and save the original value in ducklake_ctas_skip_data
