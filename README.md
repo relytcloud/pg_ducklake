@@ -112,12 +112,6 @@ SELECT pclass, sex, COUNT(*), AVG(survived) AS survival_rate FROM titanic GROUP 
 
 ## Roadmap
 
-### Docs
-
-- [ ] Access control behavior for DuckLake tables[^1]
-
-[^1]: DuckLake tables are exposed via PostgreSQL table access methods (AM), so PostgreSQL table/column privileges may already apply; the current behavior and gaps will be reviewed and documented. DuckLake itself relies on its metadata service for ACL management.
-
 ### Features
 
 - [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
@@ -125,17 +119,22 @@ SELECT pclass, sex, COUNT(*), AVG(survived) AS survival_rate FROM titanic GROUP 
 - [ ] Time-travel queries
 - [ ] Partitioned tables
 - [ ] Read-only `pg_ducklake` tables referencing shared DuckLake datasets (e.g., frozen DuckLake)
-- [ ] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs)[^2]
+- [ ] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
 - [ ] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake)
 - [ ] Complex types
 
-[^2]: Table maintenance can be carried out by standalone DuckDB clients (preferable, since it is serverless and avoids burdening the PostgreSQL server); `pg_ducklake` still plans to expose these operations for ease of use.
+> [^]: Table maintenance can be carried out by standalone DuckDB clients (preferable, since it is serverless and avoids burdening the PostgreSQL server); `pg_ducklake` still plans to expose these operations for ease of use.
 
 ### Performance
 
 - [ ] Native inlined (heap) table for small writes
 - [ ] Better transaction concurrency model (based on PostgreSQL XID)
 
+### Docs
+
+- [ ] Access control behavior for DuckLake tables [^]
+
+> [^]: DuckLake tables are exposed via PostgreSQL table access methods (AM), so PostgreSQL table/column privileges may already apply; the current behavior and gaps will be reviewed and documented. DuckLake itself relies on its metadata service for ACL management.
 
 ## Contributing
 
