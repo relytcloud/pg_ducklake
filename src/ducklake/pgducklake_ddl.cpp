@@ -1,6 +1,7 @@
 #include <filesystem>
 
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
+#include "pgduckdb/ducklake/pgducklake_ddl.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_table_am.hpp"
@@ -38,6 +39,8 @@ static struct {
 
 	bool initializing;
 } cache = {};
+
+bool ducklake_ctas_skip_data = false;
 
 static void
 InitializeCache() {
@@ -320,9 +323,14 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 		elog(ERROR, "Expected single table to be created, but found %" PRIu64, static_cast<uint64_t>(SPI_processed));
 	}
 
-	if (!IsA(parsetree, CreateStmt)) {
+	CreateTableAsStmt *ctas_stmt = nullptr;
+	if (IsA(parsetree, CreateStmt)) {
+		/* handled below */
+	} else if (IsA(parsetree, CreateTableAsStmt)) {
+		ctas_stmt = castNode(CreateTableAsStmt, parsetree);
+	} else {
 		ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-		                errmsg("Cannot create a DuckLake table this way, use CREATE TABLE")));
+		                errmsg("Cannot create a DuckLake table this way, use CREATE TABLE or CREATE TABLE AS")));
 	}
 
 	HeapTuple tuple = SPI_tuptable->vals[0];
@@ -354,6 +362,13 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 	auto connection = pgduckdb::DuckDBManager::GetConnection(false);
 
 	pgduckdb::DuckDBQueryOrThrow(*connection, create_table_string);
+	if (ctas_stmt && !pgduckdb::ducklake_ctas_skip_data) {
+		auto ctas_query = (Query *)ctas_stmt->query;
+		const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
+		std::string insert_string =
+		    std::string("INSERT INTO ") + pgduckdb_relation_name(relid) + " " + ctas_query_string;
+		pgduckdb::DuckDBQueryOrThrow(*connection, insert_string);
+	}
 
 	PG_RETURN_NULL();
 }

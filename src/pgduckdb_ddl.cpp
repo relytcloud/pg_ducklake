@@ -3,6 +3,7 @@
 #include "pgduckdb/pgduckdb_xact.hpp"
 #include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_ddl.hpp"
+#include "pgduckdb/ducklake/pgducklake_ddl.hpp"
 #include "pgduckdb/pgduckdb_hooks.hpp"
 #include "pgduckdb/pgduckdb_planner.hpp"
 #include "pgduckdb/pg/string_utils.hpp"
@@ -459,10 +460,11 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 
 		char *access_method = stmt->accessMethod ? stmt->accessMethod : default_table_access_method;
 		bool is_duckdb_table = strcmp(access_method, "duckdb") == 0;
-		if (is_duckdb_table) {
+		bool is_ducklake_table = strcmp(access_method, "ducklake") == 0;
+		if (is_duckdb_table || is_ducklake_table) {
 			if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
 				ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-				                errmsg("Only one DuckDB table can be created in a single statement")));
+				                errmsg("Only one DuckDB or DuckLake table can be created in a single statement")));
 			}
 			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::CREATE_TABLE;
 			pgduckdb::ClaimCurrentCommandId();
@@ -485,21 +487,33 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 		}
 		char *access_method = stmt->into->accessMethod ? stmt->into->accessMethod : default_table_access_method;
 		bool is_duckdb_table = strcmp(access_method, "duckdb") == 0;
-		if (is_duckdb_table) {
+		bool is_ducklake_table = strcmp(access_method, "ducklake") == 0;
+		if (is_duckdb_table || is_ducklake_table) {
 			if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
 				ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-				                errmsg("Only one DuckDB table can be created in a single statement")));
+				                errmsg("Only one DuckDB or DuckLake table can be created in a single statement")));
 			}
 			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::CREATE_TABLE;
 			pgduckdb::ClaimCurrentCommandId();
-			/*
-			 * Force skipData to false for duckdb tables, so that Postgres does
-			 * not execute the query, and save the original value in ctas_skip_data
-			 * so we can use it later in duckdb_create_table_trigger to choose
-			 * whether to execute the query in DuckDB or not.
-			 */
-			ctas_skip_data = stmt->into->skipData;
-			stmt->into->skipData = true;
+			if (is_duckdb_table) {
+				/*
+				 * Force skipData to false for duckdb tables, so that Postgres does
+				 * not execute the query, and save the original value in ctas_skip_data
+				 * so we can use it later in duckdb_create_table_trigger to choose
+				 * whether to execute the query in DuckDB or not.
+				 */
+				ctas_skip_data = stmt->into->skipData;
+				stmt->into->skipData = true;
+			} else {
+				/*
+				 * Force skipData to false for ducklake tables, so that Postgres does
+				 * not execute the query, and save the original value in ducklake_ctas_skip_data
+				 * so we can use it later in ducklake_create_table_trigger to choose
+				 * whether to execute the query in DuckDB or not.
+				 */
+				pgduckdb::ducklake_ctas_skip_data = stmt->into->skipData;
+				stmt->into->skipData = true;
+			}
 		}
 
 		bool is_create_materialized_view = stmt->into->viewQuery != NULL;
@@ -543,7 +557,7 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 		//   duckdb.query() call and cast them to the expected type. This way,
 		//   a "SELECT * FROM read_csv(...)" will always return the same
 		//   columns and column types, even if the CSV is changed.
-		bool needs_planning = is_duckdb_table || pgduckdb::NeedsDuckdbExecution(original_query) ||
+		bool needs_planning = is_duckdb_table || is_ducklake_table || pgduckdb::NeedsDuckdbExecution(original_query) ||
 		                      pgduckdb::ShouldTryToUseDuckdbExecution(original_query);
 
 		if (!needs_planning) {
