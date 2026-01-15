@@ -11,7 +11,7 @@ PostgreSQL Extension for DuckLake
 
 _This project is under high development and is not yet ready for production use._
 
-**pg_ducklake** brings a native datalake experience into PostgreSQL, powered by [pg_duckdb](https://github.com/duckdb/pg_duckdb) and [DuckLake](https://github.com/duckdb/ducklake) (a DuckDB lakehouse format with SQL catalog metadata and open Parquet data files).
+**pg_ducklake** brings a native datalake experience into PostgreSQL, powered by [DuckLake](https://ducklake.select/) (a DuckDB lakehouse format with SQL catalog metadata and open Parquet data files).
 
 ## Key Features
 
@@ -129,6 +129,7 @@ SELECT pclass, sex, COUNT(*), AVG(survived) AS survival_rate FROM titanic GROUP 
 
 - [ ] Native inlined (heap) table for small writes
 - [ ] Better transaction concurrency model (based on PostgreSQL XID)
+- [ ] Faster metadata operations via PostgreSQL native functions (e.g., SPI)
 
 ### Docs
 
