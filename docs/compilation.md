@@ -31,7 +31,7 @@ For full dependency details, see our [GitHub Actions workflow](../.github/workfl
 
 ## Static Compilation
 
-Statically linking the DuckDB library is NOT supported yet, since pg_ducklake relies on DuckDB DuckLake extension.
+pg_ducklake sticks to statically linking the DuckDB library, since pg_ducklake relies on DuckDB DuckLake extension.
 
 
 # Build on Ubuntu 24.04

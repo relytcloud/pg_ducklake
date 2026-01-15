@@ -1,14 +1,10 @@
 # Contributing
 
-## Code of Conduct
-
-This project and everyone participating in it is governed by a [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [quack@duckdb.org](mailto:quack@duckdb.org).
-
 
 ## Did you find a bug?
 
-* **Ensure the bug was not already reported** by searching on GitHub under [Issues](https://github.com/duckdb/pg_duckdb/issues).
-* If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/duckdb/pg_duckdb/issues/new/choose). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** or an **executable test case** demonstrating the expected behavior that is not occurring.
+* **Ensure the bug was not already reported** by searching on GitHub under [Issues](https://github.com/relytcloud/pg_ducklake/issues).
+* If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/relytcloud/pg_ducklake/issues/new/choose). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** or an **executable test case** demonstrating the expected behavior that is not occurring.
 
 ## Did you write a patch that fixes a bug?
 
@@ -67,8 +63,7 @@ recommended because they might cause conflicts with other projects.
 * Test with different types, especially numerics, strings and complex nested types.
 * Try to test unexpected/incorrect usage as well, instead of only the happy path.
 * Make sure **all** unit tests pass before sending a PR.
-* pg_duckdb uses GitHub Actions as its continuous integration (CI) tool. You also have the option to run GitHub Actions on your forked repository. For detailed instructions, you can refer to the [GitHub documentation](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository).
-* To run the MotherDuck tests you need to set the `MOTHERDUCK_TEST_TOKEN` environment variable to a valid token and run `make pycheck`. Be sure to use a test token and not a production token, the tests CREATE and DROP databases and tables.
+* pg_ducklake uses GitHub Actions as its continuous integration (CI) tool. You also have the option to run GitHub Actions on your forked repository. For detailed instructions, you can refer to the [GitHub documentation](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository).
 
 ## Formatting
 

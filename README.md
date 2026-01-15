@@ -1,4 +1,13 @@
-# pg_ducklake: PostgreSQL Extension for DuckLake
+<div align="center">
+
+# pg_ducklake
+
+PostgreSQL Extension for DuckLake
+
+[![dockerhub](https://img.shields.io/docker/pulls/pgducklake/pgducklake?logo=docker)](https://hub.docker.com/r/pgducklake/pgducklake)
+[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/relytcloud/pg_ducklake/blob/main/LICENSE)
+
+</div>
 
 _This project is under high development and is not yet ready for production use._
 
@@ -16,7 +25,7 @@ _This project is under high development and is not yet ready for production use.
 
 ```sql
 -- Use AWS S3 as data storage.
-SELECT ducklake.create_metadata('s3://my-s3/my-bucket/');
+SELECT ducklake.create_metadata('s3://my-bucket/prefix/');
 -- Or defaultly use local filesystem.
 -- SELECT ducklake.create_metadata();
 
@@ -40,6 +49,8 @@ ATTACH 'ducklake:postgres://postgres:duckdb@localhost:5432/postgres' AS my_duckl
 SELECT * FROM my_ducklake.my_table;
 ```
 
+**Known limitation**: When using local filesystem, DuckDB might not able to access your data.
+
 ## Quick Start
 
 ### Docker
@@ -47,7 +58,9 @@ SELECT * FROM my_ducklake.my_table;
 Run PostgreSQL with pg_ducklake pre-installed in a docker container:
 
 ```bash
-docker run -d -e POSTGRES_PASSWORD=duckdb pgducklake/pgducklake:18-main
+docker run -d -e POSTGRES_PASSWORD=duckdb -name pgducklake pgducklake/pgducklake:18-main
+
+docker exec -it pgducklake psql
 ```
 
 ### Compile from source
@@ -71,25 +84,20 @@ _See [compilation guide](docs/compilation.md) for detailed instructions._
 
 ## Milestones
 
+- Complete docs
 - Performance
     - Bypass access to metadata tables
     - Bypass inline table writes
     - Direct parquet writes
 - Fine-grained access control
-- Cross storage support
 
 ## Contributing
 
 We welcome contributions! Please see:
 
 - [Contributing Guidelines](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Issues](https://github.com/relytcloud/pg_ducklake/issues) for bug reports
 
 ## Acknowledgments
 
 This project is forked from [pg_duckdb](https://github.com/duckdb/pg_duckdb), and integrating with [ducklake](https://github.com/duckdb/ducklake).
-
-## License
-
-Licensed under the [MIT License](LICENSE).
