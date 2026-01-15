@@ -96,9 +96,6 @@ void
 DuckDBManager::Initialize() {
 	elog(DEBUG2, "(PGDuckDB/DuckDBManager) Creating DuckDB instance");
 
-	// Block signals before initializing DuckDB to ensure signal is handled by the Postgres main thread only
-	pgduckdb::ThreadSignalBlockGuard guard;
-
 	// Make sure directories provided in config exists
 	std::filesystem::create_directories(duckdb_temporary_directory);
 	std::filesystem::create_directories(duckdb_extension_directory);
