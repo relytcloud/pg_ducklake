@@ -11,13 +11,13 @@ PostgreSQL Extension for DuckLake
 
 _This project is under high development and is not yet ready for production use._
 
-**pg_ducklake** brings a native datalake experience into PostgreSQL, powered by [pg_duckdb](https://github.com/duckdb/pg_duckdb) and [DuckLake](https://ducklake.select) (a DuckDB lakehouse format with SQL catalog metadata and open Parquet data files).
+**pg_ducklake** brings a native datalake experience into PostgreSQL, powered by [pg_duckdb](https://github.com/duckdb/pg_duckdb) and [DuckLake](https://github.com/duckdb/ducklake) (a DuckDB lakehouse format with SQL catalog metadata and open Parquet data files).
 
 ## Key Features
 
-- **Managed DuckLake tables**: create, write, and query DuckLake tables in PostgreSQL via SQL (e.g., psql/JDBC).
+- **Managed DuckLake tables**: Create/Write/Query DuckLake tables in PostgreSQL via SQL (e.g., psql/JDBC).
 - **DuckDB compatibility**: tables created by `pg_ducklake` are directly queryable from DuckDB clients.
-- **Cloud storage**: store DuckLake table data in remote object storage (e.g., S3, GCS, R2) to decouple storage and compute for serverless analytics.
+- **Cloud storage**: store data files in AWS S3 (or GCS, R2) to decouple storage and compute for serverless analytics.
 - **Fast analytics**: columnar storage + DuckDB vectorized execution, with hybrid queries over PostgreSQL heap tables supported.
 
 ## See it in action
@@ -81,28 +81,31 @@ _See [compilation guide](docs/compilation.md) for detailed instructions._
 
 ## Usecases
 
-### Convert a Postgres Heap table into DuckLake Table 
+### Convert a PostgreSQL heap table into a DuckLake table
 
-TODO: some background intro, why convertion, what it brings
+This pattern performs a one-time ETL copy from row-store (PostgreSQL heap) tables to DuckLake (column-store) tables for fast analytics, while OLTP continues to use the original heap tables.
 
-```
+```sql
+-- Create a PostgreSQL row-store (heap) table.
+CREATE TABLE row_store_table AS
+SELECT i AS id, 'hello pg_ducklake' AS msg
+FROM generate_series(1, 10000) AS i;
 
--- create a Postgres row-store table 
-CREATE TABLE row_store_table AS SELECT i, 'hello pg_ducklake' generate_series(10000) i;
+-- Create a DuckLake column-store table via ETL.
+CREATE TABLE col_store_table USING ducklake AS
+SELECT *
+FROM row_store_table;
 
--- create the DuckLake table through a ETL
-CREATE TABLE col_store_table AS SELECT * FROM row_store_table;
-
--- Run analytics against the converted table
+-- Run analytics against the converted table.
 SELECT max(id) FROM col_store_table;
 ```
 
-### Load External DataSet
+### Load an external dataset
 
-TODO: some background.
+External datasets (e.g., CSV/Parquet) can be ingested with DuckDB readers and materialized as tables for analytics.
 
-```
-CREATE TABLE titanic AS SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
+```sql
+CREATE TABLE titanic USING ducklake AS SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
 
 SELECT pclass, sex, COUNT(*), AVG(survived) AS survival_rate FROM titanic GROUP BY pclass, sex;
 ```
