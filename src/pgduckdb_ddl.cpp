@@ -514,11 +514,11 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::CREATE_TABLE;
 			pgduckdb::ClaimCurrentCommandId();
 			/*
-				* Force skipData to false for ducklake tables, so that Postgres does
-				* not execute the query, and save the original value in ducklake_ctas_skip_data
-				* so we can use it later in ducklake_create_table_trigger to choose
-				* whether to execute the query in DuckDB or not.
-				*/
+			 * Force skipData to false for ducklake tables, so that Postgres does
+			 * not execute the query, and save the original value in ducklake_ctas_skip_data
+			 * so we can use it later in ducklake_create_table_trigger to choose
+			 * whether to execute the query in DuckDB or not.
+			 */
 			pgduckdb::ducklake_ctas_skip_data = stmt->into->skipData;
 			stmt->into->skipData = true;
 		}
