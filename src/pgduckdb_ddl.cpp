@@ -3,10 +3,11 @@
 #include "pgduckdb/pgduckdb_xact.hpp"
 #include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_ddl.hpp"
-#include "pgduckdb/ducklake/pgducklake_ddl.hpp"
 #include "pgduckdb/pgduckdb_hooks.hpp"
 #include "pgduckdb/pgduckdb_planner.hpp"
 #include "pgduckdb/pg/string_utils.hpp"
+
+#include "pgduckdb/ducklake/pgducklake_ddl.hpp"
 
 extern "C" {
 #include "postgres.h"
