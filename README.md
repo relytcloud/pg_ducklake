@@ -117,6 +117,7 @@ GROUP BY "Pclass", "Sex";
 
 ### Features
 
+- [x] CREATE / CREATE_TABLE_AS for DuckLake tables
 - [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
 - [ ] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
 - [ ] Time-travel queries
