@@ -31,7 +31,7 @@ CREATE FUNCTION ducklake._create_table_trigger() RETURNS event_trigger
     AS 'MODULE_PATHNAME', 'ducklake_create_table_trigger' LANGUAGE C;
 
 CREATE EVENT TRIGGER ducklake_create_table_trigger ON ddl_command_end
-    WHEN tag IN ('CREATE TABLE')
+    WHEN tag IN ('CREATE TABLE', 'CREATE TABLE AS')
     EXECUTE FUNCTION ducklake._create_table_trigger();
 
 CREATE FUNCTION ducklake._drop_trigger() RETURNS event_trigger
