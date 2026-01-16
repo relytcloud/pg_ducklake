@@ -33,7 +33,7 @@ extern "C" {
 extern "C" {
 
 #define NOT_IMPLEMENTED()                                                                                              \
-	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("duckdb does not implement %s", __func__)))
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake does not implement %s", __func__)))
 
 PG_FUNCTION_INFO_V1(ducklake_am_handler);
 
