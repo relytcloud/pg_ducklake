@@ -3,3 +3,4 @@ test: data_path
 test: initialization
 test: temp_table
 test: ctas
+test: default_table_path

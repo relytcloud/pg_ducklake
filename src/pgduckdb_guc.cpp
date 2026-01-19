@@ -142,6 +142,35 @@ char *duckdb_max_temp_directory_size = strdup("");
 char *duckdb_default_collation = strdup("");
 char *duckdb_azure_transport_option_type = strdup("");
 char *duckdb_custom_user_agent = strdup("");
+char *ducklake_default_table_path = strdup("");
+
+static void
+DuckAssignDuckLakeDefaultTablePath_Cpp(const char *new_path) {
+	if (!IsExtensionRegistered()) {
+		return;
+	}
+
+	if (!DuckDBManager::IsInitialized()) {
+		return;
+	}
+
+	auto connection = pgduckdb::DuckDBManager::GetConnectionUnsafe();
+	if (new_path == nullptr || strlen(new_path) == 0) {
+		// If path is empty or null, reset the DuckDB variable
+		pgduckdb::DuckDBQueryOrThrow(*connection, "RESET ducklake_default_table_path");
+		elog(DEBUG2, "[PGDuckDB] Reset DuckDB option: 'ducklake_default_table_path'");
+	} else {
+		// Set the DuckDB variable to the new path
+		pgduckdb::DuckDBQueryOrThrow(*connection,
+		                             "SET ducklake_default_table_path=" + duckdb::KeywordHelper::WriteQuoted(new_path));
+		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'ducklake_default_table_path'=%s", new_path);
+	}
+}
+
+static void
+DuckAssignDuckLakeDefaultTablePath(const char *newval, void *extra) {
+	InvokeCPPFunc(DuckAssignDuckLakeDefaultTablePath_Cpp, newval);
+}
 
 void
 InitGUC() {
@@ -247,6 +276,11 @@ InitGUC() {
 
 	DefineCustomDuckDBVariable("duckdb.custom_user_agent", "Additional user agent string to append to 'pg_duckdb'",
 	                           &duckdb_custom_user_agent, PGC_SUSET);
+
+	/* DuckLake specific GUCs */
+	DefineCustomVariable("ducklake.default_table_path",
+	                     "Default directory path for DuckLake tables. If set, tables will be created under this path",
+	                     &ducklake_default_table_path, PGC_USERSET, 0, NULL, DuckAssignDuckLakeDefaultTablePath, NULL);
 }
 
 #if PG_VERSION_NUM < 160000
