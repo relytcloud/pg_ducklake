@@ -1,5 +1,4 @@
 CREATE TABLE t (a int, b int) using ducklake;
-NOTICE:  schema "ducklake" already exists, skipping
 INSERT INTO t VALUES (1, 101), (2, 202);
 SELECT * FROM t ORDER BY a;
  a |  b  
