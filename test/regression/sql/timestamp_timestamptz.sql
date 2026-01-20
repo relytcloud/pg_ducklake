@@ -104,7 +104,7 @@ set duckdb.force_execution = on;
 SELECT * FROM t WHERE d IN (SELECT tz FROM t);
 
 
-drop extension pg_duckdb;
+drop extension pg_duckdb cascade;
 
 SET TIME ZONE 'UTC';
 SHOW TIME ZONE;

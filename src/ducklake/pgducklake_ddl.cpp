@@ -336,12 +336,30 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 	SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET, PGC_S_SESSION);
 	SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
 
+	// We only care about ducklake table drop
+	int ret = SPI_exec(R"(
+		SELECT 1
+		FROM pg_catalog.pg_event_trigger_dropped_objects()
+		WHERE object_type = 'table'
+	)",
+	                   0);
+
+	if (ret != SPI_OK_SELECT) {
+		elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+	}
+
+	if (SPI_processed == 0) {
+		AtEOXact_GUC(false, save_nestlevel);
+		SPI_finish();
+		PG_RETURN_NULL();
+	}
+
 	/*
 	 * We cannot see dropped objects in pg_class at this point,
 	 * so we directly query ducklake metadata.
 	 * Could be buggy.
 	 */
-	int ret = SPI_exec(R"(
+	ret = SPI_exec(R"(
 		SELECT cmds.schema_name, cmds.object_name
 		FROM pg_catalog.pg_event_trigger_dropped_objects() cmds
 		JOIN ducklake.ducklake_table AS tbl
@@ -353,7 +371,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 		AND tbl.end_snapshot IS NULL
 		AND schema.end_snapshot IS NULL
 		)",
-	                   0);
+	               0);
 
 	if (ret != SPI_OK_SELECT) {
 		elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
