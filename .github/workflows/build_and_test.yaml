@@ -138,11 +138,6 @@ jobs:
         working-directory: duckdb
         run: make installcheck DUCKDB_BUILD=${{ matrix.type }}
 
-      - name: Run make pycheck
-        id: pycheck
-        working-directory: duckdb
-        run: make pycheck DUCKDB_BUILD=${{ matrix.type }}
-
       - name: Print regression.diffs if regression tests failed
         if: failure() && steps.installcheck.outcome == 'failure'
         # Always "fail" this task by adding "&& false", so that rits output

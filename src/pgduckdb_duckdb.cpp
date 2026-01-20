@@ -209,6 +209,22 @@ DuckDBManager::Initialize() {
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE ':memory:' AS pg_temp;");
 
+	{
+		// pg_ducklake
+		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
+
+		if (!PgDuckLakeMetadataManager::IsInitialized()) {
+			auto data_path_string = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+			std::filesystem::create_directory(data_path_string);
+			pgduckdb::DuckDBQueryOrThrow(
+			    context, "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" +
+			                 data_path_string + "')");
+		} else {
+			pgduckdb::DuckDBQueryOrThrow(context,
+			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
+		}
+	}
+
 	if (pgduckdb::IsMotherDuckEnabled()) {
 		auto timeout = FindMotherDuckBackgroundCatalogRefreshInactivityTimeout();
 		if (timeout != nullptr) {
