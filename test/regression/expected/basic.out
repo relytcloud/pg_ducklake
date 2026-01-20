@@ -59,7 +59,6 @@ CREATE TABLE lt(a INT);
 INSERT INTO rt SELECT g FROM generate_series(1,100) g;
 INSERT INTO lt SELECT g % 10 FROM generate_series(1,100000) g;
 SELECT lt.a * rt.a FROM lt, rt WHERE lt.a % 2 = 0 AND rt.a = 0;
-NOTICE:  schema "ducklake" already exists, skipping
  ?column? 
 ----------
 (0 rows)

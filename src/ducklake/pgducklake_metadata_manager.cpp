@@ -260,6 +260,12 @@ PgDuckLakeMetadataManager::IsInitialized() {
 	return found;
 }
 
+void
+PgDuckLakeMetadataManager::InitializeDuckLake(bool /*has_explicit_schema*/, duckdb::DuckLakeEncryption encryption) {
+	// Don't even try to create schema
+	duckdb::DuckLakeMetadataManager::InitializeDuckLake(false, encryption);
+}
+
 static bool
 AddChildColumn(duckdb::vector<duckdb::DuckLakeColumnInfo> &columns, duckdb::FieldIndex parent_id,
                duckdb::DuckLakeColumnInfo &column_info) {

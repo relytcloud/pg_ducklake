@@ -7,7 +7,6 @@ CREATE TEMP TABLE alter_test(
     value DOUBLE PRECISION DEFAULT 0.0,
     created_at TIMESTAMP
 ) USING duckdb;
-NOTICE:  schema "ducklake" already exists, skipping
 INSERT INTO alter_test VALUES (1, 'test1', 10.5, '2023-01-01 12:00:00');
 INSERT INTO alter_test VALUES (2, 'test2', 20.5, '2023-01-02 12:00:00');
 -- Verify initial state

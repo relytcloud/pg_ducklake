@@ -26,7 +26,6 @@ CREATE EXTENSION pg_duckdb;
 SET duckdb.force_execution TO false;
 SET duckdb.allow_community_extensions = true;
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
-NOTICE:  schema "ducklake" already exists, skipping
  extension_name | loaded | installed | installed_from 
 ----------------+--------+-----------+----------------
  core_functions | t      | t         | 

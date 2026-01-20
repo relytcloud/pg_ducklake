@@ -4,7 +4,6 @@ SET duckdb.unsafe_allow_execution_inside_functions = true;
 CREATE TABLE t(a int);
 INSERT INTO t VALUES (1);
 CREATE TEMP TABLE t_ddb(a int) USING duckdb;
-NOTICE:  schema "ducklake" already exists, skipping
 INSERT INTO t_ddb VALUES (1);
 BEGIN;
 SELECT * FROM t_ddb;

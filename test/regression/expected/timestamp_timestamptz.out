@@ -6,7 +6,6 @@ CREATE TABLE t(a TIMESTAMP, b TEXT);
 INSERT INTO t VALUES('Infinity','Positive INF'), ('-Infinity','Negative INF');
 -- PG Execution
 SELECT * from t;
-NOTICE:  schema "ducklake" already exists, skipping
      a     |      b       
 -----------+--------------
  infinity  | Positive INF
