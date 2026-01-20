@@ -1,11 +1,3 @@
-SELECT ducklake.create_metadata();
-NOTICE:  No data path provided, using default: DataDir/pg_ducklake
-NOTICE:  schema "ducklake" already exists, skipping
- create_metadata 
------------------
- 
-(1 row)
-
 CREATE TABLE row_store_table AS
 SELECT i AS id, 'hello pg_ducklake' AS msg
 FROM generate_series(1, 10000) AS i;
@@ -20,3 +12,5 @@ SELECT * FROM col_store_table ORDER BY id DESC LIMIT 3;
   9998 | hello pg_ducklake
 (3 rows)
 
+DROP TABLE row_store_table;
+DROP TABLE col_store_table;

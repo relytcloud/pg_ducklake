@@ -41,10 +41,14 @@ CREATE FUNCTION ducklake._drop_trigger() RETURNS event_trigger
 CREATE EVENT TRIGGER ducklake_drop_trigger ON sql_drop
     EXECUTE FUNCTION ducklake._drop_trigger();
 
-CREATE FUNCTION ducklake.create_metadata(data_path cstring = NULL) RETURNS void
+CREATE FUNCTION ducklake._initialize() RETURNS void
     SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_create_metadata' LANGUAGE C;
+    AS 'MODULE_PATHNAME', 'ducklake_initialize'
+    LANGUAGE C;
 
-CREATE FUNCTION ducklake.drop_metadata(delete_files boolean = false) RETURNS void
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_drop_metadata' LANGUAGE C;
+-- Initialize DuckDB when extension is created
+DO $$
+BEGIN
+    PERFORM ducklake._initialize();
+END
+$$;

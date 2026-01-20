@@ -9,7 +9,6 @@
 
 extern "C" {
 #include "postgres.h"
-#include "access/xact.h"
 #include "utils/guc.h"
 #include "utils/guc_tables.h"
 #include "miscadmin.h" // DataDir
@@ -142,6 +141,21 @@ char *duckdb_max_temp_directory_size = strdup("");
 char *duckdb_default_collation = strdup("");
 char *duckdb_azure_transport_option_type = strdup("");
 char *duckdb_custom_user_agent = strdup("");
+char *ducklake_default_table_path = strdup("");
+
+static void
+DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
+	if (!IsExtensionRegistered()) {
+		return;
+	}
+
+	// TODO: validate
+}
+
+static void
+DuckAssignDuckLakeDefaultTablePath(const char *newval, void * /*extra*/) {
+	InvokeCPPFunc(DuckAssignDuckLakeDefaultTablePath_Cpp, newval);
+}
 
 void
 InitGUC() {
@@ -247,6 +261,11 @@ InitGUC() {
 
 	DefineCustomDuckDBVariable("duckdb.custom_user_agent", "Additional user agent string to append to 'pg_duckdb'",
 	                           &duckdb_custom_user_agent, PGC_SUSET);
+
+	/* DuckLake specific GUCs */
+	DefineCustomVariable("ducklake.default_table_path",
+	                     "Default directory path for DuckLake tables. If set, tables will be created under this path",
+	                     &ducklake_default_table_path, PGC_USERSET, 0, NULL, DuckAssignDuckLakeDefaultTablePath, NULL);
 }
 
 #if PG_VERSION_NUM < 160000
