@@ -26,9 +26,9 @@ SELECT
     starts_with(path, '/tmp/ducklake_custom_tables') as uses_custom_path
 FROM ducklake.ducklake_table
 WHERE table_name = 'test_custom_path';
-    table_name    |                        path                        | path_is_relative | uses_custom_path 
-------------------+----------------------------------------------------+------------------+------------------
- test_custom_path | /tmp/ducklake_custom_tables/main/test_custom_path/ | f                | t
+    table_name    |                         path                         | path_is_relative | uses_custom_path 
+------------------+------------------------------------------------------+------------------+------------------
+ test_custom_path | /tmp/ducklake_custom_tables/public/test_custom_path/ | f                | t
 (1 row)
 
 -- Test 3: Insert data and verify it works
@@ -50,9 +50,9 @@ SELECT
     starts_with(path, '/tmp/ducklake_custom_tables') as uses_custom_path
 FROM ducklake.ducklake_table
 WHERE table_name = 'test_ctas_custom_path';
-      table_name       |                          path                           | uses_custom_path 
------------------------+---------------------------------------------------------+------------------
- test_ctas_custom_path | /tmp/ducklake_custom_tables/main/test_ctas_custom_path/ | t
+      table_name       |                           path                            | uses_custom_path 
+-----------------------+-----------------------------------------------------------+------------------
+ test_ctas_custom_path | /tmp/ducklake_custom_tables/public/test_ctas_custom_path/ | t
 (1 row)
 
 -- Verify data was copied
@@ -73,9 +73,9 @@ SELECT
     starts_with(path, '/tmp/ducklake_another_location') as uses_another_path
 FROM ducklake.ducklake_table
 WHERE table_name = 'test_another_path';
-    table_name     |                          path                          | uses_another_path 
--------------------+--------------------------------------------------------+-------------------
- test_another_path | /tmp/ducklake_another_location/main/test_another_path/ | t
+    table_name     |                           path                           | uses_another_path 
+-------------------+----------------------------------------------------------+-------------------
+ test_another_path | /tmp/ducklake_another_location/public/test_another_path/ | t
 (1 row)
 
 -- Test 6: Reset to empty string (should use default path)
@@ -101,13 +101,13 @@ SELECT
 FROM ducklake.ducklake_table
 WHERE table_name LIKE 'test_%'
 ORDER BY table_name;
-      table_name       |                       path_prefix                       | path_is_relative 
------------------------+---------------------------------------------------------+------------------
- test_another_path     | /tmp/ducklake_another_location/main/test_another_path/  | f
- test_ctas_custom_path | /tmp/ducklake_custom_tables/main/test_ctas_custom_path/ | f
- test_custom_path      | /tmp/ducklake_custom_tables/main/test_custom_path/      | f
- test_default_path     | test_default_path/                                      | t
- test_reset_path       | test_reset_path/                                        | t
+      table_name       |                        path_prefix                        | path_is_relative 
+-----------------------+-----------------------------------------------------------+------------------
+ test_another_path     | /tmp/ducklake_another_location/public/test_another_path/  | f
+ test_ctas_custom_path | /tmp/ducklake_custom_tables/public/test_ctas_custom_path/ | f
+ test_custom_path      | /tmp/ducklake_custom_tables/public/test_custom_path/      | f
+ test_default_path     | test_default_path/                                        | t
+ test_reset_path       | test_reset_path/                                          | t
 (5 rows)
 
 -- Cleanup
