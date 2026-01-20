@@ -25,7 +25,6 @@ public:
 	duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
 
 	static bool IsInitialized();
-	void InitializeDuckLake(bool has_explicit_schema, duckdb::DuckLakeEncryption encryption) override;
 	bool
 	IsInitialized(duckdb::DuckLakeOptions & /*options*/) override {
 		return IsInitialized();
