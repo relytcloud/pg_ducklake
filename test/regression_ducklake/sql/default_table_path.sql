@@ -88,3 +88,20 @@ DROP TABLE test_custom_path;
 DROP TABLE test_ctas_custom_path;
 DROP TABLE test_another_path;
 DROP TABLE test_reset_path;
+
+-- Test 8: Set before ddb initialized
+DROP EXTENSION pg_duckdb;
+CREATE EXTENSION pg_duckdb;
+-- ddb session is not initialized here
+SET ducklake.default_table_path = 's3://my_bucket';
+CREATE TABLE t(a INT) USING ducklake;
+
+SELECT
+    table_name,
+    path,
+    path_is_relative,
+    substring(path from 1 for 50) as path_prefix
+FROM ducklake.ducklake_table
+WHERE table_name = 't';
+
+DROP TABLE t;

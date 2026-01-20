@@ -9,7 +9,6 @@
 
 extern "C" {
 #include "postgres.h"
-#include "access/xact.h"
 #include "utils/guc.h"
 #include "utils/guc_tables.h"
 #include "miscadmin.h" // DataDir
@@ -145,26 +144,12 @@ char *duckdb_custom_user_agent = strdup("");
 char *ducklake_default_table_path = strdup("");
 
 static void
-DuckAssignDuckLakeDefaultTablePath_Cpp(const char *new_path) {
+DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
 	if (!IsExtensionRegistered()) {
 		return;
 	}
 
-	if (!DuckDBManager::IsInitialized()) {
-		return;
-	}
-
-	auto connection = pgduckdb::DuckDBManager::GetConnectionUnsafe();
-	if (new_path == nullptr || strlen(new_path) == 0) {
-		// If path is empty or null, reset the DuckDB variable
-		pgduckdb::DuckDBQueryOrThrow(*connection, "RESET ducklake_default_table_path");
-		elog(DEBUG2, "[PGDuckDB] Reset DuckDB option: 'ducklake_default_table_path'");
-	} else {
-		// Set the DuckDB variable to the new path
-		pgduckdb::DuckDBQueryOrThrow(*connection,
-		                             "SET ducklake_default_table_path=" + duckdb::KeywordHelper::WriteQuoted(new_path));
-		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'ducklake_default_table_path'=%s", new_path);
-	}
+	// TODO: validate
 }
 
 static void

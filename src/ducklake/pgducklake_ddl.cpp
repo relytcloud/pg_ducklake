@@ -1,5 +1,6 @@
 #include "pgduckdb/ducklake/pgducklake_ddl.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
+#include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_types.hpp"
@@ -313,7 +314,18 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 
 	auto connection = pgduckdb::DuckDBManager::GetConnection(false);
 
-	pgduckdb::DuckDBQueryOrThrow(*connection, create_table_string);
+	std::string set_table_path_string;
+	auto &table_path = pgduckdb::ducklake_default_table_path;
+	if (table_path == nullptr || strlen(table_path) == 0) {
+		// If path is empty or null, reset the DuckDB variable
+		set_table_path_string = "RESET ducklake_default_table_path";
+		elog(DEBUG2, "[PGDuckDB] Reset DuckDB option: 'ducklake_default_table_path'");
+	} else {
+		set_table_path_string = "SET ducklake_default_table_path=" + duckdb::KeywordHelper::WriteQuoted(table_path);
+		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'ducklake_default_table_path'=%s", table_path);
+	}
+
+	pgduckdb::DuckDBQueryOrThrow(*connection, set_table_path_string + ";" + create_table_string);
 	if (IsA(parsetree, CreateTableAsStmt) && !pgduckdb::ducklake_ctas_skip_data) {
 		auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
 		auto ctas_query = (Query *)ctas_stmt->query;
