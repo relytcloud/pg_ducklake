@@ -1,9 +1,6 @@
 -- Test ducklake.default_table_path GUC
 -- This test verifies that tables are created in custom paths when the GUC is set
 
--- Initialize DuckLake
-SELECT ducklake.create_metadata();
-
 -- Test 1: Create table without GUC set (should use default path)
 CREATE TABLE test_default_path (i INT, j VARCHAR) USING ducklake;
 
@@ -36,7 +33,8 @@ INSERT INTO test_custom_path VALUES (1, 'one'), (2, 'two');
 SELECT * FROM test_custom_path ORDER BY i;
 
 -- Test 4: CTAS with custom path
-CREATE TABLE test_ctas_custom_path AS SELECT * FROM test_custom_path;
+CREATE TABLE test_ctas_custom_path USING ducklake
+AS SELECT * FROM test_custom_path;
 
 -- Verify CTAS table also uses custom path
 SELECT
@@ -90,5 +88,3 @@ DROP TABLE test_custom_path;
 DROP TABLE test_ctas_custom_path;
 DROP TABLE test_another_path;
 DROP TABLE test_reset_path;
-
-SELECT ducklake.drop_metadata(true);

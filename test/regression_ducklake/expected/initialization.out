@@ -1,18 +1,8 @@
--- Table AM 'ducklake' is created once the extension is installed, but tables cannot be created before initialization
+-- Table AM 'ducklake' is created once the extension is installed
 SELECT amname FROM pg_am WHERE amname = 'ducklake';
   amname  
 ----------
  ducklake
-(1 row)
-
-CREATE TABLE t (a int) USING ducklake;
-ERROR:  DuckLake metadata is not initialized
-SELECT ducklake.create_metadata();
-NOTICE:  No data path provided, using default: DataDir/pg_ducklake
-NOTICE:  schema "ducklake" already exists, skipping
- create_metadata 
------------------
- 
 (1 row)
 
 CREATE TABLE t (a int) USING ducklake;
@@ -23,25 +13,4 @@ WHERE relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake');
 ---------
  t
 (1 row)
-
-SELECT ducklake.drop_metadata();
-NOTICE:  ducklake files are not deleted
- drop_metadata 
----------------
- 
-(1 row)
-
--- After drop_metadata(), all tables using ducklake AM are dropped, but the table AM itself is not dropped
-SELECT amname FROM pg_am WHERE amname = 'ducklake';
-  amname  
-----------
- ducklake
-(1 row)
-
-SELECT relname
-FROM pg_class
-WHERE relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake');
- relname 
----------
-(0 rows)
 

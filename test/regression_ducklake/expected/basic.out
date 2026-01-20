@@ -1,12 +1,5 @@
-SELECT ducklake.create_metadata();
-NOTICE:  No data path provided, using default: DataDir/pg_ducklake
-NOTICE:  schema "ducklake" already exists, skipping
- create_metadata 
------------------
- 
-(1 row)
-
 CREATE TABLE t (a int, b int) using ducklake;
+NOTICE:  schema "ducklake" already exists, skipping
 INSERT INTO t VALUES (1, 101), (2, 202);
 SELECT * FROM t ORDER BY a;
  a |  b  
@@ -22,10 +15,3 @@ SELECT * FROM t WHERE a = 1;
 (1 row)
 
 DROP TABLE t;
-SELECT ducklake.drop_metadata(true);
-WARNING:  Deleting all ducklake files
- drop_metadata 
----------------
- 
-(1 row)
-
