@@ -15,7 +15,7 @@ DROP TABLE empty;
 
 -- Check that DROP / CREATE extension works
 
-DROP EXTENSION pg_duckdb CASCADE;
+DROP EXTENSION pg_duckdb;
 CREATE EXTENSION pg_duckdb;
 
 

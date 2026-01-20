@@ -1,27 +1,4 @@
 DROP EXTENSION pg_duckdb CASCADE;
-NOTICE:  drop cascades to 22 other objects
-DETAIL:  drop cascades to table ducklake.ducklake_metadata
-drop cascades to table ducklake.ducklake_snapshot
-drop cascades to table ducklake.ducklake_snapshot_changes
-drop cascades to table ducklake.ducklake_schema
-drop cascades to table ducklake.ducklake_table
-drop cascades to table ducklake.ducklake_view
-drop cascades to table ducklake.ducklake_tag
-drop cascades to table ducklake.ducklake_column_tag
-drop cascades to table ducklake.ducklake_data_file
-drop cascades to table ducklake.ducklake_file_column_stats
-drop cascades to table ducklake.ducklake_delete_file
-drop cascades to table ducklake.ducklake_column
-drop cascades to table ducklake.ducklake_table_stats
-drop cascades to table ducklake.ducklake_table_column_stats
-drop cascades to table ducklake.ducklake_partition_info
-drop cascades to table ducklake.ducklake_partition_column
-drop cascades to table ducklake.ducklake_file_partition_value
-drop cascades to table ducklake.ducklake_files_scheduled_for_deletion
-drop cascades to table ducklake.ducklake_inlined_data_tables
-drop cascades to table ducklake.ducklake_column_mapping
-drop cascades to table ducklake.ducklake_name_mapping
-drop cascades to table ducklake.ducklake_schema_versions
 CREATE EXTENSION pg_duckdb;
 SET duckdb.force_execution TO false;
 SET duckdb.allow_community_extensions = true;

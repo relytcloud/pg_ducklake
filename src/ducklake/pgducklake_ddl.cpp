@@ -225,6 +225,14 @@ pgducklake_get_tabledef(Oid relation_oid) {
 
 extern "C" {
 
+DECLARE_PG_FUNCTION(ducklake_initialize) {
+	// Initialize DuckDB here to create DuckLake metadata tables.
+	pgduckdb::DuckDBManager::Get();
+	// Drop the DuckDB instance for set-before-initial variables.
+	pgduckdb::DuckDBManager::Reset();
+	PG_RETURN_VOID();
+}
+
 DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 	if (!CALLED_AS_EVENT_TRIGGER(fcinfo)) /* internal error */
 		elog(ERROR, "not fired by event trigger manager");

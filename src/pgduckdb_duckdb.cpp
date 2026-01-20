@@ -217,10 +217,11 @@ DuckDBManager::Initialize() {
 			auto data_path_string = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
 			std::filesystem::create_directory(data_path_string);
 			pgduckdb::DuckDBQueryOrThrow(
-			    "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" +
-			    data_path_string + "')");
+			    context, "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" +
+			                 data_path_string + "')");
 		} else {
-			pgduckdb::DuckDBQueryOrThrow("ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
+			pgduckdb::DuckDBQueryOrThrow(context,
+			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
 		}
 	}
 
