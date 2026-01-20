@@ -168,7 +168,7 @@ DuckAssignDuckLakeDefaultTablePath_Cpp(const char *new_path) {
 }
 
 static void
-DuckAssignDuckLakeDefaultTablePath(const char *newval, void *extra) {
+DuckAssignDuckLakeDefaultTablePath(const char *newval, void * /*extra*/) {
 	InvokeCPPFunc(DuckAssignDuckLakeDefaultTablePath_Cpp, newval);
 }
 
