@@ -25,10 +25,8 @@ _This project is under high development and is not yet ready for production use.
 ### Your first Data Lake in PostgreSQL
 
 ```sql
--- Use local filesystem.
-SELECT ducklake.create_metadata();
 -- Or use AWS S3 as data storage.
--- SELECT ducklake.create_metadata('s3://my-bucket/prefix/');
+-- SET ducklake.default_table_path = 's3://my-bucket/prefix/';
 
 CREATE TABLE my_table (
     id INT,
