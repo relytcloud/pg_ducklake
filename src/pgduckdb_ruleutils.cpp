@@ -1277,6 +1277,24 @@ pg_duckdb_get_oper_expr_make_ctx(const char *op_name, Node **, Node **arg2) {
 		ctx->is_negated = true;
 	}
 
+	/*
+	 * If match pattern is a constant text value, simply check if it has an escape character. If not, we can skip
+	 * the escape pattern so that DuckDB has opportunity to optimize the query.
+	 */
+	if (ctx->is_likeish_op && IsA(*arg2, Const)) {
+		auto arg2_const = (Const *)*arg2;
+		if (arg2_const->consttype == TEXTOID && !arg2_const->constisnull) {
+			text *text_value = DatumGetTextP(arg2_const->constvalue);
+			const char *p = VARDATA_ANY(text_value);
+			const char *p_end = p + VARSIZE_ANY_EXHDR(text_value);
+
+			// Only deal with default escape pattern for now
+			if (memchr(p, '\\', p_end - p) == NULL) {
+				ctx->escape_pattern = NULL;
+			}
+		}
+	}
+
 	if (ctx->is_likeish_op && IsA(*arg2, FuncExpr)) {
 		auto arg2_func = (FuncExpr *)*arg2;
 		auto func_name = get_func_name(arg2_func->funcid);
@@ -1310,7 +1328,9 @@ void
 pg_duckdb_get_oper_expr_suffix(StringInfo buf, void *vctx) {
 	auto ctx = static_cast<PGDuckDBGetOperExprContext *>(vctx);
 	if (ctx->is_likeish_op) {
-		appendStringInfo(buf, " ESCAPE %s", ctx->escape_pattern);
+		if (ctx->escape_pattern) {
+			appendStringInfo(buf, " ESCAPE %s", ctx->escape_pattern);
+		}
 
 		if (ctx->is_negated) {
 			appendStringInfo(buf, ")");
