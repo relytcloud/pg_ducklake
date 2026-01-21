@@ -48,7 +48,7 @@ ATTACH 'ducklake:postgres://postgres:duckdb@localhost:5432/postgres' AS my_duckl
 SELECT * FROM my_ducklake.my_table;
 ```
 
-**Known limitation**: When using local filesystem, DuckDB might not able to access your data.
+For cloud storage (AWS S3 or Azure Blob Storage), see the [Secrets Management guide](docs/ducklake/secrets.md).
 
 ## Quick Start
 
@@ -110,6 +110,10 @@ SELECT "Pclass", "Sex", COUNT(*), AVG("Survived") AS survival_rate
 FROM titanic
 GROUP BY "Pclass", "Sex";
 ```
+
+## Documentation
+
+- **[DuckLake Secrets Management](docs/ducklake/secrets.md)** - Configure credentials for AWS S3 and Azure Blob Storage
 
 ## Roadmap
 
