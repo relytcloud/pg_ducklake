@@ -50,6 +50,8 @@ SELECT duckdb.create_azure_secret(
 );
 
 SET ducklake.default_table_path = 'az://my-container/prefix/ducklake';
+
+-- Now you can create DuckLake tables which will use this configured path
 ```
 
 ## Understanding Scope
