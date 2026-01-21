@@ -62,6 +62,10 @@ FROM base AS output
 RUN apt-get update -qq && \
     apt-get install -y ca-certificates libcurl4
 
+# Create CA bundle symlink for supporting Azure HTTPS connections
+RUN mkdir -p /etc/pki/tls/certs && \
+    ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
+
 # Automatically enable pg_duckdb
 RUN echo "shared_preload_libraries='pg_duckdb'" >> /usr/share/postgresql/postgresql.conf.sample
 COPY --chown=postgres:postgres docker/init.d/ /docker-entrypoint-initdb.d/
