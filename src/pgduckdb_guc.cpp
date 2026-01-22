@@ -141,6 +141,7 @@ char *duckdb_max_temp_directory_size = strdup("");
 char *duckdb_default_collation = strdup("");
 char *duckdb_azure_transport_option_type = strdup("");
 char *duckdb_custom_user_agent = strdup("");
+bool duckdb_parquet_metadata_cache = true;
 char *ducklake_default_table_path = strdup("");
 
 static void
@@ -261,6 +262,10 @@ InitGUC() {
 
 	DefineCustomDuckDBVariable("duckdb.custom_user_agent", "Additional user agent string to append to 'pg_duckdb'",
 	                           &duckdb_custom_user_agent, PGC_SUSET);
+
+	DefineCustomDuckDBVariable("duckdb.parquet_metadata_cache",
+	                           "Whether to cache Parquet metadata for improved query performance",
+	                           &duckdb_parquet_metadata_cache, PGC_SUSET);
 
 	/* DuckLake specific GUCs */
 	DefineCustomVariable("ducklake.default_table_path",
