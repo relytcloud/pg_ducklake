@@ -1,0 +1,48 @@
+-- Test ALTER TABLE and RENAME for DuckLake tables
+-- CREATE TABLE
+CREATE TABLE test_ddl (id INT, name TEXT) USING ducklake;
+INSERT INTO test_ddl VALUES (1, 'Alice');
+SELECT * FROM test_ddl;
+ id | name  
+----+-------
+  1 | Alice
+(1 row)
+
+-- RENAME TABLE
+ALTER TABLE test_ddl RENAME TO test_ddl_renamed;
+SELECT * FROM test_ddl_renamed;
+ id | name  
+----+-------
+  1 | Alice
+(1 row)
+
+-- ADD COLUMN
+ALTER TABLE test_ddl_renamed ADD COLUMN age INT DEFAULT 20;
+INSERT INTO test_ddl_renamed VALUES (2, 'Bob', 30);
+SELECT * FROM test_ddl_renamed ORDER BY id;
+ id | name  | age 
+----+-------+-----
+  1 | Alice |  20
+  2 | Bob   |  30
+(2 rows)
+
+-- RENAME COLUMN
+ALTER TABLE test_ddl_renamed RENAME COLUMN name TO full_name;
+SELECT * FROM test_ddl_renamed ORDER BY id;
+ id | full_name | age 
+----+-----------+-----
+  1 | Alice     |  20
+  2 | Bob       |  30
+(2 rows)
+
+-- ALTER COLUMN TYPE
+ALTER TABLE test_ddl_renamed ALTER COLUMN id TYPE BIGINT;
+SELECT * FROM test_ddl_renamed ORDER BY id;
+ id | full_name | age 
+----+-----------+-----
+  1 | Alice     |  20
+  2 | Bob       |  30
+(2 rows)
+
+-- DROP TABLE
+DROP TABLE test_ddl_renamed;

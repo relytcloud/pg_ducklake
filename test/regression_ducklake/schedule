@@ -4,3 +4,4 @@ test: default_table_path
 test: initialization
 test: readme_examples
 test: temp_table
+test: ddl
