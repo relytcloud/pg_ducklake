@@ -44,8 +44,8 @@ SELECT * FROM my_table;
 ```sql
 INSTALL ducklake;
 LOAD ducklake;
-ATTACH 'ducklake:postgres://postgres:duckdb@localhost:5432/postgres' AS my_ducklake (METADATA_SCHEMA 'ducklake');
-SELECT * FROM my_ducklake.my_table;
+ATTACH 'ducklake:postgres://postgres:duckdb@localhost:5432/postgres' AS my_ducklake (DATA_PATH '$PGDATA/pg_ducklake', METADATA_SCHEMA 'ducklake');
+SELECT * FROM my_ducklake.public.my_table;
 ```
 
 For cloud storage (AWS S3 or Azure Blob Storage), see the [Secrets Management guide](docs/ducklake/secrets.md).
@@ -121,7 +121,7 @@ GROUP BY "Pclass", "Sex";
 
 - [x] CREATE / CREATE_TABLE_AS for DuckLake tables
 - [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
-- [ ] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
+- [x] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
 - [ ] Time-travel queries
 - [ ] Partitioned tables
 - [ ] Read-only `pg_ducklake` tables referencing shared DuckLake datasets (e.g., frozen DuckLake)
