@@ -206,6 +206,8 @@ DuckDBManager::Initialize() {
 	pgduckdb::DuckDBQueryOrThrow(context, "SET TimeZone =" + duckdb::KeywordHelper::WriteQuoted(pg_time_zone));
 	pgduckdb::DuckDBQueryOrThrow(context, "SET default_collation =" +
 	                                          duckdb::KeywordHelper::WriteQuoted(duckdb_default_collation));
+	duckdb::string set_parquet_metadata_cache = duckdb_parquet_metadata_cache ? "true" : "false";
+	pgduckdb::DuckDBQueryOrThrow(context, "SET parquet_metadata_cache =" + set_parquet_metadata_cache);
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE ':memory:' AS pg_temp;");
 
