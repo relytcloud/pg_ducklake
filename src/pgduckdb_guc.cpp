@@ -154,6 +154,27 @@ DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
 }
 
 static void
+DuckAssignParquetMetadataCache_Cpp(bool new_val) {
+	if (!IsExtensionRegistered()) {
+		return;
+	}
+
+	if (!DuckDBManager::IsInitialized()) {
+		return;
+	}
+
+	auto connection = pgduckdb::DuckDBManager::GetConnectionUnsafe();
+	duckdb::string set_query = new_val ? "SET parquet_metadata_cache = true" : "SET parquet_metadata_cache = false";
+	pgduckdb::DuckDBQueryOrThrow(*connection, set_query);
+	elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'parquet_metadata_cache'=%s", new_val ? "true" : "false");
+}
+
+static void
+DuckAssignParquetMetadataCache(bool newval, void * /*extra*/) {
+	InvokeCPPFunc(DuckAssignParquetMetadataCache_Cpp, newval);
+}
+
+static void
 DuckAssignDuckLakeDefaultTablePath(const char *newval, void * /*extra*/) {
 	InvokeCPPFunc(DuckAssignDuckLakeDefaultTablePath_Cpp, newval);
 }
@@ -263,9 +284,9 @@ InitGUC() {
 	DefineCustomDuckDBVariable("duckdb.custom_user_agent", "Additional user agent string to append to 'pg_duckdb'",
 	                           &duckdb_custom_user_agent, PGC_SUSET);
 
-	DefineCustomDuckDBVariable("duckdb.parquet_metadata_cache",
-	                           "Whether to cache Parquet metadata for improved query performance",
-	                           &duckdb_parquet_metadata_cache, PGC_SUSET);
+	DefineCustomVariable("duckdb.parquet_metadata_cache",
+	                     "Whether to cache Parquet metadata for improved query performance",
+	                     &duckdb_parquet_metadata_cache, PGC_SUSET, 0, NULL, DuckAssignParquetMetadataCache, NULL);
 
 	/* DuckLake specific GUCs */
 	DefineCustomVariable("ducklake.default_table_path",
