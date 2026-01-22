@@ -665,10 +665,10 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 				return DuckdbHandleRenameViewPre(stmt);
 			}
 
-			if (pgduckdb::IsDuckdbTable(rel)) {
+			if (pgduckdb::IsDuckdbTable(rel) || pgduckdb::IsDucklakeTable(rel)) {
 				if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
 					ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					                errmsg("Only one DuckDB %s can be renamed in a single statement",
+					                errmsg("Only one DuckDB or DuckLake %s can be renamed in a single statement",
 					                       stmt->renameType == OBJECT_TABLE ? "table" : "column")));
 				}
 				pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::ALTER_TABLE;
@@ -706,7 +706,8 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 		 * afterwards. We currently only do this to get a better error message,
 		 * because we don't support REFERENCES anyway.
 		 */
-		if (pgduckdb::IsDuckdbTable(relation) && pgduckdb::top_level_duckdb_ddl_type == pgduckdb::DDLType::NONE) {
+		if ((pgduckdb::IsDuckdbTable(relation) || pgduckdb::IsDucklakeTable(relation)) &&
+		    pgduckdb::top_level_duckdb_ddl_type == pgduckdb::DDLType::NONE) {
 			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::ALTER_TABLE;
 			pgduckdb::ClaimCurrentCommandId();
 		}
@@ -1734,7 +1735,7 @@ DECLARE_PG_FUNCTION(duckdb_alter_table_trigger) {
 		JOIN pg_catalog.pg_class
 		ON cmds.objid = pg_class.oid
 		WHERE cmds.object_type in ('table', 'table column')
-		AND pg_class.relam = (SELECT oid FROM pg_am WHERE amname = 'duckdb')
+		AND pg_class.relam in (SELECT oid FROM pg_am WHERE amname in ('duckdb', 'ducklake'))
 		UNION ALL
 		SELECT objid as relid, false AS needs_to_check_temporary_set
 		FROM pg_catalog.pg_event_trigger_ddl_commands() cmds
@@ -1747,7 +1748,7 @@ DECLARE_PG_FUNCTION(duckdb_alter_table_trigger) {
 		JOIN pg_catalog.pg_class
 		ON cmds.objid = pg_class.oid
 		WHERE cmds.object_type in ('table', 'table column')
-		AND pg_class.relam != (SELECT oid FROM pg_am WHERE amname = 'duckdb')
+		AND pg_class.relam not in (SELECT oid FROM pg_am WHERE amname in ('duckdb', 'ducklake'))
 		AND pg_class.relpersistence = 't'
 		)",
 	                   0);

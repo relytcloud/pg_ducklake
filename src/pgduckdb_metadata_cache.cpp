@@ -86,6 +86,8 @@ struct {
 	Oid json_oid;
 	/* The OID of the duckdb Table Access Method */
 	Oid table_am_oid;
+	/* The OID of the ducklake Table Access Method */
+	Oid ducklake_table_am_oid;
 	/* The OID of the duckdb.postgres_role */
 	Oid postgres_role_oid;
 	/*
@@ -124,6 +126,7 @@ InvalidateCaches(Datum /*arg*/, int /*cache_id*/, uint32 hash_value) {
 		cache.duckdb_only_functions = NIL;
 		cache.extension_oid = InvalidOid;
 		cache.table_am_oid = InvalidOid;
+		cache.ducklake_table_am_oid = InvalidOid;
 		cache.postgres_role_oid = InvalidOid;
 	}
 }
@@ -271,6 +274,7 @@ IsExtensionRegistered() {
 		BuildDuckdbOnlyFunctions();
 
 		cache.table_am_oid = GetSysCacheOid1(AMNAME, Anum_pg_am_oid, CStringGetDatum("duckdb"));
+		cache.ducklake_table_am_oid = GetSysCacheOid1(AMNAME, Anum_pg_am_oid, CStringGetDatum("ducklake"));
 
 		cache.schema_oid = get_namespace_oid("duckdb", false);
 		cache.row_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid, CStringGetDatum("row"), cache.schema_oid);
@@ -410,6 +414,12 @@ DuckdbTableAmOid() {
 	return cache.table_am_oid;
 }
 
+Oid
+DucklakeTableAmOid() {
+	Assert(cache.valid);
+	return cache.ducklake_table_am_oid;
+}
+
 bool
 IsDuckdbTable(Form_pg_class relation) {
 	Assert(cache.valid);
@@ -420,6 +430,18 @@ bool
 IsDuckdbTable(Relation relation) {
 	Assert(cache.valid);
 	return IsDuckdbTable(relation->rd_rel);
+}
+
+bool
+IsDucklakeTable(Form_pg_class relation) {
+	Assert(cache.valid);
+	return relation->relam == pgduckdb::DucklakeTableAmOid();
+}
+
+bool
+IsDucklakeTable(Relation relation) {
+	Assert(cache.valid);
+	return IsDucklakeTable(relation->rd_rel);
 }
 
 bool

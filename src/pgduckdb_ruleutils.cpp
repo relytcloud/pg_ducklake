@@ -890,10 +890,18 @@ pgduckdb_get_rename_relationdef(Oid relation_oid, RenameStmt *rename_stmt) {
 	}
 
 	Relation relation = relation_open(relation_oid, AccessShareLock);
-	Assert(pgduckdb::IsDuckdbTable(relation) || pgduckdb::IsMotherDuckView(relation));
+	Assert(pgduckdb::IsDuckdbTable(relation) || pgduckdb::IsDucklakeTable(relation) ||
+	       pgduckdb::IsMotherDuckView(relation));
 
 	const char *postgres_schema_name = get_namespace_name_or_temp(relation->rd_rel->relnamespace);
-	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, "duckdb");
+	const char *duckdb_table_am_name = "duckdb";
+	if (relation->rd_rel->relkind == RELKIND_RELATION) {
+		const char *table_am_name = pgduckdb::DuckdbTableAmGetName(relation->rd_tableam);
+		if (table_am_name != nullptr) {
+			duckdb_table_am_name = table_am_name;
+		}
+	}
+	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
 	const char *old_table_name = psprintf("%s.%s", db_and_schema, quote_identifier(rename_stmt->relation->relname));
 
 	const char *relation_type = "TABLE";
