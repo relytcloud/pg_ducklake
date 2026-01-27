@@ -25,6 +25,12 @@ SELECT * FROM managed_test_table ORDER BY id;
 CREATE SERVER ducklake_fdw_test
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (metadata_schema 'ducklake');
+-- ERROR if columns are specified
+CREATE FOREIGN TABLE foreign_test_table (id INT, name TEXT, amount DECIMAL(10,2))
+    SERVER ducklake_fdw_test
+    OPTIONS (schema_name 'public', table_name 'managed_test_table');
+ERROR:  cannot specify column definitions for DuckLake foreign table
+HINT:  Leave the column list empty - column definitions are automatically inferred
 -- Create a foreign table pointing to the managed table
 CREATE FOREIGN TABLE foreign_test_table ()
     SERVER ducklake_fdw_test

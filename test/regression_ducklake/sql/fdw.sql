@@ -23,6 +23,11 @@ CREATE SERVER ducklake_fdw_test
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (metadata_schema 'ducklake');
 
+-- ERROR if columns are specified
+CREATE FOREIGN TABLE foreign_test_table (id INT, name TEXT, amount DECIMAL(10,2))
+    SERVER ducklake_fdw_test
+    OPTIONS (schema_name 'public', table_name 'managed_test_table');
+
 -- Create a foreign table pointing to the managed table
 CREATE FOREIGN TABLE foreign_test_table ()
     SERVER ducklake_fdw_test

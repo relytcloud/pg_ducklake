@@ -753,7 +753,10 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 
 			if (strcmp(fdw->fdwname, DUCKLAKE_FDW_NAME) == 0) {
 				if (list_length(stmt->base.tableElts) != 0) {
-					elog(ERROR, "(DuckLake FDW) Schema inference is not supported when columns are specified");
+					ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+					                errmsg("cannot specify column definitions for DuckLake foreign table"),
+					                errhint("Leave the column list empty - column definitions are automatically "
+					                        "inferred")));
 				}
 
 				pgduckdb::InferAndPopulateForeignTableColumns(stmt);
