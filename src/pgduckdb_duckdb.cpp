@@ -36,6 +36,7 @@ extern "C" {
 #include "postgres.h"
 
 #include "catalog/namespace.h"
+#include "commands/extension.h" // creating_extension
 #include "common/file_perm.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"        // superuser
@@ -223,13 +224,7 @@ DuckDBManager::Initialize() {
 		// pg_ducklake
 		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
 
-		if (!PgDuckLakeMetadataManager::IsInitialized()) {
-			auto data_path_string = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
-			std::filesystem::create_directory(data_path_string);
-			pgduckdb::DuckDBQueryOrThrow(
-			    context, "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" +
-			                 data_path_string + "')");
-		} else {
+		if (!creating_extension) {
 			pgduckdb::DuckDBQueryOrThrow(context,
 			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
 		}

@@ -41,6 +41,8 @@ extern "C" {
 #include "pgduckdb/pgduckdb.h"
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
+#include "pgduckdb/pgduckdb_fdw.hpp"
+#include "pgduckdb/pgduckdb_fdw_ducklake.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_userdata_cache.hpp"
 
@@ -573,9 +575,13 @@ pgduckdb_relation_name(Oid relation_oid) {
 	const char *postgres_schema_name = get_namespace_name_or_temp(relation->relnamespace);
 	const char *duckdb_table_am_name = pgduckdb::DuckdbTableAmGetName(relation_oid);
 
-	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
-
-	char *result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+	char *result = NULL;
+	if (relation->relkind == RELKIND_FOREIGN_TABLE && pgduckdb::IsDucklakeForeignTable(relation_oid)) {
+		result = pgduckdb::GetDucklakeForeignTableName(relation_oid);
+	} else {
+		const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
+		result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+	}
 
 	ReleaseSysCache(tp);
 

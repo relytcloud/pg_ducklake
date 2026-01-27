@@ -1,4 +1,5 @@
 #include "pgduckdb/ducklake/pgducklake_ddl.hpp"
+#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
@@ -6,6 +7,8 @@
 #include "pgduckdb/pgduckdb_types.hpp"
 #include "pgduckdb/pgduckdb_utils.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
+
+#include <filesystem>
 
 extern "C" {
 #include "postgres.h"
@@ -15,6 +18,7 @@ extern "C" {
 #include "executor/spi.h"
 #include "fmgr.h"
 #include "lib/stringinfo.h"
+#include "miscadmin.h"
 #include "pgduckdb/vendor/pg_ruleutils.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
@@ -228,7 +232,14 @@ extern "C" {
 
 DECLARE_PG_FUNCTION(ducklake_initialize) {
 	// Initialize DuckDB here to create DuckLake metadata tables.
-	pgduckdb::DuckDBManager::Get();
+	auto connection = pgduckdb::DuckDBManager::GetConnection();
+	if (!pgduckdb::PgDuckLakeMetadataManager::IsInitialized()) {
+		auto data_path_string = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+		std::filesystem::create_directory(data_path_string);
+		pgduckdb::DuckDBQueryOrThrow(
+		    *connection, "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" +
+		                     data_path_string + "')");
+	}
 	// Drop the DuckDB instance for set-before-initial variables.
 	pgduckdb::DuckDBManager::Reset();
 	PG_RETURN_VOID();
