@@ -364,8 +364,7 @@ DucklakeFdwEndForeignScan(ForeignScanState * /*node*/) {
  * Walk through join conditions, WHERE clauses, and other expressions to find subqueries.
  * This function must be defined before RegisterForeignTablesInQueryExprs which calls it.
  */
-static void
-RegisterForeignTablesInQueryExprs(Query *query);
+static void RegisterForeignTablesInQueryExprs(Query *query);
 
 /* Forward declaration - defined later in this file */
 void RegisterForeignTablesInQuery(Query *query);
