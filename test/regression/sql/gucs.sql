@@ -1,3 +1,4 @@
+set duckdb.memory_limit = 4096;
 show duckdb.memory_limit;
 select * from duckdb.query($$ select current_setting('memory_limit')$$);
 CALL duckdb.recycle_ddb();
