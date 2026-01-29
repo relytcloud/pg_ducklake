@@ -44,7 +44,7 @@ SELECT * FROM my_table;
 ```sql
 INSTALL ducklake;
 LOAD ducklake;
-ATTACH 'ducklake:postgres://postgres:duckdb@localhost:5432/postgres' AS my_ducklake (DATA_PATH '$PGDATA/pg_ducklake', METADATA_SCHEMA 'ducklake');
+ATTACH 'ducklake:postgres:dbname=postgres host=localhost' AS my_ducklake (METADATA_SCHEMA 'ducklake');
 SELECT * FROM my_ducklake.public.my_table;
 ```
 
@@ -110,6 +110,14 @@ SELECT "Pclass", "Sex", COUNT(*), AVG("Survived") AS survival_rate
 FROM titanic
 GROUP BY "Pclass", "Sex";
 ```
+
+### Query DuckDB-created DuckLake tables from PostgreSQL
+
+DuckLake tables created by DuckDB clients (CLI, Python, etc.) that use the current PostgreSQL instance as their metadata catalog can be queried directly from PostgreSQL using the Foreign Data Wrapper (FDW). This enables scenarios where data engineers create and manage tables via DuckDB tools, while application developers query them seamlessly through PostgreSQL.
+
+**Example scenario**: A data pipeline uses DuckDB CLI to create DuckLake tables from Parquet files in S3, storing metadata in PostgreSQL. Your PostgreSQL application can then query these tables using standard SQL without needing DuckDB clients.
+
+See the [DuckLake FDW User Guide](docs/ducklake/ducklake_fdw.md) for setup and usage details.
 
 ## Documentation
 
