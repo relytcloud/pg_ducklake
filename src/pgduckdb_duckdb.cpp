@@ -4,6 +4,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
@@ -129,6 +130,13 @@ DuckDBManager::Initialize() {
 		std::string memory_limit = std::to_string(duckdb_maximum_memory) + "MiB";
 		config.options.maximum_memory = duckdb::DBConfig::ParseMemoryLimit(memory_limit);
 		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'maximum_memory'=%dMB", duckdb_maximum_memory);
+	} else if (duckdb_maximum_memory == -1) {
+		// If duckdb_maximum_memory is -1, set memory to 50% of system's available memory
+		auto fs = duckdb::FileSystem::CreateLocal();
+		config.options.maximum_memory =
+		    static_cast<duckdb::idx_t>(0.5 * duckdb::DBConfig::GetSystemAvailableMemory(*fs));
+		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'maximum_memory'=50%% of system memory (%llu bytes)",
+		     static_cast<unsigned long long>(config.options.maximum_memory));
 	}
 	if (duckdb_max_temp_directory_size != NULL && strlen(duckdb_max_temp_directory_size) != 0) {
 		config.SetOptionByName("max_temp_directory_size", duckdb_max_temp_directory_size);
