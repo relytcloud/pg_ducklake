@@ -136,7 +136,7 @@ DuckDBManager::Initialize() {
 		config.options.maximum_memory =
 		    static_cast<duckdb::idx_t>(0.5 * duckdb::DBConfig::GetSystemAvailableMemory(*fs));
 		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'maximum_memory'=50%% of system memory (%llu bytes)",
-		     config.options.maximum_memory);
+		     static_cast<unsigned long long>(config.options.maximum_memory));
 	}
 	if (duckdb_max_temp_directory_size != NULL && strlen(duckdb_max_temp_directory_size) != 0) {
 		config.SetOptionByName("max_temp_directory_size", duckdb_max_temp_directory_size);
