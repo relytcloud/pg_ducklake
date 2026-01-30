@@ -215,7 +215,7 @@ PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot, duckdb::stri
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
-PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string &query) {
+PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) {
 	// Fill snapshot args into the query
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
 	return Query(query);
@@ -275,8 +275,8 @@ AddChildColumn(duckdb::vector<duckdb::DuckLakeColumnInfo> &columns, duckdb::Fiel
 	return false;
 }
 
-static duckdb::vector<duckdb::DuckLakeTag>
-LoadTags(const duckdb::Value &tag_map) {
+duckdb::vector<duckdb::DuckLakeTag>
+PgDuckLakeMetadataManager::LoadTags(const duckdb::Value &tag_map) const {
 
 	static const duckdb::LogicalType tags_type =
 	    duckdb::LogicalType::STRUCT({{"key", duckdb::LogicalType::VARCHAR}, {"value", duckdb::LogicalType::VARCHAR}});
@@ -296,8 +296,8 @@ LoadTags(const duckdb::Value &tag_map) {
 	return result;
 }
 
-static duckdb::vector<duckdb::DuckLakeInlinedTableInfo>
-LoadInlinedDataTables(const duckdb::Value &list) {
+duckdb::vector<duckdb::DuckLakeInlinedTableInfo>
+PgDuckLakeMetadataManager::LoadInlinedDataTables(const duckdb::Value &list) const {
 
 	static const duckdb::LogicalType val_type = duckdb::LogicalType::STRUCT(
 	    {{"name", duckdb::LogicalType::VARCHAR}, {"schema_version", duckdb::LogicalType::BIGINT}});
@@ -525,6 +525,20 @@ ORDER BY part.table_id, partition_id, partition_key_index
 		partition_entry.fields.push_back(std::move(partition_field));
 	}
 	return catalog;
+}
+
+duckdb::string
+PgDuckLakeMetadataManager::WrapWithListAggregation(const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields) const {
+	// Use PostgreSQL's jsonb functions instead of DuckDB's LIST/STRUCT
+	duckdb::string result = "jsonb_agg(jsonb_build_object(";
+	for (size_t i = 0; i < fields.size(); i++) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += "'" + fields[i].first + "', " + fields[i].second;
+	}
+	result += "))";
+	return result;
 }
 
 } // namespace pgduckdb

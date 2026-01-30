@@ -222,8 +222,6 @@ DuckDBManager::Initialize() {
 
 	{
 		// pg_ducklake
-		duckdb::DuckLakeMetadataManager::Register("pgducklake", PgDuckLakeMetadataManager::Create);
-
 		if (!creating_extension) {
 			pgduckdb::DuckDBQueryOrThrow(context,
 			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
