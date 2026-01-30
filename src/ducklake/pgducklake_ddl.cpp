@@ -1,4 +1,5 @@
 #include "pgduckdb/ducklake/pgducklake_ddl.hpp"
+#include "pgduckdb/ducklake/pgducklake_defs.hpp"
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_guc.hpp"
@@ -437,7 +438,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 		char *schema_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
 		char *table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
 
-		char *drop_query = psprintf("DROP TABLE pgducklake.%s.%s", schema_name, table_name);
+		char *drop_query = psprintf("DROP TABLE %s.%s.%s", pgduckdb::PGDUCKLAKE_DB_NAME, schema_name, table_name);
 		elog(DEBUG1, "drop query: %s", drop_query);
 		pgduckdb::DuckDBQueryOrThrow(*connection, drop_query);
 	}
