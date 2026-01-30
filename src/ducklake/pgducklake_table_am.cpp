@@ -13,6 +13,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
 
+#include "pgduckdb/ducklake/pgducklake_vacuum.hpp"
 #include "pgduckdb/pgduckdb_ddl.hpp"
 
 extern "C" {
@@ -282,8 +283,8 @@ duckdb_copy_for_cluster(Relation /*OldTable*/, Relation /*NewTable*/, Relation /
 }
 
 static void
-duckdb_vacuum(Relation /*onerel*/, VacuumParams * /*params*/, BufferAccessStrategy /*bstrategy*/) {
-	NOT_IMPLEMENTED();
+duckdb_vacuum(Relation onerel, VacuumParams *params, BufferAccessStrategy bstrategy) {
+	DuckLakeVacuum(onerel, params, bstrategy);
 }
 
 #if PG_VERSION_NUM >= 170000
@@ -481,7 +482,7 @@ extern bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
 
 Datum
 ducklake_am_handler(FunctionCallInfo /*funcinfo*/) {
-	RegisterDuckdbTableAm("pgducklake", &ducklake_methods);
+	RegisterDuckdbTableAm(pgduckdb::PGDUCKLAKE_DB_NAME, &ducklake_methods);
 	PG_RETURN_POINTER(&ducklake_methods);
 }
 }

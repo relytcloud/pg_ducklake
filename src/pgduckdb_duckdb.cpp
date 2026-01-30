@@ -11,6 +11,7 @@
 #include "storage/ducklake_metadata_manager.hpp"
 
 #include "pgduckdb/catalog/pgduckdb_storage.hpp"
+#include "pgduckdb/ducklake/pgducklake_defs.hpp"
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pg/guc.hpp"
 #include "pgduckdb/pg/permissions.hpp"
@@ -226,12 +227,15 @@ DuckDBManager::Initialize() {
 		if (!PgDuckLakeMetadataManager::IsInitialized()) {
 			auto data_path_string = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
 			std::filesystem::create_directory(data_path_string);
-			pgduckdb::DuckDBQueryOrThrow(
-			    context, "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake', DATA_PATH '" +
-			                 data_path_string + "')");
+
+			auto attach_query = duckdb::StringUtil::Format(
+			    "ATTACH 'ducklake:pgducklake:' AS %s (METADATA_SCHEMA 'ducklake', DATA_PATH '%s')",
+			    pgduckdb::PGDUCKLAKE_DB_NAME, data_path_string.c_str());
+			pgduckdb::DuckDBQueryOrThrow(context, attach_query);
 		} else {
-			pgduckdb::DuckDBQueryOrThrow(context,
-			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
+			auto attach_query = duckdb::StringUtil::Format(
+			    "ATTACH 'ducklake:pgducklake:' AS %s (METADATA_SCHEMA 'ducklake')", pgduckdb::PGDUCKLAKE_DB_NAME);
+			pgduckdb::DuckDBQueryOrThrow(context, attach_query);
 		}
 	}
 

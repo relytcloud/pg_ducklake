@@ -68,6 +68,8 @@ struct TupleTableSlot;
 
 struct TableAmRoutine;
 
+struct VacuumParams;
+
 typedef uint32_t CommandId;
 
 typedef uint32_t SubTransactionId;
