@@ -52,3 +52,21 @@ BEGIN
     PERFORM ducklake._initialize();
 END
 $$;
+
+-- DuckLake Foreign Data Wrapper
+CREATE FUNCTION ducklake.fdw_handler()
+RETURNS fdw_handler
+AS 'MODULE_PATHNAME', 'ducklake_fdw_handler'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION ducklake.fdw_validator(
+    options text[],
+    catalog oid
+)
+RETURNS void
+AS 'MODULE_PATHNAME', 'ducklake_fdw_validator'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FOREIGN DATA WRAPPER ducklake_fdw
+  HANDLER ducklake.fdw_handler
+  VALIDATOR ducklake.fdw_validator;
