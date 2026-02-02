@@ -353,8 +353,7 @@ void
 DucklakeFdwGetForeignPaths(PlannerInfo *root, RelOptInfo *baserel, Oid /*foreigntableid*/) {
 	Path *path;
 #if PG_VERSION_NUM >= 180000
-	path = (Path *)create_foreignscan_path(root, baserel,
-	                                       NULL,                /* default pathtarget */
+	path = (Path *)create_foreignscan_path(root, baserel, NULL, /* default pathtarget */
 	                                       baserel->rows,       /* rows */
 	                                       0,                   /* disabled_nodes */
 	                                       1,                   /* startup_cost (dummy) */
@@ -365,8 +364,7 @@ DucklakeFdwGetForeignPaths(PlannerInfo *root, RelOptInfo *baserel, Oid /*foreign
 	                                       NIL,                 /* fdw_restrictinfo */
 	                                       NIL);                /* no fdw_private */
 #else
-	path = (Path *)create_foreignscan_path(root, baserel,
-	                                       NULL,                /* default pathtarget */
+	path = (Path *)create_foreignscan_path(root, baserel, NULL, /* default pathtarget */
 	                                       baserel->rows,       /* rows */
 	                                       1,                   /* startup_cost (dummy) */
 	                                       1,                   /* total_cost (dummy) */
