@@ -21,10 +21,10 @@ extern "C" {
 #include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_foreign_table.h"
+#include "commands/dbcommands.h"
 #include "commands/defrem.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
-#include "libpq/libpq-be.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/pathnode.h"
@@ -136,6 +136,18 @@ GetOptionValue(List *options, const char *optname, const char *default_value = n
 }
 
 /*
+ * Get the current database name. Error out if the database name cannot be determined.
+ */
+static const char *
+GetCurrentDatabaseName(void) {
+	const char *dbname = get_database_name(MyDatabaseId);
+	if (!dbname) {
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("could not determine current database name")));
+	}
+	return dbname;
+}
+
+/*
  * Escape a string value for use in a DuckDB SQL string literal.
  * This doubles single quotes to prevent SQL injection.
  */
@@ -174,7 +186,7 @@ RegisterDucklakeForeignTable(Oid foreign_table_oid) {
 	}
 
 	if (!dbname) {
-		dbname = MyProcPort->database_name;
+		dbname = GetCurrentDatabaseName();
 	}
 
 	const char *username = GetUserNameFromId(GetUserId(), false);
@@ -280,7 +292,7 @@ InferAndPopulateForeignTableColumns(CreateForeignTableStmt *stmt) {
 	}
 
 	const char *metadata_schema = GetOptionValue(server->options, "metadata_schema", "ducklake");
-	const char *dbname = GetOptionValue(server->options, "dbname", MyProcPort->database_name);
+	const char *dbname = GetOptionValue(server->options, "dbname", GetCurrentDatabaseName());
 	const char *username = GetUserNameFromId(GetUserId(), false);
 	InvokeCPPFunc(InferAndPopulateForeignTableColumns_Cpp, stmt, schema_name, table_name, dbname, username,
 	              metadata_schema);
@@ -322,7 +334,7 @@ GetDucklakeForeignTableName(Oid foreign_table_oid) {
 
 	const char *schema_name = GetOptionValue(ft->options, "schema_name");
 	const char *table_name = GetOptionValue(ft->options, "table_name");
-	const char *dbname = GetOptionValue(server->options, "dbname", MyProcPort->database_name);
+	const char *dbname = GetOptionValue(server->options, "dbname", GetCurrentDatabaseName());
 
 	return psprintf("fdw_db_%s.%s.%s", dbname, quote_identifier(schema_name), quote_identifier(table_name));
 }
