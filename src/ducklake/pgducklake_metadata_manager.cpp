@@ -533,7 +533,8 @@ ORDER BY part.table_id, partition_id, partition_key_index
 }
 
 duckdb::string
-PgDuckLakeMetadataManager::WrapWithListAggregation(const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields) const {
+PgDuckLakeMetadataManager::WrapWithListAggregation(
+    const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields) const {
 	// Use PostgreSQL's jsonb functions instead of DuckDB's LIST/STRUCT
 	duckdb::string result = "jsonb_agg(jsonb_build_object(";
 	for (size_t i = 0; i < fields.size(); i++) {
