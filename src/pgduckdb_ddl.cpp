@@ -47,7 +47,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_background_worker.hpp"
 #include "pgduckdb/pgduckdb_fdw.hpp"
-#include "pgduckdb/pgduckdb_fdw_ducklake.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_userdata_cache.hpp"
 #include "pgduckdb/utility/copy.hpp"

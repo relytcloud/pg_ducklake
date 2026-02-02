@@ -1,5 +1,5 @@
 /*
- * pgduckdb_fdw_ducklake.cpp
+ * pgducklake_fdw.cpp
  *
  * Foreign Data Wrapper for DuckLake tables
  *
@@ -50,6 +50,10 @@ int32_t GetPostgresDuckDBTypemod(const duckdb::LogicalType &type);
 } // namespace pgduckdb
 
 namespace pgduckdb {
+
+/* Constants for FDW implementation */
+constexpr const char *FDW_PROBE_ATTACH_NAME = "fdw_probe_ddl";
+constexpr double DEFAULT_FOREIGN_TABLE_ROWS = 1000.0;
 
 struct DucklakeFdwOption {
 	const char *optname;
@@ -181,7 +185,7 @@ RegisterDucklakeForeignTable(Oid foreign_table_oid) {
 static void
 InferAndPopulateForeignTableColumns_Cpp(CreateForeignTableStmt *stmt, const char *schema_name, const char *table_name,
                                         const char *dbname, const char *username, const char *metadata_schema) {
-	const char *attach_name = "fdw_probe_ddl";
+	const char *attach_name = FDW_PROBE_ATTACH_NAME;
 	auto probe_query = duckdb::StringUtil::Format("SELECT * FROM %s.%s.%s LIMIT 0", attach_name,
 	                                              quote_identifier(schema_name), quote_identifier(table_name));
 	auto detach_query = duckdb::StringUtil::Format("DETACH DATABASE IF EXISTS %s", attach_name);
@@ -192,12 +196,26 @@ InferAndPopulateForeignTableColumns_Cpp(CreateForeignTableStmt *stmt, const char
 	auto prepared = conn->context->Prepare(probe_query);
 
 	if (prepared->HasError()) {
+		// Try to clean up the probe attachment before throwing error
 		try {
 			conn->Query(detach_query);
-		} catch (...) {
+		} catch (const duckdb::Exception &ex) {
+			elog(WARNING, "(DuckLake FDW) Failed to detach probe database: %s", ex.what());
+		} catch (const std::exception &ex) {
+			elog(WARNING, "(DuckLake FDW) Failed to detach probe database: %s", ex.what());
 		}
-		throw duckdb::Exception(duckdb::ExceptionType::EXECUTOR,
-		                        "Failed to probe DuckLake table schema: " + prepared->GetError());
+
+		// Provide a helpful error message with context
+		auto error_msg = duckdb::StringUtil::Format(
+		    "Cannot create foreign table: DuckLake table \"%s.%s\" in database \"%s\" is not accessible.\n"
+		    "HINT: Verify that:\n"
+		    "  1. The table exists in the DuckLake catalog\n"
+		    "  2. The schema_name and table_name options are correct\n"
+		    "  3. The metadata_schema option points to the correct schema (default: 'ducklake')\n"
+		    "  4. You have permission to access the table",
+		    schema_name, table_name, dbname);
+
+		throw duckdb::Exception(duckdb::ExceptionType::CATALOG, error_msg);
 	}
 
 	auto &result_types = prepared->GetTypes();
@@ -311,8 +329,8 @@ GetDucklakeForeignTableName(Oid foreign_table_oid) {
 
 void
 DucklakeFdwGetForeignRelSize(PlannerInfo * /*root*/, RelOptInfo *baserel, Oid /*foreigntableid*/) {
-	baserel->rows = 1000;
-	baserel->tuples = 1000;
+	baserel->rows = DEFAULT_FOREIGN_TABLE_ROWS;
+	baserel->tuples = DEFAULT_FOREIGN_TABLE_ROWS;
 }
 
 /*

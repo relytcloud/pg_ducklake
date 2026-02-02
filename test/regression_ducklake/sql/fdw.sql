@@ -65,7 +65,65 @@ SELECT * FROM managed_test_table m
 WHERE EXISTS (SELECT 1 FROM foreign_test_table f WHERE f.id = m.id AND f.amount > 100)
 ORDER BY id;
 
--- Cleanup
+-- Test error case: non-existent table
+CREATE FOREIGN TABLE foreign_nonexistent ()
+    SERVER ducklake_fdw_test
+    OPTIONS (schema_name 'public', table_name 'nonexistent_table');
+
+-- Cleanup same-database tests
 DROP FOREIGN TABLE foreign_test_table;
 DROP SERVER ducklake_fdw_test;
+
+-- Test cross-database access (same instance)
+-- Create a separate database with DuckLake data
+CREATE DATABASE ducklake_fdw_testdb WITH ENCODING 'UTF8' TEMPLATE template0;
+\c ducklake_fdw_testdb
+CREATE EXTENSION pg_duckdb;
+
+-- Create a DuckLake table in the test database
+CREATE TABLE archive_data (
+    product_id INT,
+    product_name TEXT,
+    price DECIMAL(10,2)
+) USING ducklake;
+
+INSERT INTO archive_data VALUES
+    (1, 'Widget', 9.99),
+    (2, 'Gadget', 19.99),
+    (3, 'Doohickey', 14.99);
+
+-- Verify data in test database
+SELECT * FROM archive_data ORDER BY product_id;
+
+-- Switch back to main database and access test database via FDW
+\c regression
+CREATE SERVER archive_server
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (dbname 'ducklake_fdw_testdb', metadata_schema 'ducklake');
+
+-- Create foreign table pointing to archive database
+CREATE FOREIGN TABLE foreign_archive_data ()
+    SERVER archive_server
+    OPTIONS (schema_name 'public', table_name 'archive_data');
+
+-- Query data from archive database
+SELECT * FROM foreign_archive_data ORDER BY product_id;
+
+-- Test join across databases (managed table in current DB, foreign table from archive DB)
+SELECT
+    m.id,
+    m.name,
+    f.product_name,
+    m.amount + f.price as total
+FROM managed_test_table m
+CROSS JOIN foreign_archive_data f
+WHERE m.id = 1 AND f.product_id = 1;
+
+-- Cleanup cross-database tests
+DROP FOREIGN TABLE foreign_archive_data;
+DROP SERVER archive_server;
 DROP TABLE managed_test_table;
+
+-- Clean up test database
+\c regression
+DROP DATABASE ducklake_fdw_testdb;

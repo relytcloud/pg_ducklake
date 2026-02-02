@@ -34,7 +34,7 @@ extern "C" {
 
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_node.hpp"
-#include "pgduckdb/pgduckdb_fdw_ducklake.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/vendor/pg_list.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
 #include "pgduckdb/pgduckdb_types.hpp"

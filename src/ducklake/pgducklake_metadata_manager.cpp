@@ -215,6 +215,11 @@ PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot, duckdb::stri
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::Execute(duckdb::string query) {
+	return Query(query);
+}
+
+duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) {
 	// Fill snapshot args into the query
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
