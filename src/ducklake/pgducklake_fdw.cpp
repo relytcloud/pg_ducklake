@@ -339,15 +339,31 @@ DucklakeFdwGetForeignRelSize(PlannerInfo * /*root*/, RelOptInfo *baserel, Oid /*
  */
 void
 DucklakeFdwGetForeignPaths(PlannerInfo *root, RelOptInfo *baserel, Oid /*foreigntableid*/) {
-	Path *path = (Path *)create_foreignscan_path(root, baserel, NULL, /* default pathtarget */
-	                                             baserel->rows, 0,    /* disabled_nodes */
-	                                             1,                   /* startup_cost (dummy) */
-	                                             1,                   /* total_cost (dummy) */
-	                                             NIL,                 /* no pathkeys */
-	                                             NULL,                /* no required outer */
-	                                             NULL,                /* no fdw_outerpath */
-	                                             NIL,                 /* fdw_restrictinfo */
-	                                             NIL);                /* no fdw_private */
+	Path *path;
+#if PG_VERSION_NUM >= 180000
+	path = (Path *)create_foreignscan_path(root, baserel,
+	                                       NULL,                /* default pathtarget */
+	                                       baserel->rows,       /* rows */
+	                                       0,                   /* disabled_nodes */
+	                                       1,                   /* startup_cost (dummy) */
+	                                       1,                   /* total_cost (dummy) */
+	                                       NIL,                 /* no pathkeys */
+	                                       NULL,                /* no required outer */
+	                                       NULL,                /* no fdw_outerpath */
+	                                       NIL,                 /* fdw_restrictinfo */
+	                                       NIL);                /* no fdw_private */
+#else
+	path = (Path *)create_foreignscan_path(root, baserel,
+	                                       NULL,                /* default pathtarget */
+	                                       baserel->rows,       /* rows */
+	                                       1,                   /* startup_cost (dummy) */
+	                                       1,                   /* total_cost (dummy) */
+	                                       NIL,                 /* no pathkeys */
+	                                       NULL,                /* no required outer */
+	                                       NULL,                /* no fdw_outerpath */
+	                                       NIL,                 /* fdw_restrictinfo */
+	                                       NIL);                /* no fdw_private */
+#endif
 	add_path(baserel, path);
 }
 
