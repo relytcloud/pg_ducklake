@@ -415,4 +415,48 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 
 	PG_RETURN_NULL();
 }
+
+DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
+	if (!pgduckdb::IsExtensionRegistered()) {
+		elog(ERROR, "pg_duckdb extension is not registered");
+	}
+
+	// Get optional schema_name and table_name parameters
+	const char *schema_name = nullptr;
+	const char *table_name = nullptr;
+
+	if (PG_NARGS() > 0 && !PG_ARGISNULL(0)) {
+		schema_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	}
+	if (PG_NARGS() > 1 && !PG_ARGISNULL(1)) {
+		table_name = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	}
+
+	// Build the DuckDB query
+	std::string query = "CALL ducklake_flush_inlined_data('pgducklake'";
+	if (schema_name != nullptr && strlen(schema_name) > 0) {
+		query += ", schema_name => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
+	}
+	if (table_name != nullptr && strlen(table_name) > 0) {
+		query += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
+	}
+	query += ")";
+
+	elog(DEBUG2, "[PGDuckDB] Executing: %s", query.c_str());
+
+	pgduckdb::PostgresScopedStackReset scoped_stack_reset;
+
+	auto result = pgduckdb::DuckDBQueryOrThrow(query);
+
+	// Aggregate all rows: return false if any flush operation failed.
+	bool success = true;
+	for (auto &row : *result) {
+		if (!row.GetValue<bool>(0)) {
+			success = false;
+			break;
+		}
+	}
+
+	PG_RETURN_BOOL(success);
+}
 }

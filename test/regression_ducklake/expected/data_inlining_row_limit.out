@@ -118,3 +118,81 @@ SELECT COUNT(*) AS inlined_rows_after_disable FROM ducklake.:inlined_table_name;
 
 -- Cleanup
 DROP TABLE test_inlining;
+-- Test 6: Test flush_inlined_data function
+-- First re-enable inlining and add some data
+SET ducklake.data_inlining_row_limit = 100;
+CREATE TABLE test_flush (i INT) USING ducklake;
+INSERT INTO test_flush VALUES (1), (2), (3);
+-- Verify inlined data exists
+SELECT COUNT(*) AS inlined_tables_before_flush
+FROM ducklake.ducklake_inlined_data_tables
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'test_flush');
+ inlined_tables_before_flush 
+-----------------------------
+                           1
+(1 row)
+
+-- Flush all inlined data to parquet files
+SELECT ducklake.flush_inlined_data();
+ flush_inlined_data 
+--------------------
+ t
+(1 row)
+
+-- Verify inlined data was flushed (count should be 0 after flush)
+SELECT COUNT(*) AS inlined_tables_after_flush
+FROM ducklake.ducklake_inlined_data_tables
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'test_flush');
+ inlined_tables_after_flush 
+----------------------------
+                          1
+(1 row)
+
+-- Data should still be readable
+SELECT * FROM test_flush ORDER BY i;
+ i 
+---
+ 1
+ 2
+ 3
+(3 rows)
+
+-- Test flush_inlined_data with table_name parameter
+INSERT INTO test_flush VALUES (4), (5);
+SELECT COUNT(*) AS inlined_tables_before_specific_flush
+FROM ducklake.ducklake_inlined_data_tables
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'test_flush');
+ inlined_tables_before_specific_flush 
+--------------------------------------
+                                    1
+(1 row)
+
+SELECT ducklake.flush_inlined_data(schema_name => 'public', table_name => 'test_flush');
+ flush_inlined_data 
+--------------------
+ t
+(1 row)
+
+SELECT COUNT(*) AS inlined_tables_after_specific_flush
+FROM ducklake.ducklake_inlined_data_tables
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'test_flush');
+ inlined_tables_after_specific_flush 
+-------------------------------------
+                                   1
+(1 row)
+
+-- Test flush_inlined_data with positional arguments
+INSERT INTO test_flush VALUES (6), (7);
+SELECT ducklake.flush_inlined_data('public');
+ flush_inlined_data 
+--------------------
+ t
+(1 row)
+
+SELECT ducklake.flush_inlined_data('public', 'test_flush');
+ flush_inlined_data 
+--------------------
+ t
+(1 row)
+
+DROP TABLE test_flush;
