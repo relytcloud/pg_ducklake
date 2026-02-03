@@ -28,45 +28,40 @@ DuckLakeVacuum_Cpp(Relation onerel, VacuumParams *params, BufferAccessStrategy /
 		elog(ERROR, "cache lookup failed for namespace %u", onerel->rd_rel->relnamespace);
 	}
 
-	/* Create string copies before try block to avoid PostgreSQL calls in exception context */
 	std::string relname_str(relname);
 	std::string schema_name_str(schema_name);
 	std::string db_name_str(PGDUCKLAKE_DB_NAME);
 
-	try {
-		auto connection = DuckDBManager::GetConnection();
+	auto connection = DuckDBManager::GetConnection();
 
-		/* 1. Rewrite data files to compact small files and remove deleted rows */
-		std::string rewrite_query = "SELECT * FROM ducklake_rewrite_data_files(" +
-		                            duckdb::KeywordHelper::WriteQuoted(db_name_str, '\'') + ", " +
-		                            duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
-		                            "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') + ")";
+	/* 1. Rewrite data files to compact small files and remove deleted rows */
+	std::string rewrite_query = "SELECT * FROM ducklake_rewrite_data_files(" +
+	                            duckdb::KeywordHelper::WriteQuoted(db_name_str, '\'') + ", " +
+	                            duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
+	                            "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') + ")";
 
-		DuckDBQueryOrThrow(*connection, rewrite_query);
+	DuckDBQueryOrThrow(*connection, rewrite_query);
 
-		/* 2. Merge adjacent files to optimize scan performance */
-		std::string merge_query = "SELECT * FROM ducklake_merge_adjacent_files(" +
-		                          duckdb::KeywordHelper::WriteQuoted(db_name_str, '\'') + ", " +
-		                          duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
-		                          "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') + ")";
+	/* 2. Merge adjacent files to optimize scan performance */
+	std::string merge_query = "SELECT * FROM ducklake_merge_adjacent_files(" +
+	                          duckdb::KeywordHelper::WriteQuoted(db_name_str, '\'') + ", " +
+	                          duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
+	                          "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') + ")";
 
-		DuckDBQueryOrThrow(*connection, merge_query);
+	DuckDBQueryOrThrow(*connection, merge_query);
 
-		/* 3. Cleanup old files (orphaned parquets, old snapshots) */
-		/* TODO: Implement different behavior for VACUUM FULL using params->options & VACOPT_FULL */
-		std::string cleanup_query =
-		    "SELECT * FROM ducklake_cleanup_old_files(" + duckdb::KeywordHelper::WriteQuoted(db_name_str, '\'') + ")";
+	/*
+	 * 3. Cleanup old files (orphaned parquets, old snapshots)
+	 * Only run on VACUUM FULL since this is a database-wide operation,
+	 * not specific to the table being vacuumed.
+	 */
+	if (params->options & VACOPT_FULL) {
+		std::string cleanup_query = "SELECT * FROM ducklake_cleanup_old_files(" +
+		                            duckdb::KeywordHelper::WriteQuoted(db_name_str, '\'') + ")";
 
 		DuckDBQueryOrThrow(*connection, cleanup_query);
-
-	} catch (std::exception &e) {
-		/* Convert exception to PostgreSQL error after exiting DuckDB context */
-		std::string error_msg =
-		    "vacuum failed for ducklake table \"" + schema_name_str + "." + relname_str + "\": " + e.what();
-		elog(ERROR, "%s", error_msg.c_str());
 	}
 
-	/* Success notification after try block */
 	elog(DEBUG1, "vacuumed ducklake table \"%s.%s\"", schema_name_str.c_str(), relname_str.c_str());
 }
 

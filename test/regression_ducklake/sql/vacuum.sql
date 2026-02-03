@@ -7,11 +7,13 @@ SELECT * FROM vacuum_test ORDER BY a;
 DELETE FROM vacuum_test WHERE a = 2;
 SELECT * FROM vacuum_test ORDER BY a;
 
--- Should trigger ducklake_rewrite_data_files and others
+-- Should trigger ducklake_rewrite_data_files and ducklake_merge_adjacent_files
 VACUUM vacuum_test;
 
--- Should trigger ducklake_cleanup_old_files explicitly (though we do it in standard vacuum too now)
--- VACUUM FULL vacuum_test;
+SELECT * FROM vacuum_test ORDER BY a;
+
+-- VACUUM FULL also triggers ducklake_cleanup_old_files
+VACUUM FULL vacuum_test;
 
 SELECT * FROM vacuum_test ORDER BY a;
 
