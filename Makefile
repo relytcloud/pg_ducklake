@@ -89,7 +89,7 @@ override PG_CFLAGS += -Wno-declaration-after-statement
 
 # For ReleaseStatic: -Bsymbolic on pg_duckdb.so (libduckdb is statically linked)
 ifeq ($(DUCKDB_BUILD), ReleaseStatic)
-ifeq ($(shell uname -s),Linux)
+ifeq ($(shell uname -s), Linux)
 SHLIB_LINK += -Wl,-Bsymbolic
 endif
 endif

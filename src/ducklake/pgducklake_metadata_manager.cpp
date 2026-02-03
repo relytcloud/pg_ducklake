@@ -535,16 +535,14 @@ ORDER BY part.table_id, partition_id, partition_key_index
 duckdb::string
 PgDuckLakeMetadataManager::WrapWithListAggregation(
     const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields) const {
-	// Use PostgreSQL's jsonb functions instead of DuckDB's LIST/STRUCT
-	duckdb::string result = "jsonb_agg(jsonb_build_object(";
-	for (size_t i = 0; i < fields.size(); i++) {
-		if (i > 0) {
-			result += ", ";
+	duckdb::string fields_part;
+	for (auto const &entry : fields) {
+		if (!fields_part.empty()) {
+			fields_part += ", ";
 		}
-		result += "'" + fields[i].first + "', " + fields[i].second;
+		fields_part += "'" + entry.first + "', " + entry.second;
 	}
-	result += "))";
-	return result;
+	return "json_agg(json_build_object(" + fields_part + "))";
 }
 
 } // namespace pgduckdb
