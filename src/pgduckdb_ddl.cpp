@@ -47,6 +47,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_background_worker.hpp"
 #include "pgduckdb/pgduckdb_fdw.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_userdata_cache.hpp"
 #include "pgduckdb/utility/copy.hpp"
@@ -741,6 +742,26 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 	} else if (IsA(parsetree, AlterUserMappingStmt)) {
 		DuckdbHandleAlterUserMappingStmt(parsetree);
 		return false;
+	} else if (IsA(parsetree, CreateForeignTableStmt)) {
+		auto stmt = castNode(CreateForeignTableStmt, parsetree);
+
+		/* Look up the foreign server to check if it's using ducklake_fdw */
+		char *server_name = stmt->servername;
+		if (server_name) {
+			ForeignServer *server = GetForeignServerByName(server_name, false);
+			ForeignDataWrapper *fdw = GetForeignDataWrapper(server->fdwid);
+
+			if (strcmp(fdw->fdwname, DUCKLAKE_FDW_NAME) == 0) {
+				if (list_length(stmt->base.tableElts) != 0) {
+					ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+					                errmsg("cannot specify column definitions for DuckLake foreign table"),
+					                errhint("Leave the column list empty - column definitions are automatically "
+					                        "inferred")));
+				}
+
+				pgduckdb::InferAndPopulateForeignTableColumns(stmt);
+			}
+		}
 	}
 
 	return false;

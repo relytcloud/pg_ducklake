@@ -41,6 +41,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb.h"
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_userdata_cache.hpp"
 
@@ -559,6 +560,15 @@ pgduckdb_db_and_schema_string(const char *postgres_schema_name, const char *duck
 }
 
 /*
+ * Check if a relation is a DuckLake foreign table.
+ * This is a C-callable wrapper around pgduckdb::IsDucklakeForeignTable.
+ */
+bool
+pgduckdb_is_ducklake_foreign_table(Oid relid) {
+	return pgduckdb::IsDucklakeForeignTable(relid);
+}
+
+/*
  * generate_relation_name computes the fully qualified name of the relation in
  * DuckDB for the specified Postgres OID. This includes the DuckDB database name
  * too.
@@ -573,9 +583,13 @@ pgduckdb_relation_name(Oid relation_oid) {
 	const char *postgres_schema_name = get_namespace_name_or_temp(relation->relnamespace);
 	const char *duckdb_table_am_name = pgduckdb::DuckdbTableAmGetName(relation_oid);
 
-	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
-
-	char *result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+	char *result = NULL;
+	if (relation->relkind == RELKIND_FOREIGN_TABLE && pgduckdb::IsDucklakeForeignTable(relation_oid)) {
+		result = pgduckdb::GetDucklakeForeignTableName(relation_oid);
+	} else {
+		const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
+		result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+	}
 
 	ReleaseSysCache(tp);
 

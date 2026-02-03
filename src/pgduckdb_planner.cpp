@@ -34,12 +34,15 @@ extern "C" {
 
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_node.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/vendor/pg_list.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
 #include "pgduckdb/pgduckdb_types.hpp"
 
 duckdb::unique_ptr<duckdb::PreparedStatement>
 DuckdbPrepare(const Query *query, const char *explain_prefix) {
+	/* Register any foreign tables before preparing the query */
+	pgduckdb::RegisterForeignTablesInQuery((Query *)query);
 	Query *copied_query = (Query *)copyObjectImpl(query);
 	const char *query_string = pgduckdb_get_querydef(copied_query);
 

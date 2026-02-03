@@ -11294,6 +11294,12 @@ get_rte_alias(RangeTblEntry *rte, int varno, bool use_as,
 		 */
 		if (strcmp(refname, get_relation_name(rte->relid)) != 0)
 			printalias = true;
+		/*
+		 * For DuckLake foreign tables, always print alias because the DuckDB
+		 * table name differs from the PostgreSQL table name.
+		 */
+		else if (pgduckdb_is_ducklake_foreign_table(rte->relid))
+			printalias = true;
 	}
 	else if (rte->rtekind == RTE_FUNCTION)
 	{

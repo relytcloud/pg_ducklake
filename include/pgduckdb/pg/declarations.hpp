@@ -92,4 +92,6 @@ struct FuncExpr;
 typedef struct FunctionCallInfoBaseData *FunctionCallInfo;
 
 struct ExplainState;
+
+struct CreateForeignTableStmt;
 }
