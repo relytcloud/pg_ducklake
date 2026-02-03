@@ -59,6 +59,42 @@ ORDER BY m.id;
 SELECT COUNT(*), SUM(amount), AVG(amount)
 FROM foreign_test_table;
 
+-- Create a second managed table for testing joins between two foreign tables
+CREATE TABLE managed_test_table_2 (
+    id INT,
+    category TEXT,
+    value DECIMAL(10,2)
+) USING ducklake;
+
+INSERT INTO managed_test_table_2 VALUES
+    (1, 'Electronics', 500.00),
+    (2, 'Clothing', 150.00),
+    (3, 'Food', 75.00);
+
+-- Create a second foreign table
+CREATE FOREIGN TABLE foreign_test_table_1 ()
+    SERVER ducklake_fdw_test
+    OPTIONS (schema_name 'public', table_name 'managed_test_table_2');
+
+-- Test join between two foreign tables (implicit cross join)
+SELECT * FROM foreign_test_table, foreign_test_table_1
+WHERE foreign_test_table.id = foreign_test_table_1.id
+ORDER BY foreign_test_table.id;
+
+-- Test explicit join between two foreign tables
+SELECT
+    f1.id,
+    f1.name,
+    f2.category,
+    f1.amount + f2.value as total
+FROM foreign_test_table f1
+JOIN foreign_test_table_1 f2 ON f1.id = f2.id
+ORDER BY f1.id;
+
+-- Cleanup second foreign table
+DROP FOREIGN TABLE foreign_test_table_1;
+DROP TABLE managed_test_table_2;
+
 -- Test subquery in WHERE clause (EXISTS subquery)
 -- EXISTS subqueries work because they reference foreign table in the subquery's FROM clause
 SELECT * FROM managed_test_table m

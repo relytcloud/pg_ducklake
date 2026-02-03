@@ -560,6 +560,15 @@ pgduckdb_db_and_schema_string(const char *postgres_schema_name, const char *duck
 }
 
 /*
+ * Check if a relation is a DuckLake foreign table.
+ * This is a C-callable wrapper around pgduckdb::IsDucklakeForeignTable.
+ */
+bool
+pgduckdb_is_ducklake_foreign_table(Oid relid) {
+	return pgduckdb::IsDucklakeForeignTable(relid);
+}
+
+/*
  * generate_relation_name computes the fully qualified name of the relation in
  * DuckDB for the specified Postgres OID. This includes the DuckDB database name
  * too.
