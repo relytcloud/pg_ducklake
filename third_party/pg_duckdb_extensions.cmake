@@ -9,11 +9,6 @@ duckdb_extension_load(ducklake
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/ducklake
 )
 
-# Enable postgres_scanner extension when ENABLE_POSTGRES_SCANNER environment variable is set
-if($ENV{ENABLE_POSTGRES_SCANNER})
-    duckdb_extension_load(postgres_scanner
-        DONT_LINK
-        GIT_URL https://github.com/duckdb/duckdb-postgres
-        GIT_TAG f012a4f99cea1d276d1787d0dc84b1f1a0e0f0b2
-    )
-endif()
+duckdb_extension_load(postgres_scanner
+    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/duckdb-postgres
+)
