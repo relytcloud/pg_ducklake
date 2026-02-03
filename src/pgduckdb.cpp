@@ -8,6 +8,7 @@ extern "C" {
 #include "miscadmin.h"
 }
 
+#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pgduckdb_background_worker.hpp"
 #include "pgduckdb/pgduckdb_node.hpp"
 #include "pgduckdb/pgduckdb_xact.hpp"
@@ -38,5 +39,7 @@ _PG_init(void) {
 	DuckdbInitNode();
 	pgduckdb::InitBackgroundWorkersShmem();
 	pgduckdb::RegisterDuckdbXactCallback();
+
+	duckdb::DuckLakeMetadataManager::Register("pgducklake", pgduckdb::PgDuckLakeMetadataManager::Create);
 }
 } // extern "C"

@@ -215,7 +215,12 @@ PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot, duckdb::stri
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
-PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string &query) {
+PgDuckLakeMetadataManager::Execute(duckdb::string query) {
+	return Query(query);
+}
+
+duckdb::unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) {
 	// Fill snapshot args into the query
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
 	return Query(query);
@@ -275,8 +280,8 @@ AddChildColumn(duckdb::vector<duckdb::DuckLakeColumnInfo> &columns, duckdb::Fiel
 	return false;
 }
 
-static duckdb::vector<duckdb::DuckLakeTag>
-LoadTags(const duckdb::Value &tag_map) {
+duckdb::vector<duckdb::DuckLakeTag>
+PgDuckLakeMetadataManager::LoadTags(const duckdb::Value &tag_map) const {
 
 	static const duckdb::LogicalType tags_type =
 	    duckdb::LogicalType::STRUCT({{"key", duckdb::LogicalType::VARCHAR}, {"value", duckdb::LogicalType::VARCHAR}});
@@ -296,8 +301,8 @@ LoadTags(const duckdb::Value &tag_map) {
 	return result;
 }
 
-static duckdb::vector<duckdb::DuckLakeInlinedTableInfo>
-LoadInlinedDataTables(const duckdb::Value &list) {
+duckdb::vector<duckdb::DuckLakeInlinedTableInfo>
+PgDuckLakeMetadataManager::LoadInlinedDataTables(const duckdb::Value &list) const {
 
 	static const duckdb::LogicalType val_type = duckdb::LogicalType::STRUCT(
 	    {{"name", duckdb::LogicalType::VARCHAR}, {"schema_version", duckdb::LogicalType::BIGINT}});
@@ -525,6 +530,19 @@ ORDER BY part.table_id, partition_id, partition_key_index
 		partition_entry.fields.push_back(std::move(partition_field));
 	}
 	return catalog;
+}
+
+duckdb::string
+PgDuckLakeMetadataManager::WrapWithListAggregation(
+    const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields) const {
+	duckdb::string fields_part;
+	for (auto const &entry : fields) {
+		if (!fields_part.empty()) {
+			fields_part += ", ";
+		}
+		fields_part += "'" + entry.first + "', " + entry.second;
+	}
+	return "json_agg(json_build_object(" + fields_part + "))";
 }
 
 } // namespace pgduckdb
