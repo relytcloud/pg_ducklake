@@ -46,8 +46,6 @@ else
 endif
 
 DUCKDB_BUILD_DIR = third_party/duckdb/build/$(DUCKDB_BUILD_TYPE)
-# DUCKLAKE_BUILD_DIR = third_party/ducklake/build/release
-# DUCKLAKE_LIB = $(DUCKLAKE_BUILD_DIR)/extension/ducklake/libducklake_extension.a
 
 ifeq ($(DUCKDB_BUILD), ReleaseStatic)
 	FULL_DUCKDB_LIB = $(DUCKDB_BUILD_DIR)/libduckdb_bundle.a
@@ -57,9 +55,7 @@ else
 	PG_DUCKDB_LINK_FLAGS = -lduckdb
 endif
 
-PG_DUCKDB_USER_LDFLAGS := $(LDFLAGS)
-
-PG_DUCKDB_LINK_FLAGS += -Wl,-rpath,$(PG_LIB)/ -L$(DUCKDB_BUILD_DIR)/src -L$(PG_LIB) $(PG_DUCKDB_USER_LDFLAGS) -lstdc++ -llz4
+PG_DUCKDB_LINK_FLAGS += -Wl,-rpath,$(PG_LIB)/ -L$(DUCKDB_BUILD_DIR)/src -L$(PG_LIB) -lstdc++ -llz4
 
 # Ensure -lstdc++fs is included for GCC 8 builds
 CXX ?= c++

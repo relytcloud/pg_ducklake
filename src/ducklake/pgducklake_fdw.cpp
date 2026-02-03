@@ -9,7 +9,7 @@
  * query execution infrastructure.
  */
 
-#include "duckdb.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 
 #include "pgduckdb/pgduckdb_utils.hpp"
 
@@ -36,10 +36,6 @@ extern "C" {
 #include "pgduckdb/vendor/pg_list.hpp"
 }
 
-#include "pgduckdb/pgduckdb.h"
-#include "pgduckdb/pgduckdb_duckdb.hpp"
-#include "pgduckdb/ducklake/pgducklake_ddl.hpp"
-#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
 
 // Forward declarations to avoid including cpp_only headers
@@ -72,6 +68,11 @@ static const struct DucklakeFdwOption valid_table_options[] = {
     {"table_name", ForeignTableRelationId, true},  // DuckLake table name
     {NULL, InvalidOid, false}                      // Sentinel
 };
+
+/*
+ * Walk through join conditions, WHERE clauses, and other expressions to find subqueries.
+ */
+static void RegisterForeignTablesInQueryExprs(Query *query);
 
 static bool
 IsValidDucklakeFdwOption(const char *optname, Oid context) {
@@ -396,15 +397,6 @@ DucklakeFdwIterateForeignScan(ForeignScanState * /*node*/) {
 void
 DucklakeFdwEndForeignScan(ForeignScanState * /*node*/) {
 }
-
-/*
- * Walk through join conditions, WHERE clauses, and other expressions to find subqueries.
- * This function must be defined before RegisterForeignTablesInQueryExprs which calls it.
- */
-static void RegisterForeignTablesInQueryExprs(Query *query);
-
-/* Forward declaration - defined later in this file */
-void RegisterForeignTablesInQuery(Query *query);
 
 /*
  * Tree walker callback for finding subqueries in expression trees.

@@ -2,6 +2,9 @@
 
 #include "pgduckdb/pg/declarations.hpp"
 
+/* DuckLake FDW name constant */
+#define DUCKLAKE_FDW_NAME "ducklake_fdw"
+
 namespace pgduckdb {
 
 void RegisterDucklakeForeignTable(Oid foreign_table_oid);
