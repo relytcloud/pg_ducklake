@@ -1794,6 +1794,36 @@ ConvertDecimal(const NumericVar &numeric) {
 }
 
 /*
+ * Convert a Postgres Array Datum to a DuckDB LIST Value.
+ */
+static duckdb::Value
+ConvertPostgresArrayToDuckValue(Datum value, Oid elmtype, const duckdb::LogicalType &type) {
+	ArrayType *array = DatumGetArrayTypeP(value);
+	int16 typlen;
+	bool typbyval;
+	char typalign;
+	Datum *elems;
+	bool *nulls;
+	int nelems;
+
+	PostgresFunctionGuard(get_typlenbyvalalign, elmtype, &typlen, &typbyval, &typalign);
+	PostgresFunctionGuard(deconstruct_array, array, elmtype, typlen, typbyval, typalign, &elems, &nulls, &nelems);
+
+	duckdb::vector<duckdb::Value> duck_values;
+	duck_values.reserve(nelems);
+
+	for (int i = 0; i < nelems; i++) {
+		if (nulls[i]) {
+			duck_values.push_back(duckdb::Value(nullptr));
+		} else {
+			duck_values.push_back(ConvertPostgresParameterToDuckValue(elems[i], elmtype));
+		}
+	}
+
+	return duckdb::Value::LIST(type, duck_values);
+}
+
+/*
  * Convert a Postgres Datum to a DuckDB Value. This is meant to be used to
  * covert query parameters in a prepared statement to its DuckDB equivalent.
  * Passing it a Datum that is stored on disk results in undefined behavior,
@@ -1841,6 +1871,31 @@ ConvertPostgresParameterToDuckValue(Datum value, Oid postgres_type) {
 		return duckdb::Value::DOUBLE(DatumGetFloat8(value));
 	case UUIDOID:
 		return duckdb::Value::UUID(DatumGetUUID(value));
+	case BOOLARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, BOOLOID, duckdb::LogicalType::BOOLEAN);
+	case INT2ARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, INT2OID, duckdb::LogicalType::SMALLINT);
+	case INT4ARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, INT4OID, duckdb::LogicalType::INTEGER);
+	case INT8ARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, INT8OID, duckdb::LogicalType::BIGINT);
+	case BPCHARARRAYOID:
+	case TEXTARRAYOID:
+	case JSONARRAYOID:
+	case VARCHARARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, TEXTOID, duckdb::LogicalType::VARCHAR);
+	case DATEARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, DATEOID, duckdb::LogicalType::DATE);
+	case TIMESTAMPARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, TIMESTAMPOID, duckdb::LogicalType::TIMESTAMP);
+	case TIMESTAMPTZARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, TIMESTAMPTZOID, duckdb::LogicalType::TIMESTAMP);
+	case FLOAT4ARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, FLOAT4OID, duckdb::LogicalType::FLOAT);
+	case FLOAT8ARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, FLOAT8OID, duckdb::LogicalType::DOUBLE);
+	case UUIDARRAYOID:
+		return ConvertPostgresArrayToDuckValue(value, UUIDOID, duckdb::LogicalType::UUID);
 	default:
 		elog(ERROR, "Could not convert Postgres parameter of type: %d to DuckDB type", postgres_type);
 	}

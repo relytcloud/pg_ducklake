@@ -10742,6 +10742,51 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 		return;
 	}
 
+	/*
+	 * pg_duckdb: Detect Array constants and deparse them as DuckDB Lists [e1, e2, ...]
+	 * instead of Postgres array literals '{...}'::type[] which DuckDB rejects.
+	 */
+	{
+		Oid elemType = get_element_type(constval->consttype);
+		if (OidIsValid(elemType))
+		{
+			ArrayType *arr = DatumGetArrayTypeP(constval->constvalue);
+			if (ARR_NDIM(arr) <= 1)
+			{
+				int16 elemLen;
+				bool elemByVal;
+				char elemAlign;
+				Datum *elems;
+				bool *nulls;
+				int nelems;
+				int i;
+
+				get_typlenbyvalalign(elemType, &elemLen, &elemByVal, &elemAlign);
+				deconstruct_array(arr, elemType, elemLen, elemByVal, elemAlign,
+								  &elems, &nulls, &nelems);
+
+				appendStringInfoChar(buf, '[');
+				for (i = 0; i < nelems; i++)
+				{
+					if (i > 0)
+						appendStringInfoString(buf, ", ");
+					if (nulls[i])
+						appendStringInfoString(buf, "NULL");
+					else
+					{
+						Const *elemConst = makeConst(elemType, -1, InvalidOid, elemLen,
+													 elems[i], false, elemByVal);
+						/* Recursively print element, forcing explicit cast */
+						get_const_expr(elemConst, context, 1);
+						pfree(elemConst);
+					}
+				}
+				appendStringInfoChar(buf, ']');
+				return;
+			}
+		}
+	}
+
 	getTypeOutputInfo(constval->consttype,
 					  &typoutput, &typIsVarlena);
 
@@ -11468,9 +11513,51 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 							allargs = list_concat(allargs, args);
 						}
 
-						appendStringInfoString(buf, "UNNEST(");
-						get_rule_expr((Node *) allargs, context, true);
-						appendStringInfoChar(buf, ')');
+						/*
+						 * pg_duckdb: DuckDB does not support multi-argument UNNEST directly.
+						 * We translate UNNEST(a, b) into UNNEST({'v1': a, 'v2': b}) to emulate the zip behavior.
+						 */
+						if (list_length(allargs) > 1)
+						{
+							ListCell *arg_lc;
+							int arg_idx = 0;
+
+							appendStringInfoString(buf, "(SELECT ");
+							foreach(arg_lc, allargs)
+							{
+								Node *arg_node = (Node *) lfirst(arg_lc);
+								Oid arg_type = exprType(arg_node);
+								Oid elem_type = get_element_type(arg_type);
+
+								if (arg_idx > 0)
+									appendStringInfoString(buf, ", ");
+
+								appendStringInfoString(buf, "UNNEST(");
+								get_rule_expr(arg_node, context, true);
+								/*
+								 * Cast the input to the array type so DuckDB knows what it is unnesting.
+								 * This is important for parameters ($1) which are otherwise untyped in DuckDB until bind.
+								 */
+								appendStringInfo(buf, "::%s", format_type_be(arg_type));
+								appendStringInfoString(buf, ")");
+
+								/*
+								 * Cast the result to the expected type to avoid DuckDB inferring UNKNOWN.
+								 * We infer the element type from the input array type.
+								 */
+								if (OidIsValid(elem_type))
+									appendStringInfo(buf, "::%s", format_type_be(elem_type));
+
+								arg_idx++;
+							}
+							appendStringInfoString(buf, ")");
+						}
+						else
+						{
+							appendStringInfoString(buf, "UNNEST(");
+							get_rule_expr((Node *) allargs, context, true);
+							appendStringInfoChar(buf, ')');
+						}
 					}
 					else
 					{
