@@ -1,4 +1,5 @@
 #include "pgduckdb/ducklake/pgducklake_ddl.hpp"
+#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
@@ -7,14 +8,18 @@
 #include "pgduckdb/pgduckdb_utils.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
 
+#include <filesystem>
+
 extern "C" {
 #include "postgres.h"
 #include "access/relation.h"
 #include "catalog/pg_class.h"
 #include "commands/event_trigger.h"
+#include "commands/extension.h" // creating_extension
 #include "executor/spi.h"
 #include "fmgr.h"
 #include "lib/stringinfo.h"
+#include "miscadmin.h"
 #include "pgduckdb/vendor/pg_ruleutils.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
@@ -227,10 +232,37 @@ pgducklake_get_tabledef(Oid relation_oid) {
 extern "C" {
 
 DECLARE_PG_FUNCTION(ducklake_initialize) {
-	// Initialize DuckDB here to create DuckLake metadata tables.
-	pgduckdb::DuckDBManager::Get();
-	// Drop the DuckDB instance for set-before-initial variables.
-	pgduckdb::DuckDBManager::Reset();
+	if (!creating_extension) {
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+		                errmsg("ducklake_initialize() can only be called during CREATE EXTENSION")));
+	}
+
+	if (pgduckdb::PgDuckLakeMetadataManager::IsInitialized()) {
+		ereport(ERROR,
+		        (errcode(ERRCODE_DUPLICATE_SCHEMA), errmsg("DuckLake reserved schema \"ducklake\" is already in use")));
+	}
+
+	/* Create the data directory for DuckLake parquet files */
+	auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+	try {
+		std::filesystem::create_directory(data_path);
+	} catch (const std::filesystem::filesystem_error &e) {
+		ereport(ERROR, (errcode(ERRCODE_IO_ERROR),
+		                errmsg("failed to create DuckLake data directory \"%s\": %s", data_path.c_str(), e.what())));
+	}
+
+	/* Initialize DuckDB and attach the DuckLake catalog */
+	try {
+		auto connection = pgduckdb::DuckDBManager::GetConnection();
+		pgduckdb::DuckDBQueryOrThrow(*connection, "ATTACH 'ducklake:pgducklake:' AS pgducklake "
+		                                          "(METADATA_SCHEMA 'ducklake', DATA_PATH '" +
+		                                              data_path + "')");
+		/* Reset DuckDB instance to apply initialization settings */
+		pgduckdb::DuckDBManager::Reset();
+	} catch (const std::exception &e) {
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("failed to initialize DuckLake: %s", e.what())));
+	}
+
 	PG_RETURN_VOID();
 }
 

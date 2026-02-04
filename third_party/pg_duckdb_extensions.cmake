@@ -8,3 +8,7 @@ duckdb_extension_load(httpfs
 duckdb_extension_load(ducklake
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/ducklake
 )
+
+duckdb_extension_load(postgres_scanner
+    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/duckdb-postgres
+)

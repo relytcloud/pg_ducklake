@@ -3,16 +3,17 @@ CREATE EXTENSION pg_duckdb;
 SET duckdb.force_execution TO false;
 SET duckdb.allow_community_extensions = true;
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
-(7 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+(8 rows)
 
 SELECT last_value FROM duckdb.extensions_table_seq;
  last_value 
@@ -36,16 +37,17 @@ SELECT last_value FROM duckdb.extensions_table_seq;
 (1 row)
 
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
-(7 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+(8 rows)
 
 -- Check that we can rerun this without issues
 SELECT duckdb.install_extension('icu');
@@ -63,16 +65,17 @@ SELECT last_value FROM duckdb.extensions_table_seq;
 (1 row)
 
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
-(7 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+(8 rows)
 
 SELECT duckdb.install_extension('aws');
  install_extension 
@@ -87,17 +90,18 @@ SELECT last_value FROM duckdb.extensions_table_seq;
 (1 row)
 
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- aws            | t      | t         | core
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
-(8 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ aws              | t      | t         | core
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+(9 rows)
 
 -- autoload_extension and load_extension function should work as expected
 SELECT * FROM duckdb.query($$ FROM duckdb_extensions() SELECT installed, loaded WHERE extension_name = 'aws' $$);
@@ -157,31 +161,33 @@ SELECT last_value FROM duckdb.extensions_table_seq;
 (1 row)
 
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- aws            | t      | t         | core
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
-(8 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ aws              | t      | t         | core
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+(9 rows)
 
 -- Reconnecting should cause the extension not to be loaded anymore
 CALL duckdb.recycle_ddb();
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
-(7 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+(8 rows)
 
 SELECT duckdb.install_extension('prql', 'community');
  install_extension 
@@ -196,17 +202,18 @@ SELECT last_value FROM duckdb.extensions_table_seq;
 (1 row)
 
 SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installed_from FROM duckdb_extensions() WHERE loaded and extension_name != 'jemalloc' $$);
- extension_name | loaded | installed | installed_from 
-----------------+--------+-----------+----------------
- core_functions | t      | t         | 
- ducklake       | t      | t         | 
- httpfs         | t      | t         | 
- icu            | t      | t         | 
- json           | t      | t         | 
- parquet        | t      | t         | 
- pgduckdb       | t      | f         | 
- prql           | t      | t         | community
-(8 rows)
+  extension_name  | loaded | installed | installed_from 
+------------------+--------+-----------+----------------
+ core_functions   | t      | t         | 
+ ducklake         | t      | t         | 
+ httpfs           | t      | t         | 
+ icu              | t      | t         | 
+ json             | t      | t         | 
+ parquet          | t      | t         | 
+ pgduckdb         | t      | f         | 
+ postgres_scanner | t      | t         | 
+ prql             | t      | t         | community
+(9 rows)
 
 -- cleanup
 TRUNCATE duckdb.extensions;

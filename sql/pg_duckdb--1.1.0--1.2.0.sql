@@ -62,3 +62,21 @@ CREATE FUNCTION ducklake.flush_inlined_data(
     SET search_path = pg_catalog, pg_temp
     AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
     LANGUAGE C;
+
+-- DuckLake Foreign Data Wrapper
+CREATE FUNCTION ducklake.fdw_handler()
+RETURNS fdw_handler
+AS 'MODULE_PATHNAME', 'ducklake_fdw_handler'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION ducklake.fdw_validator(
+    options text[],
+    catalog oid
+)
+RETURNS void
+AS 'MODULE_PATHNAME', 'ducklake_fdw_validator'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FOREIGN DATA WRAPPER ducklake_fdw
+  HANDLER ducklake.fdw_handler
+  VALIDATOR ducklake.fdw_validator;
