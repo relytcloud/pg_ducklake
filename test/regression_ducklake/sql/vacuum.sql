@@ -1,20 +1,91 @@
 -- Test VACUUM on DuckLake tables
-CREATE TABLE vacuum_test (a int, b text) USING ducklake;
 
-INSERT INTO vacuum_test VALUES (1, 'one'), (2, 'two'), (3, 'three');
-SELECT * FROM vacuum_test ORDER BY a;
+-- Scenario 1: Merge adjacent files
+CREATE TABLE vacuum_merge (a int, b text) USING ducklake;
 
-DELETE FROM vacuum_test WHERE a = 2;
-SELECT * FROM vacuum_test ORDER BY a;
+-- Create multiple parquet files
+INSERT INTO vacuum_merge VALUES (1, 'one');
+INSERT INTO vacuum_merge VALUES (2, 'two');
+INSERT INTO vacuum_merge VALUES (3, 'three');
+INSERT INTO vacuum_merge VALUES (4, 'four');
+INSERT INTO vacuum_merge VALUES (5, 'five');
 
--- Should trigger ducklake_rewrite_data_files and ducklake_merge_adjacent_files
-VACUUM vacuum_test;
+SELECT * FROM vacuum_merge ORDER BY a;
 
-SELECT * FROM vacuum_test ORDER BY a;
+-- Check file count before vacuum
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'vacuum_merge'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
 
--- VACUUM FULL also triggers ducklake_cleanup_old_files
-VACUUM FULL vacuum_test;
+-- Should trigger ducklake_merge_adjacent_files
+VACUUM VERBOSE vacuum_merge;
 
-SELECT * FROM vacuum_test ORDER BY a;
+SELECT * FROM vacuum_merge ORDER BY a;
 
-DROP TABLE vacuum_test;
+-- Check file count after vacuum
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'vacuum_merge'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+DROP TABLE vacuum_merge;
+
+-- Scenario 2: Rewrite data files
+CREATE TABLE vacuum_rewrite (a int, b text) USING ducklake;
+
+INSERT INTO vacuum_rewrite SELECT i, 'val' || i FROM generate_series(1, 100) i;
+
+-- Trigger rewrite threshold
+DELETE FROM vacuum_rewrite WHERE a <= 20;
+
+SELECT count(*) FROM vacuum_rewrite;
+
+-- Check file count before vacuum
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'vacuum_rewrite'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Check delete file count before vacuum (should be > 0)
+SELECT count(*)
+FROM ducklake.ducklake_delete_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'vacuum_rewrite'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Should trigger ducklake_rewrite_data_files
+VACUUM VERBOSE vacuum_rewrite;
+
+SELECT count(*) FROM vacuum_rewrite;
+
+-- Check file count after vacuum
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'vacuum_rewrite'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Check delete file count after vacuum (should be 0)
+SELECT count(*)
+FROM ducklake.ducklake_delete_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'vacuum_rewrite'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+DROP TABLE vacuum_rewrite;
