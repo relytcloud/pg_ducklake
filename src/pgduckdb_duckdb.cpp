@@ -225,13 +225,14 @@ DuckDBManager::Initialize() {
 		if (!creating_extension) {
 			pgduckdb::DuckDBQueryOrThrow(context,
 			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
-		}
 
-		// Always persist data_inlining_row_limit using set_option to ensure consistent behavior
-		duckdb::string set_query = duckdb::StringUtil::Format(
-		    "CALL pgducklake.set_option('data_inlining_row_limit', %d)", ducklake_data_inlining_row_limit);
-		pgduckdb::DuckDBQueryOrThrow(context, set_query);
-		elog(DEBUG2, "[PGDuckDB] Set DuckLake option: 'data_inlining_row_limit'=%d", ducklake_data_inlining_row_limit);
+			// Always persist data_inlining_row_limit using set_option to ensure consistent behavior
+			duckdb::string set_query = duckdb::StringUtil::Format(
+			    "CALL pgducklake.set_option('data_inlining_row_limit', %d)", ducklake_data_inlining_row_limit);
+			pgduckdb::DuckDBQueryOrThrow(context, set_query);
+			elog(DEBUG2, "[PGDuckDB] Set DuckLake option: 'data_inlining_row_limit'=%d",
+			     ducklake_data_inlining_row_limit);
+		}
 	}
 
 	if (pgduckdb::IsMotherDuckEnabled()) {
