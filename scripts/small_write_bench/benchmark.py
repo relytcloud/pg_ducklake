@@ -202,7 +202,9 @@ def run_one_benchmark(conn_str, total_rows, batch_size, limit):
             if should_flush:
                 # Flush duration
                 t_flush = time.perf_counter_ns()
-                cur.execute("SELECT ducklake.flush_inlined_data('public.hits'::regclass)")
+                cur.execute(
+                    "SELECT ducklake.flush_inlined_data('public.hits'::regclass)"
+                )
                 flush_durations.append(time.perf_counter_ns() - t_flush)
                 flush_count += 1
                 inlined_row_count = 0
