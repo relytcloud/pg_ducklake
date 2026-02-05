@@ -122,6 +122,7 @@ See the [DuckLake FDW User Guide](docs/ducklake/ducklake_fdw.md) for setup and u
 ## Documentation
 
 - **[DuckLake Secrets Management](docs/ducklake/secrets.md)** - Configure credentials for AWS S3 and Azure Blob Storage
+- **[Table Maintenance (VACUUM)](docs/ducklake/vacuum.md)** - Guide on using VACUUM for file compaction and garbage collection
 
 ## Roadmap
 
@@ -133,7 +134,7 @@ See the [DuckLake FDW User Guide](docs/ducklake/ducklake_fdw.md) for setup and u
 - [ ] Time-travel queries
 - [ ] Partitioned tables
 - [ ] Read-only `pg_ducklake` tables referencing shared DuckLake datasets (e.g., frozen DuckLake)
-- [ ] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
+- [x] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
 - [ ] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake)
 - [ ] Complex types
 
