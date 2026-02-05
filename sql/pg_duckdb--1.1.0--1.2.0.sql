@@ -72,12 +72,12 @@ CREATE FOREIGN DATA WRAPPER ducklake_fdw
   VALIDATOR ducklake.fdw_validator;
 
 -- DuckLake maintenance function for cleaning up old files
-CREATE FUNCTION ducklake.cleanup(older_than interval DEFAULT NULL)
+CREATE FUNCTION ducklake.ducklake_cleanup_old_files(older_than interval DEFAULT NULL)
 RETURNS bigint
-AS 'MODULE_PATHNAME', 'ducklake_cleanup'
+AS 'MODULE_PATHNAME', 'ducklake_cleanup_old_files'
 LANGUAGE C;
 
-COMMENT ON FUNCTION ducklake.cleanup(interval) IS
+COMMENT ON FUNCTION ducklake.ducklake_cleanup_old_files(interval) IS
 'Clean up old files scheduled for deletion from the DuckLake database.
 Parameters:
   older_than - Interval (e.g., ''24 hours'', ''7 days'', ''30 minutes'').

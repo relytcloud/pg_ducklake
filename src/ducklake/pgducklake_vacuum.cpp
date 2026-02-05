@@ -67,6 +67,9 @@ DuckLakeVacuum_Cpp(Relation onerel, VacuumParams *params, BufferAccessStrategy /
 		ereport(INFO, (errmsg("merged adjacent small files")));
 	}
 
+	// TODO: collect more infos in VERBOSE mode when upstream ducklake supports
+	// (https://github.com/duckdb/ducklake/pull/734)
+
 	elog(DEBUG1, "vacuumed ducklake table \"%s.%s\"", schema_name_str.c_str(), relname_str.c_str());
 }
 

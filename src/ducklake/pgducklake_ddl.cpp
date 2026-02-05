@@ -459,12 +459,13 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
  *
  * Returns the number of files cleaned up.
  */
-DECLARE_PG_FUNCTION(ducklake_cleanup) {
+DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
 	auto connection = pgduckdb::DuckDBManager::GetConnection();
 
 	char *cleanup_query;
 	if (PG_ARGISNULL(0)) {
 		/* Clean up all scheduled files */
+		elog(INFO, "Cleaning up all scheduled files");
 		cleanup_query = psprintf("SELECT count(*) FROM ducklake_cleanup_old_files('%s', cleanup_all => true)",
 		                         pgduckdb::PGDUCKLAKE_DB_NAME);
 	} else {
