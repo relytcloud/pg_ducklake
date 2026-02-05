@@ -102,7 +102,7 @@ def _bulk_insert_query():
         return f"%s::{array_type}"
 
     column_list = ", ".join(columns)
-    unnest_clause = ", ".join(f"unnest({unnest_arg(col)})::{COL_TYPES.get(col, "TEXT")} as {col}" for col in columns)
+    unnest_clause = ", ".join(f"unnest({unnest_arg(col)}) as {col}" for col in columns)
 
     # use from unnest(...) which maps to pg_ruleutils logic we fixed
     return f"insert into hits ({column_list}) select {unnest_clause}"
@@ -157,6 +157,9 @@ def run_one_benchmark(conn_str, total_rows, batch_size, limit):
     print(f"\n>>> Starting Scenario: ducklake.data_inlining_row_limit = {limit}")
 
     with psycopg.connect(conn_str, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("SET duckdb.threads = 4")
+        cur.execute(f"SET ducklake.data_inlining_row_limit = {limit}")
+
         # 1. Isolation: Reinstall Extension
         print("Reinstalling pg_duckdb extension for isolation...")
         cur.execute("DROP EXTENSION IF EXISTS pg_duckdb CASCADE")
@@ -167,7 +170,6 @@ def run_one_benchmark(conn_str, total_rows, batch_size, limit):
         # 3. Base Load (if requested)
 
         # 4. Set GUC
-        cur.execute(f"SET ducklake.data_inlining_row_limit = {limit}")
 
         # 5. Stress Test
         n_batches = total_rows // batch_size
@@ -336,7 +338,7 @@ batch_matrix: {batch_matrix}
 
     # Since baseline might be much slower, ensure we can see details of the fast path
     # Optional: Log scale if difference is huge
-    # plt.yscale('log')
+    plt.yscale("log")
 
     print(f"Saving plot to {output_path}...")
     plt.savefig(output_path, dpi=100)
