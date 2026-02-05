@@ -463,9 +463,17 @@ DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
 			elog(ERROR, "Invalid table OID");
 		}
 
+#if PG_VERSION_NUM >= 170000
 		if (!pgduckdb::IsDucklakeTable(table_oid)) {
 			elog(ERROR, "Table is not a Ducklake table: %u", table_oid);
 		}
+#else
+		Relation rel = pgduckdb::OpenRelation(table_oid, AccessShareLock);
+		if (!pgduckdb::IsDucklakeTable(rel)) {
+			elog(ERROR, "Table is not a Ducklake table: %u", table_oid);
+		}
+		pgduckdb::CloseRelation(rel);
+#endif
 
 		char *table_name = get_rel_name(table_oid);
 		char *schema_name = get_namespace_name(get_rel_namespace(table_oid));

@@ -445,12 +445,14 @@ IsDucklakeTable(Relation relation) {
 	return IsDucklakeTable(relation->rd_rel);
 }
 
+#if PG_VERSION_NUM >= 170000
 bool
 IsDucklakeTable(Oid rel) {
 	Assert(cache.valid);
 	Oid relam_oid = get_rel_relam(rel);
 	return relam_oid == pgduckdb::DucklakeTableAmOid();
 }
+#endif
 
 bool
 IsMotherDuckTable(Form_pg_class relation) {
