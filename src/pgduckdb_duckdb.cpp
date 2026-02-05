@@ -11,7 +11,6 @@
 #include "storage/ducklake_metadata_manager.hpp"
 
 #include "pgduckdb/catalog/pgduckdb_storage.hpp"
-#include "pgduckdb/ducklake/pgducklake_defs.hpp"
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pg/guc.hpp"
 #include "pgduckdb/pg/permissions.hpp"
