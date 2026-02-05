@@ -144,6 +144,7 @@ char *duckdb_custom_user_agent = strdup("");
 bool duckdb_parquet_metadata_cache = true;
 char *ducklake_default_table_path = strdup("");
 int ducklake_data_inlining_row_limit = 0;
+double ducklake_vacuum_delete_threshold = 0.1;
 
 static void
 DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
@@ -321,6 +322,11 @@ InitGUC() {
 	    "Row limit for data inlining in DuckLake. Inserts with fewer rows are stored inline in the metadata catalog "
 	    "instead of creating Parquet files. Set to 0 to disable.",
 	    &ducklake_data_inlining_row_limit, 0, INT_MAX, PGC_SUSET, 0, NULL, DuckAssignDataInliningRowLimit, NULL);
+
+	DefineCustomVariable("ducklake.vacuum_delete_threshold",
+	                     "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a data file. "
+	                     "Default is 0.1 (10%)",
+	                     &ducklake_vacuum_delete_threshold, 0.0, 1.0);
 }
 
 #if PG_VERSION_NUM < 160000

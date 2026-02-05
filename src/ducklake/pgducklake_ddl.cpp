@@ -1,4 +1,5 @@
 #include "pgduckdb/ducklake/pgducklake_ddl.hpp"
+#include "pgduckdb/ducklake/pgducklake_defs.hpp"
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pg/relations.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
@@ -28,6 +29,7 @@ extern "C" {
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/relcache.h"
+#include "utils/timestamp.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
@@ -438,7 +440,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 		char *schema_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
 		char *table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
 
-		char *drop_query = psprintf("DROP TABLE pgducklake.%s.%s", schema_name, table_name);
+		char *drop_query = psprintf("DROP TABLE %s.%s.%s", pgduckdb::PGDUCKLAKE_DB_NAME, schema_name, table_name);
 		elog(DEBUG1, "drop query: %s", drop_query);
 		pgduckdb::DuckDBQueryOrThrow(*connection, drop_query);
 	}
@@ -506,5 +508,44 @@ DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
 	}
 
 	PG_RETURN_BOOL(success);
+}
+/*
+ * ducklake_cleanup(older_than) - Clean up old files in the DuckLake database.
+ *
+ * Parameters:
+ *   older_than - PostgreSQL interval (e.g., '24 hours'::interval, '7 days'::interval).
+ *                If NULL, all scheduled files will be cleaned up.
+ *
+ * Returns the number of files cleaned up.
+ */
+DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
+	auto connection = pgduckdb::DuckDBManager::GetConnection();
+
+	char *cleanup_query;
+	if (PG_ARGISNULL(0)) {
+		/* Clean up all scheduled files */
+		elog(INFO, "Cleaning up all scheduled files");
+		cleanup_query = psprintf("SELECT count(*) FROM ducklake_cleanup_old_files('%s', cleanup_all => true)",
+		                         pgduckdb::PGDUCKLAKE_DB_NAME);
+	} else {
+		/* Convert interval to string using PostgreSQL's interval_out */
+		Interval *interval = PG_GETARG_INTERVAL_P(0);
+		char *interval_str = DatumGetCString(DirectFunctionCall1(interval_out, IntervalPGetDatum(interval)));
+
+		/* Clean up files older than specified interval */
+		cleanup_query =
+		    psprintf("SELECT count(*) FROM ducklake_cleanup_old_files('%s', older_than => now() - INTERVAL '%s')",
+		             pgduckdb::PGDUCKLAKE_DB_NAME, interval_str);
+	}
+
+	auto result = pgduckdb::DuckDBQueryOrThrow(*connection, cleanup_query);
+	auto chunk = result->Fetch();
+
+	int64_t files_cleaned = 0;
+	if (chunk && chunk->size() > 0) {
+		files_cleaned = chunk->GetValue(0, 0).GetValue<int64_t>();
+	}
+
+	PG_RETURN_INT64(files_cleaned);
 }
 }
