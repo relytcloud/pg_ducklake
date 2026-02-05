@@ -1797,17 +1797,27 @@ ConvertDecimal(const NumericVar &numeric) {
  * Convert a Postgres Array Datum to a DuckDB LIST Value.
  */
 static duckdb::Value
-ConvertPostgresArrayToDuckValue(Datum value, Oid elmtype, const duckdb::LogicalType &type) {
-	ArrayType *array = DatumGetArrayTypeP(value);
+ConvertPostgresArrayParameterToDuckValue(Datum value, Oid elmtype, const duckdb::LogicalType &type) {
+	// Convert Datum to ArrayType
+	auto array = DatumGetArrayTypeP(value);
+
+	auto ndims = ARR_NDIM(array);
+	auto elem_type = ARR_ELEMTYPE(array);
+
 	int16 typlen;
 	bool typbyval;
 	char typalign;
+	PostgresFunctionGuard(get_typlenbyvalalign, elem_type, &typlen, &typbyval, &typalign);
+
+	int nelems;
 	Datum *elems;
 	bool *nulls;
-	int nelems;
+	// Deconstruct the array into Datum elements
+	PostgresFunctionGuard(deconstruct_array, array, elem_type, typlen, typbyval, typalign, &elems, &nulls, &nelems);
 
-	PostgresFunctionGuard(get_typlenbyvalalign, elmtype, &typlen, &typbyval, &typalign);
-	PostgresFunctionGuard(deconstruct_array, array, elmtype, typlen, typbyval, typalign, &elems, &nulls, &nelems);
+	if (ndims == -1) {
+		throw duckdb::InternalException("Array type has an ndims of -1, so it's actually not an array??");
+	}
 
 	duckdb::vector<duckdb::Value> duck_values;
 	duck_values.reserve(nelems);
@@ -1872,30 +1882,30 @@ ConvertPostgresParameterToDuckValue(Datum value, Oid postgres_type) {
 	case UUIDOID:
 		return duckdb::Value::UUID(DatumGetUUID(value));
 	case BOOLARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, BOOLOID, duckdb::LogicalType::BOOLEAN);
+		return ConvertPostgresArrayParameterToDuckValue(value, BOOLOID, duckdb::LogicalType::BOOLEAN);
 	case INT2ARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, INT2OID, duckdb::LogicalType::SMALLINT);
+		return ConvertPostgresArrayParameterToDuckValue(value, INT2OID, duckdb::LogicalType::SMALLINT);
 	case INT4ARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, INT4OID, duckdb::LogicalType::INTEGER);
+		return ConvertPostgresArrayParameterToDuckValue(value, INT4OID, duckdb::LogicalType::INTEGER);
 	case INT8ARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, INT8OID, duckdb::LogicalType::BIGINT);
+		return ConvertPostgresArrayParameterToDuckValue(value, INT8OID, duckdb::LogicalType::BIGINT);
 	case BPCHARARRAYOID:
 	case TEXTARRAYOID:
 	case JSONARRAYOID:
 	case VARCHARARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, TEXTOID, duckdb::LogicalType::VARCHAR);
+		return ConvertPostgresArrayParameterToDuckValue(value, TEXTOID, duckdb::LogicalType::VARCHAR);
 	case DATEARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, DATEOID, duckdb::LogicalType::DATE);
+		return ConvertPostgresArrayParameterToDuckValue(value, DATEOID, duckdb::LogicalType::DATE);
 	case TIMESTAMPARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, TIMESTAMPOID, duckdb::LogicalType::TIMESTAMP);
+		return ConvertPostgresArrayParameterToDuckValue(value, TIMESTAMPOID, duckdb::LogicalType::TIMESTAMP);
 	case TIMESTAMPTZARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, TIMESTAMPTZOID, duckdb::LogicalType::TIMESTAMP);
+		return ConvertPostgresArrayParameterToDuckValue(value, TIMESTAMPTZOID, duckdb::LogicalType::TIMESTAMP);
 	case FLOAT4ARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, FLOAT4OID, duckdb::LogicalType::FLOAT);
+		return ConvertPostgresArrayParameterToDuckValue(value, FLOAT4OID, duckdb::LogicalType::FLOAT);
 	case FLOAT8ARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, FLOAT8OID, duckdb::LogicalType::DOUBLE);
+		return ConvertPostgresArrayParameterToDuckValue(value, FLOAT8OID, duckdb::LogicalType::DOUBLE);
 	case UUIDARRAYOID:
-		return ConvertPostgresArrayToDuckValue(value, UUIDOID, duckdb::LogicalType::UUID);
+		return ConvertPostgresArrayParameterToDuckValue(value, UUIDOID, duckdb::LogicalType::UUID);
 	default:
 		elog(ERROR, "Could not convert Postgres parameter of type: %d to DuckDB type", postgres_type);
 	}
