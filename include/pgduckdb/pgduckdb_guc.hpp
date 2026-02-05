@@ -30,4 +30,5 @@ extern char *duckdb_azure_transport_option_type;
 extern char *duckdb_custom_user_agent;
 extern bool duckdb_parquet_metadata_cache;
 extern char *ducklake_default_table_path;
+extern double ducklake_vacuum_delete_threshold;
 } // namespace pgduckdb

@@ -70,3 +70,16 @@ LANGUAGE C STRICT PARALLEL SAFE;
 CREATE FOREIGN DATA WRAPPER ducklake_fdw
   HANDLER ducklake.fdw_handler
   VALIDATOR ducklake.fdw_validator;
+
+-- DuckLake maintenance function for cleaning up old files
+CREATE FUNCTION ducklake.ducklake_cleanup_old_files(older_than interval DEFAULT NULL)
+RETURNS bigint
+AS 'MODULE_PATHNAME', 'ducklake_cleanup_old_files'
+LANGUAGE C;
+
+COMMENT ON FUNCTION ducklake.ducklake_cleanup_old_files(interval) IS
+'Clean up old files scheduled for deletion from the DuckLake database.
+Parameters:
+  older_than - Interval (e.g., ''24 hours'', ''7 days'', ''30 minutes'').
+               If NULL (default), removes ALL scheduled files.
+Returns the number of files cleaned up.';

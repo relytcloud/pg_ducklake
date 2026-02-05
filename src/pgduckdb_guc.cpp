@@ -143,6 +143,7 @@ char *duckdb_azure_transport_option_type = strdup("");
 char *duckdb_custom_user_agent = strdup("");
 bool duckdb_parquet_metadata_cache = true;
 char *ducklake_default_table_path = strdup("");
+double ducklake_vacuum_delete_threshold = 0.1;
 
 static void
 DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
@@ -292,6 +293,11 @@ InitGUC() {
 	DefineCustomVariable("ducklake.default_table_path",
 	                     "Default directory path for DuckLake tables. If set, tables will be created under this path",
 	                     &ducklake_default_table_path, PGC_USERSET, 0, NULL, DuckAssignDuckLakeDefaultTablePath, NULL);
+
+	DefineCustomVariable("ducklake.vacuum_delete_threshold",
+	                     "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a data file. "
+	                     "Default is 0.1 (10%)",
+	                     &ducklake_vacuum_delete_threshold, 0.0, 1.0);
 }
 
 #if PG_VERSION_NUM < 160000
