@@ -1,5 +1,6 @@
 #include "pgduckdb/ducklake/pgducklake_ddl.hpp"
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
+#include "pgduckdb/pg/relations.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
@@ -468,7 +469,7 @@ DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
 			elog(ERROR, "Table is not a Ducklake table: %u", table_oid);
 		}
 #else
-		Relation rel = pgduckdb::OpenRelation(table_oid, AccessShareLock);
+		Relation rel = pgduckdb::OpenRelation(table_oid);
 		if (!pgduckdb::IsDucklakeTable(rel)) {
 			elog(ERROR, "Table is not a Ducklake table: %u", table_oid);
 		}
