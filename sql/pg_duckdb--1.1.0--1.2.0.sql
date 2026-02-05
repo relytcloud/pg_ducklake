@@ -17,34 +17,38 @@ END
 $$;
 
 CREATE FUNCTION ducklake._am_handler(internal)
-    RETURNS table_am_handler
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_am_handler'
-    LANGUAGE C;
+RETURNS table_am_handler
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_am_handler'
+LANGUAGE C;
 
 CREATE ACCESS METHOD ducklake
-    TYPE TABLE
-    HANDLER ducklake._am_handler;
+TYPE TABLE
+HANDLER ducklake._am_handler;
 
-CREATE FUNCTION ducklake._create_table_trigger() RETURNS event_trigger
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_create_table_trigger' LANGUAGE C;
+CREATE FUNCTION ducklake._create_table_trigger()
+RETURNS event_trigger
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_create_table_trigger'
+LANGUAGE C;
 
 CREATE EVENT TRIGGER ducklake_create_table_trigger ON ddl_command_end
-    WHEN tag IN ('CREATE TABLE', 'CREATE TABLE AS')
-    EXECUTE FUNCTION ducklake._create_table_trigger();
+WHEN tag IN ('CREATE TABLE', 'CREATE TABLE AS')
+EXECUTE FUNCTION ducklake._create_table_trigger();
 
-CREATE FUNCTION ducklake._drop_trigger() RETURNS event_trigger
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_drop_trigger' LANGUAGE C;
+CREATE FUNCTION ducklake._drop_trigger()
+RETURNS event_trigger
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_drop_trigger'
+LANGUAGE C;
 
 CREATE EVENT TRIGGER ducklake_drop_trigger ON sql_drop
-    EXECUTE FUNCTION ducklake._drop_trigger();
+EXECUTE FUNCTION ducklake._drop_trigger();
 
 CREATE FUNCTION ducklake._initialize() RETURNS void
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_initialize'
-    LANGUAGE C;
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_initialize'
+LANGUAGE C;
 
 -- Initialize DuckDB when extension is created
 DO $$
@@ -59,9 +63,9 @@ CREATE FUNCTION ducklake.flush_inlined_data(
     schema_name TEXT DEFAULT NULL,
     table_name TEXT DEFAULT NULL
 ) RETURNS boolean
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
-    LANGUAGE C;
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
+LANGUAGE C;
 
 -- DuckLake Foreign Data Wrapper
 CREATE FUNCTION ducklake.fdw_handler()
