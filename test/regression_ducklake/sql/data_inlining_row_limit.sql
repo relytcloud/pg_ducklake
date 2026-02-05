@@ -93,7 +93,7 @@ SELECT COUNT(*) AS inlined_tables_before_specific_flush
 FROM ducklake.ducklake_inlined_data_tables
 WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'test_flush');
 
-SELECT ducklake.flush_inlined_data(schema_name => 'public', table_name => 'test_flush');
+SELECT ducklake.flush_inlined_data('public.test_flush'::regclass);
 
 SELECT COUNT(*) AS inlined_tables_after_specific_flush
 FROM ducklake.ducklake_inlined_data_tables
@@ -101,7 +101,6 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name 
 
 -- Test flush_inlined_data with positional arguments
 INSERT INTO test_flush VALUES (6), (7);
-SELECT ducklake.flush_inlined_data('public');
-SELECT ducklake.flush_inlined_data('public', 'test_flush');
+SELECT ducklake.flush_inlined_data('test_flush'::regclass);
 
 DROP TABLE test_flush;

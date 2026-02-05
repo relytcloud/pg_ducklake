@@ -60,8 +60,7 @@ $$;
 -- Flush inlined data to Parquet files
 -- Optional schema_name and table_name parameters to filter which tables to flush
 CREATE FUNCTION ducklake.flush_inlined_data(
-    schema_name TEXT DEFAULT NULL,
-    table_name TEXT DEFAULT NULL
+    relid regclass DEFAULT NULL
 ) RETURNS boolean
 SET search_path = pg_catalog, pg_temp
 AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'

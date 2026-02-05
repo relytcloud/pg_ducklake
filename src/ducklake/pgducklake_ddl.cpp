@@ -453,28 +453,35 @@ DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
 		elog(ERROR, "pg_duckdb extension is not registered");
 	}
 
-	// Get optional schema_name and table_name parameters
-	const char *schema_name = nullptr;
-	const char *table_name = nullptr;
+	std::string query = "CALL ducklake_flush_inlined_data('pgducklake'";
 
 	if (PG_NARGS() > 0 && !PG_ARGISNULL(0)) {
-		schema_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	}
-	if (PG_NARGS() > 1 && !PG_ARGISNULL(1)) {
-		table_name = text_to_cstring(PG_GETARG_TEXT_PP(1));
+		// Get optional oid or regclass
+		Oid table_oid = DatumGetObjectId(PG_GETARG_DATUM(0));
+
+		if (table_oid == InvalidOid) {
+			elog(ERROR, "Invalid table OID");
+		}
+
+		if (!pgduckdb::IsDucklakeTable(table_oid)) {
+			elog(ERROR, "Table is not a Ducklake table: %u", table_oid);
+		}
+
+		char *table_name = get_rel_name(table_oid);
+		char *schema_name = get_namespace_name(get_rel_namespace(table_oid));
+
+		Assert(table_name != nullptr && strlen(table_name) > 0);
+		Assert(schema_name != nullptr && strlen(schema_name) > 0);
+
+		query += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
+		query += ", schema_name => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
+	} else {
+		elog(WARNING, "No table specified, flushing all tables");
 	}
 
-	// Build the DuckDB query
-	std::string query = "CALL ducklake_flush_inlined_data('pgducklake'";
-	if (schema_name != nullptr && strlen(schema_name) > 0) {
-		query += ", schema_name => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
-	}
-	if (table_name != nullptr && strlen(table_name) > 0) {
-		query += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
-	}
 	query += ")";
 
-	elog(DEBUG2, "[PGDuckDB] Executing: %s", query.c_str());
+	elog(DEBUG2, "[PGDuckDB] Executing flush inlined data: %s", query.c_str());
 
 	pgduckdb::PostgresScopedStackReset scoped_stack_reset;
 

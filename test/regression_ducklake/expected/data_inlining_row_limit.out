@@ -134,6 +134,7 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name 
 
 -- Flush all inlined data to parquet files
 SELECT ducklake.flush_inlined_data();
+WARNING:  No table specified, flushing all tables
  flush_inlined_data 
 --------------------
  t
@@ -167,7 +168,7 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name 
                                     1
 (1 row)
 
-SELECT ducklake.flush_inlined_data(schema_name => 'public', table_name => 'test_flush');
+SELECT ducklake.flush_inlined_data('public.test_flush'::regclass);
  flush_inlined_data 
 --------------------
  t
@@ -183,13 +184,7 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name 
 
 -- Test flush_inlined_data with positional arguments
 INSERT INTO test_flush VALUES (6), (7);
-SELECT ducklake.flush_inlined_data('public');
- flush_inlined_data 
---------------------
- t
-(1 row)
-
-SELECT ducklake.flush_inlined_data('public', 'test_flush');
+SELECT ducklake.flush_inlined_data('test_flush'::regclass);
  flush_inlined_data 
 --------------------
  t
