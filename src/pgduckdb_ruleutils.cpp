@@ -4,6 +4,7 @@
 #include "pgduckdb/pgduckdb_ddl.hpp"
 #include "pgduckdb/pg/relations.hpp"
 #include "pgduckdb/pg/locale.hpp"
+#include "pgduckdb/ducklake/pgducklake_timetravel.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -589,6 +590,16 @@ pgduckdb_relation_name(Oid relation_oid) {
 	} else {
 		const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
 		result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+
+		/* Check for time-travel timestamp (per-table snapshot or global GUC) */
+		const char *timestamp = pgduckdb::GetTimeTravelTimestamp(relname, postgres_schema_name);
+		if (timestamp && pgduckdb::IsDucklakeTable(relation)) {
+			std::string at_clause = pgduckdb::GenerateAtClause(timestamp);
+			elog(DEBUG1, "time-travel query: table=%s.%s, timestamp=%s", db_and_schema, quote_identifier(relname), timestamp);
+			result = psprintf("(SELECT * FROM %s.%s%s)", db_and_schema, quote_identifier(relname), at_clause.c_str());
+		} else if (timestamp) {
+			elog(NOTICE, "ducklake.as_of_timestamp is set but '%s' is not a DuckLake table, ignoring", relname);
+		}
 	}
 
 	ReleaseSysCache(tp);
