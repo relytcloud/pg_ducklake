@@ -591,8 +591,8 @@ pgduckdb_relation_name(Oid relation_oid) {
 		const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
 		result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
 
-		char *time_travel_result =
-		    pgduckdb::MaybeApplyTimeTravelSnapshot(relation_oid, db_and_schema, relname, pgduckdb::IsDucklakeTable(relation));
+		char *time_travel_result = pgduckdb::MaybeApplyTimeTravelSnapshot(relation_oid, db_and_schema, relname,
+		                                                                  pgduckdb::IsDucklakeTable(relation));
 		if (time_travel_result) {
 			result = time_travel_result;
 		}
