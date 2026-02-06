@@ -149,7 +149,10 @@ duckdb: $(FULL_DUCKDB_LIB)
 .git/modules/third_party/ducklake/HEAD:
 	git submodule update --init --depth=0 third_party/ducklake
 
-$(FULL_DUCKDB_LIB): .git/modules/third_party/duckdb/HEAD .git/modules/third_party/ducklake/HEAD third_party/pg_duckdb_extensions.cmake
+.git/modules/third_party/duckdb-postgres/HEAD:
+	git submodule update --init --depth=0 third_party/duckdb-postgres
+
+$(FULL_DUCKDB_LIB): .git/modules/third_party/duckdb/HEAD .git/modules/third_party/ducklake/HEAD .git/modules/third_party/duckdb-postgres/HEAD third_party/pg_duckdb_extensions.cmake
 ifeq ($(DUCKDB_BUILD), ReleaseStatic)
 	mkdir -p third_party/duckdb/build/release/vcpkg_installed
 endif

@@ -1,0 +1,48 @@
+-- Test ducklake.options() function
+-- Disable force execution to prevent pg_duckdb from trying to execute this function in DuckDB
+-- which causes warnings because it can't find 'options' function in DuckDB catalog
+SET duckdb.force_execution = false;
+-- 1. Verify the function returns expected columns
+SELECT option_name, description, value, scope, scope_entry
+FROM ducklake.options()
+WHERE option_name = 'data_inlining_row_limit';
+       option_name       |                     description                     | value | scope  | scope_entry 
+-------------------------+-----------------------------------------------------+-------+--------+-------------
+ data_inlining_row_limit | Maximum amount of rows to inline in a single insert | 0     | GLOBAL | 
+(1 row)
+
+-- 2. Set an option and verify it shows up in the options list
+SELECT ducklake.set_option('data_inlining_row_limit', 100);
+ set_option 
+------------
+ 
+(1 row)
+
+SELECT option_name, description, value, scope, scope_entry
+FROM ducklake.options()
+WHERE option_name = 'data_inlining_row_limit';
+       option_name       |                     description                     | value | scope  | scope_entry 
+-------------------------+-----------------------------------------------------+-------+--------+-------------
+ data_inlining_row_limit | Maximum amount of rows to inline in a single insert | 100   | GLOBAL | 
+(1 row)
+
+-- 3. Set a table-scoped option and verify
+CREATE TABLE options_test (a int) USING ducklake;
+SELECT ducklake.set_option('data_inlining_row_limit', 50, 'options_test'::regclass);
+ set_option 
+------------
+ 
+(1 row)
+
+SELECT option_name, description, value, scope, scope_entry
+FROM ducklake.options()
+WHERE option_name = 'data_inlining_row_limit'
+ORDER BY scope;
+       option_name       |                     description                     | value | scope  |     scope_entry     
+-------------------------+-----------------------------------------------------+-------+--------+---------------------
+ data_inlining_row_limit | Maximum amount of rows to inline in a single insert | 100   | GLOBAL | 
+ data_inlining_row_limit | Maximum amount of rows to inline in a single insert | 50    | TABLE  | public.options_test
+(2 rows)
+
+-- Cleanup
+DROP TABLE options_test;

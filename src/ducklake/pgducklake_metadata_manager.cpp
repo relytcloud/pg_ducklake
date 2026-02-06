@@ -86,17 +86,17 @@ InsertSPITupleTableIntoChunk(duckdb::DataChunk &output, SPITupleTable *tuptable,
 			Datum datum = SPI_getbinval(tuple, tuptable->tupdesc, duckdb_output_index + 1, &isnull);
 			if (isnull) {
 				auto &array_mask = duckdb::FlatVector::Validity(result);
-				array_mask.SetInvalid(start_idx + row);
+				array_mask.SetInvalid(row);
 			} else {
 				if (attr->attlen == -1) {
 					bool should_free = false;
 					Datum detoasted_value = DetoastPostgresDatum(reinterpret_cast<varlena *>(datum), &should_free);
-					ConvertPostgresToDuckValue(attr->atttypid, detoasted_value, result, start_idx + row);
+					ConvertPostgresToDuckValue(attr->atttypid, detoasted_value, result, row);
 					if (should_free) {
 						duckdb_free(reinterpret_cast<void *>(detoasted_value));
 					}
 				} else {
-					ConvertPostgresToDuckValue(attr->atttypid, datum, result, start_idx + row);
+					ConvertPostgresToDuckValue(attr->atttypid, datum, result, row);
 				}
 			}
 		}

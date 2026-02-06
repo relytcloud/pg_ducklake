@@ -23,6 +23,7 @@ bool IsDuckdbTable(Form_pg_class relation);
 bool IsDuckdbTable(Relation relation);
 bool IsDucklakeTable(Form_pg_class relation);
 bool IsDucklakeTable(Relation relation);
+bool IsDucklakeTable(Oid rel);
 bool IsMotherDuckTable(Form_pg_class relation);
 bool IsMotherDuckTable(Relation relation);
 bool IsDuckdbExecutionAllowed();

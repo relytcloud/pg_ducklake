@@ -8379,6 +8379,16 @@ get_parameter(Param *param, deparse_context *context)
 	 * Not PARAM_EXEC, or couldn't find referent: just print $N.
 	 */
 	appendStringInfo(context->buf, "$%d", param->paramid);
+	/*
+	 * Explicitly cast the parameter to the correct type, because
+	 * DuckDB cannot infer the type of the parameter from the context.
+	 */
+	if (!pgduckdb_is_fake_type(param->paramtype))
+	{
+		appendStringInfo(context->buf, "::%s",
+						 format_type_with_typemod(param->paramtype,
+												  param->paramtypmod));
+	}
 }
 
 /*
