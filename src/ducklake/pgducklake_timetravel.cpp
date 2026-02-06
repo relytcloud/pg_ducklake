@@ -19,16 +19,18 @@ extern "C" {
 #include "utils/lsyscache.h"
 #include "utils/regproc.h"
 #include "utils/syscache.h"
+#include "utils/guc.h"
+#include "utils/timestamp.h"
 }
 
 namespace pgduckdb {
 
 /*
- * Per-table snapshot storage: maps table name -> timestamp.
+ * Per-table snapshot storage: maps relation OID -> timestamp string.
  * Set via ducklake.set_table_snapshot() UDF.
  * Cleared via ducklake.clear_table_snapshots() UDF.
  */
-static std::unordered_map<std::string, std::string> table_snapshot_map;
+static std::unordered_map<Oid, std::string> table_snapshot_map;
 
 void
 ClearTableSnapshots() {
@@ -36,8 +38,8 @@ ClearTableSnapshots() {
 }
 
 void
-SetTableSnapshot(const char *table_name, const char *timestamp) {
-	table_snapshot_map[table_name] = timestamp;
+SetTableSnapshot(Oid relid, const char *timestamp) {
+	table_snapshot_map[relid] = timestamp;
 }
 
 /*
@@ -47,25 +49,15 @@ SetTableSnapshot(const char *table_name, const char *timestamp) {
  * 1. Per-table snapshot (set via ducklake.set_table_snapshot())
  * 2. Global GUC (ducklake.as_of)
  *
- * The table_name is matched against both unqualified and schema-qualified names.
+ * The lookup is performed by relation OID.
  */
 const char *
-GetTimeTravelTimestamp(const char *relname, const char *schemaname) {
+GetTimeTravelTimestamp(Oid relid) {
 	/* Check per-table snapshot first */
 	if (!table_snapshot_map.empty()) {
-		/* Try unqualified name */
-		auto it = table_snapshot_map.find(relname);
+		auto it = table_snapshot_map.find(relid);
 		if (it != table_snapshot_map.end()) {
 			return it->second.c_str();
-		}
-
-		/* Try schema-qualified name */
-		if (schemaname) {
-			std::string qualified = std::string(schemaname) + "." + relname;
-			it = table_snapshot_map.find(qualified);
-			if (it != table_snapshot_map.end()) {
-				return it->second.c_str();
-			}
 		}
 	}
 
@@ -94,39 +86,6 @@ GenerateAtClause(const char *timestamp) {
 	return result;
 }
 
-/*
- * Validate timestamp format.
- *
- * Accepts formats like:
- *   YYYY-MM-DD
- *   YYYY-MM-DD HH:MM:SS
- *   YYYY-MM-DD HH:MM:SS.UUUUUU
- *   YYYY-MM-DDTHH:MM:SS
- *
- * Minimum validation: must have at least YYYY-MM-DD (10 chars).
- */
-bool
-ValidateTimestampFormat(const char *timestamp) {
-	if (!timestamp || strlen(timestamp) < 10) {
-		return false;
-	}
-
-	if (timestamp[4] != '-' || timestamp[7] != '-') {
-		return false;
-	}
-
-	for (int i = 0; i < 10; i++) {
-		if (i == 4 || i == 7) {
-			continue;
-		}
-		if (!isdigit((unsigned char)timestamp[i])) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
 void
 ValidateNoTimeTravelForDML(void *query_ptr) {
 	Query *query = (Query *)query_ptr;
@@ -147,9 +106,8 @@ ValidateNoTimeTravelForDML(void *query_ptr) {
 		RangeTblEntry *rte = rt_fetch(query->resultRelation, query->rtable);
 		if (rte && rte->relid) {
 			const char *relname = get_rel_name(rte->relid);
-			const char *schemaname = get_namespace_name(get_rel_namespace(rte->relid));
-			if (relname && schemaname) {
-				const char *timestamp = GetTimeTravelTimestamp(relname, schemaname);
+			if (relname) {
+				const char *timestamp = GetTimeTravelTimestamp(rte->relid);
 				if (timestamp) {
 					elog(ERROR,
 					     "DML operations are not allowed on table '%s' while a time travel snapshot is set. "
@@ -161,24 +119,34 @@ ValidateNoTimeTravelForDML(void *query_ptr) {
 	}
 }
 
+char *
+MaybeApplyTimeTravelSnapshot(Oid relid, const char *db_and_schema, const char *relname, bool is_ducklake_table) {
+	const char *timestamp = GetTimeTravelTimestamp(relid);
+	if (!timestamp) {
+		return NULL;
+	}
+
+	if (!is_ducklake_table) {
+		elog(NOTICE, "ducklake.as_of_timestamp is set but '%s' is not a DuckLake table, ignoring", relname);
+		return NULL;
+	}
+
+	std::string at_clause = GenerateAtClause(timestamp);
+	elog(DEBUG1, "time-travel query: table=%s.%s, timestamp=%s", db_and_schema, quote_identifier(relname), timestamp);
+	return psprintf("(SELECT * FROM %s.%s%s)", db_and_schema, quote_identifier(relname), at_clause.c_str());
+}
+
 } // namespace pgduckdb
 
 extern "C" {
 
 DECLARE_PG_FUNCTION(ducklake_set_table_snapshot) {
-	const char *table_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	const char *timestamp_val = text_to_cstring(PG_GETARG_TEXT_PP(1));
-
-	if (!pgduckdb::ValidateTimestampFormat(timestamp_val)) {
-		elog(ERROR, "invalid timestamp format: '%s'", timestamp_val);
-	}
+	Oid relid = PG_GETARG_OID(0);
+	Timestamp timestamp_val = PG_GETARG_TIMESTAMP(1);
 
 	/* Resolve table name and verify it's a DuckLake table */
-	List *names = stringToQualifiedNameList(table_name, NULL);
-	RangeVar *rv = makeRangeVarFromNameList(names);
-	Oid relid = RangeVarGetRelid(rv, AccessShareLock, true);
 	if (!OidIsValid(relid)) {
-		elog(ERROR, "table '%s' does not exist", table_name);
+		elog(ERROR, "invalid table OID");
 	}
 
 	HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
@@ -188,11 +156,16 @@ DECLARE_PG_FUNCTION(ducklake_set_table_snapshot) {
 	Form_pg_class relation = (Form_pg_class)GETSTRUCT(tp);
 	if (!pgduckdb::IsDucklakeTable(relation)) {
 		ReleaseSysCache(tp);
-		elog(ERROR, "table '%s' is not a DuckLake table", table_name);
+		elog(ERROR, "table '%s' is not a DuckLake table", get_rel_name(relid));
 	}
 	ReleaseSysCache(tp);
 
-	pgduckdb::SetTableSnapshot(table_name, timestamp_val);
+	auto save_nestlevel = NewGUCNestLevel();
+	SetConfigOption("DateStyle", "ISO, YMD", PGC_USERSET, PGC_S_SESSION);
+	char *timestamp_str = DatumGetCString(DirectFunctionCall1(timestamp_out, TimestampGetDatum(timestamp_val)));
+	AtEOXact_GUC(false, save_nestlevel);
+
+	pgduckdb::SetTableSnapshot(relid, timestamp_str);
 
 	PG_RETURN_VOID();
 }

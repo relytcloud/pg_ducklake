@@ -7,13 +7,13 @@ SELECT pg_sleep(0.2);
 \! sleep 0.2
 
 -- Store timestamp for time-travel
-CREATE TEMP TABLE ts_storage (ts1 TEXT, ts2 TEXT);
-INSERT INTO ts_storage SELECT to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US'), NULL;
+CREATE TEMP TABLE ts_storage (ts1 TIMESTAMP, ts2 TIMESTAMP);
+INSERT INTO ts_storage SELECT now()::timestamp, NULL;
 
 UPDATE tt_basic SET value = value + 1000;
 
 -- Set GUC and query (should show original values)
-DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT ts1 FROM ts_storage), false); END $$;
+DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT to_char(ts1, 'YYYY-MM-DD HH24:MI:SS.US') FROM ts_storage), false); END $$;
 SELECT * FROM tt_basic ORDER BY id;
 
 -- Reset GUC and query current (should show updated values)
@@ -28,12 +28,12 @@ INSERT INTO tt_sales VALUES (1, 100), (2, 200), (3, 300);
 SELECT pg_sleep(0.2);
 \! sleep 0.2
 
-UPDATE ts_storage SET ts1 = to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US');
+UPDATE ts_storage SET ts1 = now()::timestamp;
 
 INSERT INTO tt_sales VALUES (4, 400), (5, 500);
 
 -- Set per-table snapshot and query
-SELECT ducklake.set_table_snapshot('tt_sales', (SELECT ts1 FROM ts_storage));
+SELECT ducklake.set_table_snapshot('tt_sales'::regclass, (SELECT ts1 FROM ts_storage));
 SELECT COUNT(*), SUM(amount) FROM tt_sales;
 
 -- Clear and query current
@@ -48,20 +48,20 @@ INSERT INTO tt_priority VALUES (1, 'v1');
 SELECT pg_sleep(0.2);
 \! sleep 0.2
 
-UPDATE ts_storage SET ts1 = to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US');
+UPDATE ts_storage SET ts1 = now()::timestamp;
 
 UPDATE tt_priority SET value = 'v2';
 SELECT pg_sleep(0.2);
 \! sleep 0.2
 
 -- Store second timestamp
-UPDATE ts_storage SET ts2 = to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US');
+UPDATE ts_storage SET ts2 = now()::timestamp;
 
 UPDATE tt_priority SET value = 'v3';
 
 -- Set GUC to ts2 (should show v2), but per-table to ts1 (should show v1)
-DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT ts2 FROM ts_storage), false); END $$;
-SELECT ducklake.set_table_snapshot('tt_priority', (SELECT ts1 FROM ts_storage));
+DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT to_char(ts2, 'YYYY-MM-DD HH24:MI:SS.US') FROM ts_storage), false); END $$;
+SELECT ducklake.set_table_snapshot('tt_priority'::regclass, (SELECT ts1 FROM ts_storage));
 SELECT * FROM tt_priority ORDER BY id;
 
 -- Clear per-table, GUC still active (should show v2)
@@ -83,13 +83,13 @@ INSERT INTO tt_customers VALUES (1, 'Alice'), (2, 'Bob');
 SELECT pg_sleep(0.2);
 \! sleep 0.2
 
-UPDATE ts_storage SET ts1 = to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US');
+UPDATE ts_storage SET ts1 = now()::timestamp;
 
 UPDATE tt_orders SET amount = amount * 2;
 UPDATE tt_customers SET name = 'Charlie' WHERE customer_id = 1;
 
 -- Query both tables at historical timestamp via GUC
-DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT ts1 FROM ts_storage), false); END $$;
+DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT to_char(ts1, 'YYYY-MM-DD HH24:MI:SS.US') FROM ts_storage), false); END $$;
 SELECT o.order_id, o.amount, c.name
 FROM tt_orders o
 JOIN tt_customers c ON o.order_id = c.customer_id
@@ -117,14 +117,14 @@ DROP TABLE tt_heap;
 
 -- Test 6: set_table_snapshot on non-DuckLake table (should error)
 CREATE TABLE tt_not_ducklake (id INT);
-SELECT ducklake.set_table_snapshot('tt_not_ducklake', '2025-01-01');
+SELECT ducklake.set_table_snapshot('tt_not_ducklake'::regclass, '2025-01-01'::timestamp);
 DROP TABLE tt_not_ducklake;
 
 -- Test 7: Invalid timestamp format in set_table_snapshot (should error)
 CREATE TABLE tt_invalid (id INT) USING ducklake;
 INSERT INTO tt_invalid VALUES (1);
 
-SELECT ducklake.set_table_snapshot('tt_invalid', 'invalid-timestamp');
+SELECT ducklake.set_table_snapshot('tt_invalid'::regclass, 'invalid-timestamp'::timestamp);
 
 DROP TABLE tt_invalid;
 
@@ -134,11 +134,11 @@ INSERT INTO tt_agg VALUES (1, 10), (2, 20), (3, 30);
 SELECT pg_sleep(0.2);
 \! sleep 0.2
 
-UPDATE ts_storage SET ts1 = to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US');
+UPDATE ts_storage SET ts1 = now()::timestamp;
 
 INSERT INTO tt_agg VALUES (4, 40), (5, 50);
 
-DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT ts1 FROM ts_storage), false); END $$;
+DO $$ BEGIN PERFORM set_config('ducklake.as_of_timestamp', (SELECT to_char(ts1, 'YYYY-MM-DD HH24:MI:SS.US') FROM ts_storage), false); END $$;
 SELECT COUNT(*), SUM(amount), AVG(amount) FROM tt_agg;
 
 RESET ducklake.as_of_timestamp;

@@ -34,8 +34,8 @@ For different timestamps per table:
 
 ```sql
 -- Set timestamps for specific tables
-SELECT ducklake.set_table_snapshot('orders', '2025-01-01 10:00:00');
-SELECT ducklake.set_table_snapshot('customers', '2025-01-15 14:30:00');
+SELECT ducklake.set_table_snapshot('orders'::regclass, '2025-01-01 10:00:00'::timestamp);
+SELECT ducklake.set_table_snapshot('customers'::regclass, '2025-01-15 14:30:00'::timestamp);
 
 -- Query normally - each table uses its own timestamp
 SELECT * FROM orders;      -- shows data from Jan 1
@@ -103,8 +103,8 @@ RESET ducklake.as_of_timestamp;
 
 ```sql
 -- Query orders from January, but customers from February
-SELECT ducklake.set_table_snapshot('orders', '2025-01-01');
-SELECT ducklake.set_table_snapshot('customers', '2025-02-01');
+SELECT ducklake.set_table_snapshot('orders'::regclass, '2025-01-01'::timestamp);
+SELECT ducklake.set_table_snapshot('customers'::regclass, '2025-02-01'::timestamp);
 
 -- Orders from Jan 1, customers from Feb 1
 SELECT o.order_id, o.amount, c.name, c.current_address
@@ -142,12 +142,12 @@ COMMIT;  -- timestamp resets after commit
 Sets a time travel timestamp for a specific table.
 
 **Parameters:**
-- `table_name` (text): Table name, optionally schema-qualified (e.g., `'public.orders'`)
-- `timestamp` (text): Timestamp in any accepted format (parsed by DuckDB)
+- `table_name` (regclass): Table name, optionally schema-qualified (e.g., `'public.orders'::regclass`)
+- `timestamp` (timestamp): Timestamp value
 
 **Example:**
 ```sql
-SELECT ducklake.set_table_snapshot('orders', '2025-01-01 10:00:00');
+SELECT ducklake.set_table_snapshot('orders'::regclass, '2025-01-01 10:00:00'::timestamp);
 ```
 
 **Error conditions:**
