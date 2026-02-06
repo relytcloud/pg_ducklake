@@ -19,6 +19,7 @@ extern "C" {
 #include "commands/event_trigger.h"
 #include "commands/extension.h" // creating_extension
 #include "executor/spi.h"
+#include "funcapi.h"
 #include "fmgr.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
@@ -547,5 +548,127 @@ DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
 	}
 
 	PG_RETURN_INT64(files_cleaned);
+}
+
+DECLARE_PG_FUNCTION(ducklake_set_option) {
+	if (!pgduckdb::IsExtensionRegistered()) {
+		elog(ERROR, "pg_duckdb extension is not registered");
+	}
+
+	if (PG_ARGISNULL(0)) {
+		elog(ERROR, "Option name cannot be NULL");
+	}
+
+	char *option_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
+
+	if (pg_strcasecmp(option_name, "data_inlining_row_limit") == 0) {
+		// supported
+	} else {
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid option name \"%s\"", option_name),
+		                errdetail("Only \"data_inlining_row_limit\" is supported currently.")));
+	}
+
+	// Handle value argument which is VARIADIC "any"
+	// We need to convert the datum to a string representation for the SQL query
+	Oid value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	Datum value_datum = PG_GETARG_DATUM(1);
+	bool value_isnull = PG_ARGISNULL(1);
+
+	std::string value_str;
+	if (value_isnull) {
+		value_str = "NULL";
+	} else {
+		Oid typoutput;
+		bool typisvarlena;
+		getTypeOutputInfo(value_type, &typoutput, &typisvarlena);
+		char *val_str = OidOutputFunctionCall(typoutput, value_datum);
+
+		// For numeric/boolean types, we don't want to quote them if we can avoid it,
+		// but since we are constructing a SQL string, passing them as string literals is usually safest
+		// and DuckDB is good at casting strings to appropriate types.
+		// However, for ANY parameter, DuckDB might treat '50' as STRING and 50 as INTEGER.
+		// Let's try to be smart based on OID.
+		switch (value_type) {
+		case BOOLOID:
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+		case FLOAT4OID:
+		case FLOAT8OID:
+		case NUMERICOID:
+			// These types can be passed directly without quotes (mostly)
+			// But OidOutputFunctionCall returns string representation.
+			// e.g. "50".
+			value_str = val_str;
+			break;
+		default:
+			// Quote strings, dates, etc.
+			value_str = duckdb::KeywordHelper::WriteQuoted(val_str);
+			break;
+		}
+		pfree(val_str);
+	}
+
+	// Use ducklake_set_option('catalog', 'option', value, ...) directly
+	auto query = duckdb::StringUtil::Format("CALL %s.set_option(%s, %s", pgduckdb::PGDUCKLAKE_DB_NAME,
+	                                        duckdb::KeywordHelper::WriteQuoted(option_name).c_str(), value_str.c_str());
+
+	// Optional scope (regclass)
+	if (PG_NARGS() > 2 && !PG_ARGISNULL(2)) {
+		Oid relid = PG_GETARG_OID(2);
+
+		char *table_name = get_rel_name(relid);
+		if (!table_name) {
+			elog(ERROR, "Could not find relation with OID %u", relid);
+		}
+		char *schema_name = get_namespace_name(get_rel_namespace(relid));
+		if (!schema_name) {
+			elog(ERROR, "Could not find namespace for relation with OID %u", relid);
+		}
+
+		query += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
+		query += ", schema => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
+	}
+
+	query += ")";
+
+	elog(DEBUG2, "[PGDuckDB] Executing set_option: %s", query.c_str());
+
+	pgduckdb::DuckDBQueryOrThrow(query);
+
+	PG_RETURN_VOID();
+}
+
+DECLARE_PG_FUNCTION(ducklake_options) {
+	if (!pgduckdb::IsExtensionRegistered()) {
+		elog(ERROR, "pg_duckdb extension is not registered");
+	}
+
+	duckdb::string query = duckdb::StringUtil::Format(
+	    "SELECT option_name, description, value, scope, scope_entry FROM %s.options()", pgduckdb::PGDUCKLAKE_DB_NAME);
+
+	auto result = pgduckdb::DuckDBQueryOrThrow(query);
+
+	ReturnSetInfo *rsi = (ReturnSetInfo *)fcinfo->resultinfo;
+	InitMaterializedSRF(fcinfo, 0);
+
+	for (auto &row : *result) {
+		const int NATTS = 5;
+		Assert(rsi->expectedDesc->natts == NATTS);
+		Datum values[NATTS];
+		bool nulls[NATTS];
+		memset(nulls, 0, sizeof(nulls));
+
+		for (int col_idx = 0; col_idx < NATTS; col_idx++) {
+			if (row.IsNull(col_idx)) {
+				nulls[col_idx] = true;
+			} else {
+				values[col_idx] = CStringGetTextDatum(row.GetValue<std::string>(col_idx).c_str());
+			}
+		}
+		tuplestore_putvalues(rsi->setResult, rsi->expectedDesc, values, nulls);
+	}
+
+	PG_RETURN_NULL();
 }
 }

@@ -143,7 +143,6 @@ char *duckdb_azure_transport_option_type = strdup("");
 char *duckdb_custom_user_agent = strdup("");
 bool duckdb_parquet_metadata_cache = true;
 char *ducklake_default_table_path = strdup("");
-int ducklake_data_inlining_row_limit = 0;
 double ducklake_vacuum_delete_threshold = 0.1;
 
 static void
@@ -179,28 +178,6 @@ DuckAssignParquetMetadataCache(bool newval, void * /*extra*/) {
 static void
 DuckAssignDuckLakeDefaultTablePath(const char *newval, void * /*extra*/) {
 	InvokeCPPFunc(DuckAssignDuckLakeDefaultTablePath_Cpp, newval);
-}
-
-static void
-DuckAssignDataInliningRowLimit_Cpp(int new_val) {
-	if (!IsExtensionRegistered()) {
-		return;
-	}
-
-	if (!DuckDBManager::IsInitialized()) {
-		return;
-	}
-
-	auto connection = pgduckdb::DuckDBManager::GetConnectionUnsafe();
-	duckdb::string set_query =
-	    duckdb::StringUtil::Format("CALL pgducklake.set_option('data_inlining_row_limit', %d)", new_val);
-	pgduckdb::DuckDBQueryOrThrow(*connection, set_query);
-	elog(DEBUG2, "[PGDuckDB] Set DuckLake option: 'data_inlining_row_limit'=%d", new_val);
-}
-
-static void
-DuckAssignDataInliningRowLimit(int newval, void * /*extra*/) {
-	InvokeCPPFunc(DuckAssignDataInliningRowLimit_Cpp, newval);
 }
 
 void
@@ -316,12 +293,6 @@ InitGUC() {
 	DefineCustomVariable("ducklake.default_table_path",
 	                     "Default directory path for DuckLake tables. If set, tables will be created under this path",
 	                     &ducklake_default_table_path, PGC_USERSET, 0, NULL, DuckAssignDuckLakeDefaultTablePath, NULL);
-
-	DefineCustomVariable<int>(
-	    "ducklake.data_inlining_row_limit",
-	    "Row limit for data inlining in DuckLake. Inserts with fewer rows are stored inline in the metadata catalog "
-	    "instead of creating Parquet files. Set to 0 to disable.",
-	    &ducklake_data_inlining_row_limit, 0, INT_MAX, PGC_SUSET, 0, NULL, DuckAssignDataInliningRowLimit, NULL);
 
 	DefineCustomVariable("ducklake.vacuum_delete_threshold",
 	                     "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a data file. "

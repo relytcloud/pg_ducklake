@@ -9,3 +9,4 @@ test: data_inlining_row_limit
 test: insert_unnest
 test: fdw
 test: vacuum
+test: options

@@ -96,3 +96,41 @@ Parameters:
   older_than - Interval (e.g., ''24 hours'', ''7 days'', ''30 minutes'').
                If NULL (default), removes ALL scheduled files.
 Returns the number of files cleaned up.';
+
+-- DuckLake set_option function
+CREATE FUNCTION ducklake.set_option(
+    option_name text,
+    value "any",
+    scope regclass DEFAULT NULL
+)
+RETURNS void
+AS 'MODULE_PATHNAME', 'ducklake_set_option'
+LANGUAGE C;
+
+COMMENT ON FUNCTION ducklake.set_option(text, "any", regclass) IS
+'Set a DuckLake option.
+Parameters:
+  option_name - Name of the option to set.
+  value       - Value to set the option to.
+  scope       - Optional table to apply the option to (NULL for global).';
+
+-- DuckLake options function
+CREATE FUNCTION ducklake.options(
+    OUT option_name text,
+    OUT description text,
+    OUT value text,
+    OUT scope text,
+    OUT scope_entry text
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'ducklake_options'
+LANGUAGE C;
+
+COMMENT ON FUNCTION ducklake.options() IS
+'List all DuckLake options.
+Returns:
+  option_name - Name of the option.
+  description - Description of the option.
+  value       - Current value of the option.
+  scope       - Scope of the option (GLOBAL, SCHEMA, TABLE, DEFAULT).
+  scope_entry - The specific schema or table the option applies to.';

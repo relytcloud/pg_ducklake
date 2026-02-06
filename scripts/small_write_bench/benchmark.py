@@ -154,24 +154,22 @@ def measure_read_perf(cur):
 
 
 def run_one_benchmark(conn_str, total_rows, batch_size, limit):
-    print(f"\n>>> Starting Scenario: ducklake.data_inlining_row_limit = {limit}")
+    print(f"\n>>> Starting Scenario: data_inlining_row_limit={limit}")
 
     with psycopg.connect(conn_str, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("SET duckdb.threads = 4")
-        cur.execute(f"SET ducklake.data_inlining_row_limit = {limit}")
 
         # 1. Isolation: Reinstall Extension
         print("Reinstalling pg_duckdb extension for isolation...")
         cur.execute("DROP EXTENSION IF EXISTS pg_duckdb CASCADE")
         cur.execute("CREATE EXTENSION pg_duckdb")
 
-        # 2. Setup Table (read from create.sql)
+        # 2. Set GUC
+        cur.execute(f"SELECT ducklake.set_option('data_inlining_row_limit', {limit})")
+        # 3. Setup Table (read from create.sql)
         cur.execute(CREATE_TABLE_SQL)
-        # 3. Base Load (if requested)
 
-        # 4. Set GUC
-
-        # 5. Stress Test
+        # 4. Stress Test
         n_batches = total_rows // batch_size
         print(f"Running {n_batches} randomized batches...")
         read_perf_before_flush = {}
