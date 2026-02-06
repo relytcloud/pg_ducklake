@@ -138,9 +138,8 @@ ValidateNoTimeTravelForDML(void *query_ptr) {
 
 	/* Check if global time travel GUC is set */
 	if (ducklake_as_of_timestamp && ducklake_as_of_timestamp[0] != '\0') {
-		elog(ERROR,
-		     "DML operations are not allowed while ducklake.as_of_timestamp is set. "
-		     "Reset the timestamp with: RESET ducklake.as_of_timestamp");
+		elog(ERROR, "DML operations are not allowed while ducklake.as_of_timestamp is set. "
+		            "Reset the timestamp with: RESET ducklake.as_of_timestamp");
 	}
 
 	/* Check if any per-table snapshots are set (they would affect the target table) */

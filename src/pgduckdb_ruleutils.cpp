@@ -595,7 +595,8 @@ pgduckdb_relation_name(Oid relation_oid) {
 		const char *timestamp = pgduckdb::GetTimeTravelTimestamp(relname, postgres_schema_name);
 		if (timestamp && pgduckdb::IsDucklakeTable(relation)) {
 			std::string at_clause = pgduckdb::GenerateAtClause(timestamp);
-			elog(DEBUG1, "time-travel query: table=%s.%s, timestamp=%s", db_and_schema, quote_identifier(relname), timestamp);
+			elog(DEBUG1, "time-travel query: table=%s.%s, timestamp=%s", db_and_schema, quote_identifier(relname),
+			     timestamp);
 			result = psprintf("(SELECT * FROM %s.%s%s)", db_and_schema, quote_identifier(relname), at_clause.c_str());
 		} else if (timestamp) {
 			elog(NOTICE, "ducklake.as_of_timestamp is set but '%s' is not a DuckLake table, ignoring", relname);
