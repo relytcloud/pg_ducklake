@@ -59,7 +59,8 @@ Common timestamp formats:
 - With microseconds: `'2025-01-01 12:30:45.123456'`
 - ISO 8601: `'2025-01-01T12:30:45'`
 
-**Tip:** Format validation is minimal; DuckDB parses the value at query time.
+**Tip:** `ducklake.as_of_timestamp` is text passed through to DuckDB, so prefer ISO formats.  
+`ducklake.set_table_snapshot()` uses a Postgres `timestamp` value, so parsing happens in Postgres.
 
 ## Examples
 
@@ -81,8 +82,8 @@ SELECT COUNT(*), SUM(amount) FROM orders;
 
 ```sql
 -- Capture current timestamp before making changes
-CREATE TEMP TABLE my_snapshot (ts TEXT);
-INSERT INTO my_snapshot SELECT to_char(now(), 'YYYY-MM-DD HH24:MI:SS.US');
+CREATE TEMP TABLE my_snapshot (ts TIMESTAMP);
+INSERT INTO my_snapshot SELECT now()::timestamp;
 
 -- Make some changes
 UPDATE orders SET status = 'cancelled' WHERE order_id = 12345;
@@ -90,7 +91,11 @@ UPDATE orders SET status = 'cancelled' WHERE order_id = 12345;
 -- Query data before the change
 DO $$
 BEGIN
-  PERFORM set_config('ducklake.as_of_timestamp', (SELECT ts FROM my_snapshot), false);
+  PERFORM set_config(
+    'ducklake.as_of_timestamp',
+    (SELECT to_char(ts, 'YYYY-MM-DD HH24:MI:SS.US') FROM my_snapshot),
+    false
+  );
 END $$;
 
 SELECT * FROM orders WHERE order_id = 12345;
@@ -120,7 +125,7 @@ SELECT ducklake.clear_table_snapshots();
 
 Global session setting for time travel queries.
 
-- **Type:** Text (timestamp)
+- **Type:** Text (timestamp string passed to DuckDB)
 - **Default:** Empty (no time travel)
 - **Scope:** Session or transaction (`SET LOCAL` for transaction-only)
 
