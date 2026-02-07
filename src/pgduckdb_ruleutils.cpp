@@ -4,6 +4,7 @@
 #include "pgduckdb/pgduckdb_ddl.hpp"
 #include "pgduckdb/pg/relations.hpp"
 #include "pgduckdb/pg/locale.hpp"
+#include "pgduckdb/ducklake/pgducklake_timetravel.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -589,6 +590,12 @@ pgduckdb_relation_name(Oid relation_oid) {
 	} else {
 		const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
 		result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+
+		char *time_travel_result = pgduckdb::MaybeApplyTimeTravelSnapshot(relation_oid, db_and_schema, relname,
+		                                                                  pgduckdb::IsDucklakeTable(relation));
+		if (time_travel_result) {
+			result = time_travel_result;
+		}
 	}
 
 	ReleaseSysCache(tp);

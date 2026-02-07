@@ -31,4 +31,5 @@ extern char *duckdb_custom_user_agent;
 extern bool duckdb_parquet_metadata_cache;
 extern char *ducklake_default_table_path;
 extern double ducklake_vacuum_delete_threshold;
+extern char *ducklake_as_of_timestamp;
 } // namespace pgduckdb

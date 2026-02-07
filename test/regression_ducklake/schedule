@@ -7,3 +7,4 @@ test: temp_table
 test: ddl
 test: fdw
 test: vacuum
+test: time_travel
