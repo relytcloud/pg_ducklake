@@ -123,6 +123,7 @@ See the [DuckLake FDW User Guide](docs/ducklake/ducklake_fdw.md) for setup and u
 
 - **[DuckLake Secrets Management](docs/ducklake/secrets.md)** - Configure credentials for AWS S3 and Azure Blob Storage
 - **[Table Maintenance (VACUUM)](docs/ducklake/vacuum.md)** - Guide on using VACUUM for file compaction and garbage collection
+- **[DuckLake Time Travel](docs/ducklake/time_travel.md)** - Query historical snapshots
 
 ## Roadmap
 

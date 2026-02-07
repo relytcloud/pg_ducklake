@@ -89,19 +89,22 @@ Regression tests are in `test/regression/` (pg_duckdb) and `test/regression_duck
 
 ## Contributing Guidelines
 
-### Upstream Compatibility
-This project is forked from pg_duckdb. Changes to existing pg_duckdb code should be **minimal and easy to upstream**. When adding new functionality:
-- Prefer adding new files over modifying existing pg_duckdb files
-- Keep modifications to pg_duckdb files small and isolated
-- Consider whether changes could benefit the upstream project
+### CRITICAL: Code Organization and Upstream Compatibility
 
-### File Organization
-pg_ducklake-specific code must be placed in dedicated directories:
-- `src/ducklake/` - DuckLake-specific source files
-- `include/pgduckdb/ducklake/` - DuckLake-specific headers
-- `test/regression_ducklake/` - DuckLake-specific regression tests
+**This project is forked from pg_duckdb. All modifications must follow these rules:**
 
-Do not mix DuckLake-specific logic into general pg_duckdb files.
+1. **Minimize pg_duckdb modifications**: Changes to existing pg_duckdb code must be **minimal and easy to upstream**
+   - Only modify pg_duckdb files when absolutely necessary for integration
+   - Keep modifications small, isolated, and well-documented
+   - Consider whether changes could benefit the upstream project
+
+2. **Separate pg_ducklake code**: pg_ducklake-specific code must **ALWAYS** be in dedicated locations:
+   - `src/ducklake/` - DuckLake-specific source files
+   - `include/pgduckdb/ducklake/` - DuckLake-specific headers
+   - `test/regression_ducklake/` - DuckLake-specific regression tests
+   - **Never mix DuckLake-specific logic into general pg_duckdb files**
+
+3. **Prefer new files over modifications**: When adding functionality, create new files in `src/ducklake/` rather than modifying existing pg_duckdb files
 
 ## Code Style
 

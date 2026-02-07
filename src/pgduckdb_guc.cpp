@@ -144,6 +144,7 @@ char *duckdb_custom_user_agent = strdup("");
 bool duckdb_parquet_metadata_cache = true;
 char *ducklake_default_table_path = strdup("");
 double ducklake_vacuum_delete_threshold = 0.1;
+char *ducklake_as_of_timestamp = strdup("");
 
 static void
 DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
@@ -298,6 +299,11 @@ InitGUC() {
 	                     "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a data file. "
 	                     "Default is 0.1 (10%)",
 	                     &ducklake_vacuum_delete_threshold, 0.0, 1.0);
+
+	DefineCustomVariable("ducklake.as_of_timestamp",
+	                     "Timestamp for point-in-time queries on DuckLake tables. "
+	                     "When set, all DuckLake table queries use AT (TIMESTAMP => 'value')",
+	                     &ducklake_as_of_timestamp);
 }
 
 #if PG_VERSION_NUM < 160000

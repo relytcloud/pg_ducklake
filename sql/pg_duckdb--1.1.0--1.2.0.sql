@@ -83,3 +83,24 @@ Parameters:
   older_than - Interval (e.g., ''24 hours'', ''7 days'', ''30 minutes'').
                If NULL (default), removes ALL scheduled files.
 Returns the number of files cleaned up.';
+
+CREATE FUNCTION ducklake.set_table_snapshot(
+    table_name regclass,
+    timestamp_val timestamp
+)
+RETURNS void
+AS 'MODULE_PATHNAME', 'ducklake_set_table_snapshot'
+LANGUAGE C STRICT;
+
+COMMENT ON FUNCTION ducklake.set_table_snapshot(regclass, timestamp) IS
+'Set a per-table snapshot timestamp for time-travel queries.
+The snapshot takes priority over the ducklake.as_of_timestamp GUC.
+Usage: SELECT ducklake.set_table_snapshot(''orders''::regclass, ''2025-01-01 12:00:00''::timestamp);';
+
+CREATE FUNCTION ducklake.clear_table_snapshots()
+RETURNS void
+AS 'MODULE_PATHNAME', 'ducklake_clear_table_snapshots'
+LANGUAGE C;
+
+COMMENT ON FUNCTION ducklake.clear_table_snapshots() IS
+'Clear all per-table snapshot timestamps set via ducklake.set_table_snapshot().';
