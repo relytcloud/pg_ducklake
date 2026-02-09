@@ -8,3 +8,4 @@ test: ddl
 test: fdw
 test: vacuum
 test: time_travel
+test: insert_unnest
