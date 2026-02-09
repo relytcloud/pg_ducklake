@@ -579,4 +579,46 @@ DECLARE_PG_FUNCTION(ducklake_set_option) {
 
 	PG_RETURN_VOID();
 }
+
+DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
+	if (!pgduckdb::IsExtensionRegistered()) {
+		elog(ERROR, "pg_duckdb extension is not registered");
+	}
+
+	auto query = duckdb::StringUtil::Format("CALL ducklake_flush_inlined_data(%s",
+	                                        duckdb::KeywordHelper::WriteQuoted(pgduckdb::PGDUCKLAKE_DB_NAME).c_str());
+
+	/* Optional scope (regclass) */
+	if (PG_NARGS() > 0 && !PG_ARGISNULL(0)) {
+		Oid relid = PG_GETARG_OID(0);
+		if (!OidIsValid(relid)) {
+			elog(ERROR, "invalid table OID");
+		}
+
+		Relation relation = pgduckdb::OpenRelation(relid);
+		if (!pgduckdb::IsDucklakeTable(relation)) {
+			const char *table_name = NameStr(relation->rd_rel->relname);
+			pgduckdb::CloseRelation(relation);
+			elog(ERROR, "table '%s' is not a DuckLake table", table_name);
+		}
+
+		const char *table_name = NameStr(relation->rd_rel->relname);
+		char *schema_name = get_namespace_name_or_temp(relation->rd_rel->relnamespace);
+		if (!schema_name) {
+			pgduckdb::CloseRelation(relation);
+			elog(ERROR, "Could not find namespace for relation with OID %u", relid);
+		}
+		std::string table_name_str(table_name);
+		std::string schema_name_str(schema_name);
+		pgduckdb::CloseRelation(relation);
+
+		query += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name_str);
+		query += ", schema_name => " + duckdb::KeywordHelper::WriteQuoted(schema_name_str);
+	}
+
+	query += ")";
+	pgduckdb::DuckDBQueryOrThrow(query);
+
+	PG_RETURN_VOID();
+}
 }

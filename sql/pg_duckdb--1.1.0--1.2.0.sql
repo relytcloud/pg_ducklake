@@ -125,6 +125,17 @@ Parameters:
   value       - Value to set the option to.
   scope       - Optional table to apply the option to (NULL for global).';
 
+CREATE PROCEDURE ducklake.flush_inlined_data(
+    scope regclass DEFAULT NULL
+)
+AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
+LANGUAGE C;
+
+COMMENT ON PROCEDURE ducklake.flush_inlined_data(regclass) IS
+'Flush inlined data to data files.
+Parameters:
+  scope - Optional DuckLake table to flush (NULL flushes all tables).';
+
 -- DuckLake options function
 CREATE FUNCTION ducklake.options(
     OUT option_name text,

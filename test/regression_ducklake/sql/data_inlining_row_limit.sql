@@ -59,7 +59,9 @@ SELECT * FROM test_inlining ORDER BY i;
 -- Inlined table should still have same row count (new data goes to parquet)
 SELECT COUNT(*) AS inlined_rows_after_disable FROM ducklake.:inlined_table_name;
 
+-- Test 6: flush inlined data for one table
+CALL ducklake.flush_inlined_data('test_inlining'::regclass);
+SELECT COUNT(*) AS row_count_after_flush FROM test_inlining;
+
 -- Cleanup
 DROP TABLE test_inlining;
-
--- (flush_inlined_data tests moved to separate PR)
