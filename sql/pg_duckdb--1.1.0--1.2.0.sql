@@ -17,34 +17,38 @@ END
 $$;
 
 CREATE FUNCTION ducklake._am_handler(internal)
-    RETURNS table_am_handler
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_am_handler'
-    LANGUAGE C;
+RETURNS table_am_handler
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_am_handler'
+LANGUAGE C;
 
 CREATE ACCESS METHOD ducklake
-    TYPE TABLE
-    HANDLER ducklake._am_handler;
+TYPE TABLE
+HANDLER ducklake._am_handler;
 
-CREATE FUNCTION ducklake._create_table_trigger() RETURNS event_trigger
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_create_table_trigger' LANGUAGE C;
+CREATE FUNCTION ducklake._create_table_trigger()
+RETURNS event_trigger
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_create_table_trigger'
+LANGUAGE C;
 
 CREATE EVENT TRIGGER ducklake_create_table_trigger ON ddl_command_end
-    WHEN tag IN ('CREATE TABLE', 'CREATE TABLE AS')
-    EXECUTE FUNCTION ducklake._create_table_trigger();
+WHEN tag IN ('CREATE TABLE', 'CREATE TABLE AS')
+EXECUTE FUNCTION ducklake._create_table_trigger();
 
-CREATE FUNCTION ducklake._drop_trigger() RETURNS event_trigger
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_drop_trigger' LANGUAGE C;
+CREATE FUNCTION ducklake._drop_trigger()
+RETURNS event_trigger
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_drop_trigger'
+LANGUAGE C;
 
 CREATE EVENT TRIGGER ducklake_drop_trigger ON sql_drop
-    EXECUTE FUNCTION ducklake._drop_trigger();
+EXECUTE FUNCTION ducklake._drop_trigger();
 
 CREATE FUNCTION ducklake._initialize() RETURNS void
-    SET search_path = pg_catalog, pg_temp
-    AS 'MODULE_PATHNAME', 'ducklake_initialize'
-    LANGUAGE C;
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_initialize'
+LANGUAGE C;
 
 -- Initialize DuckDB when extension is created
 DO $$
@@ -84,23 +88,40 @@ Parameters:
                If NULL (default), removes ALL scheduled files.
 Returns the number of files cleaned up.';
 
-CREATE FUNCTION ducklake.set_table_snapshot(
-    table_name regclass,
-    timestamp_val timestamp
+-- DuckLake set_option function
+CREATE FUNCTION ducklake.set_option(
+    option_name text,
+    value "any",
+    scope regclass DEFAULT NULL
 )
 RETURNS void
-AS 'MODULE_PATHNAME', 'ducklake_set_table_snapshot'
-LANGUAGE C STRICT;
-
-COMMENT ON FUNCTION ducklake.set_table_snapshot(regclass, timestamp) IS
-'Set a per-table snapshot timestamp for time-travel queries.
-The snapshot takes priority over the ducklake.as_of_timestamp GUC.
-Usage: SELECT ducklake.set_table_snapshot(''orders''::regclass, ''2025-01-01 12:00:00''::timestamp);';
-
-CREATE FUNCTION ducklake.clear_table_snapshots()
-RETURNS void
-AS 'MODULE_PATHNAME', 'ducklake_clear_table_snapshots'
+AS 'MODULE_PATHNAME', 'ducklake_set_option'
 LANGUAGE C;
 
-COMMENT ON FUNCTION ducklake.clear_table_snapshots() IS
-'Clear all per-table snapshot timestamps set via ducklake.set_table_snapshot().';
+COMMENT ON FUNCTION ducklake.set_option(text, "any", regclass) IS
+'Set a DuckLake option.
+Parameters:
+  option_name - Name of the option to set.
+  value       - Value to set the option to.
+  scope       - Optional table to apply the option to (NULL for global).';
+
+-- DuckLake options function
+CREATE FUNCTION ducklake.options(
+    OUT option_name text,
+    OUT description text,
+    OUT value text,
+    OUT scope text,
+    OUT scope_entry text
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'ducklake_options'
+LANGUAGE C;
+
+COMMENT ON FUNCTION ducklake.options() IS
+'List all DuckLake options.
+Returns:
+  option_name - Name of the option.
+  description - Description of the option.
+  value       - Current value of the option.
+  scope       - Scope of the option (GLOBAL, SCHEMA, TABLE, DEFAULT).
+  scope_entry - The specific schema or table the option applies to.';

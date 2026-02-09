@@ -5,6 +5,8 @@ test: initialization
 test: readme_examples
 test: temp_table
 test: ddl
+test: data_inlining_row_limit
+test: insert_unnest
 test: fdw
 test: vacuum
-test: time_travel
+test: options
