@@ -102,8 +102,8 @@ SELECT COUNT(*) AS inlined_rows_after_disable FROM ducklake.:inlined_table_name;
 CALL ducklake.flush_inlined_data('test_inlining'::regclass);
 SELECT COUNT(*) AS row_count_after_flush FROM test_inlining;
  row_count_after_flush 
-----------------------
-                    6
+-----------------------
+                     6
 (1 row)
 
 -- Cleanup
