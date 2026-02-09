@@ -10,7 +10,7 @@ FROM ducklake.options()
 WHERE option_name = 'data_inlining_row_limit';
 
 -- 2. Set an option and verify it shows up in the options list
-SELECT ducklake.set_option('data_inlining_row_limit', 100);
+CALL ducklake.set_option('data_inlining_row_limit', 100);
 
 SELECT option_name, description, value, scope, scope_entry
 FROM ducklake.options()
@@ -19,7 +19,7 @@ WHERE option_name = 'data_inlining_row_limit';
 -- 3. Set a table-scoped option and verify
 CREATE TABLE options_test (a int) USING ducklake;
 
-SELECT ducklake.set_option('data_inlining_row_limit', 50, 'options_test'::regclass);
+CALL ducklake.set_option('data_inlining_row_limit', 50, 'options_test'::regclass);
 
 SELECT option_name, description, value, scope, scope_entry
 FROM ducklake.options()

@@ -20,7 +20,7 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name 
 DROP TABLE test_no_inlining;
 
 -- Test 3: Enable data inlining and create a table
-SELECT ducklake.set_option('data_inlining_row_limit', 100);
+CALL ducklake.set_option('data_inlining_row_limit', 100);
 
 CREATE TABLE test_inlining (i INT, j VARCHAR) USING ducklake;
 INSERT INTO test_inlining VALUES (1, 'one'), (2, 'two');
@@ -51,7 +51,7 @@ SELECT * FROM test_inlining ORDER BY i;
 SELECT COUNT(*) AS total_inlined_rows FROM ducklake.:inlined_table_name;
 
 -- Test 5: Disable inlining and insert more data
-SELECT ducklake.set_option('data_inlining_row_limit', 0);
+CALL ducklake.set_option('data_inlining_row_limit', 0);
 
 INSERT INTO test_inlining VALUES (5, 'five'), (6, 'six');
 SELECT * FROM test_inlining ORDER BY i;

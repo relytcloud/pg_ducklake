@@ -19,7 +19,6 @@ extern "C" {
 #include "commands/event_trigger.h"
 #include "commands/extension.h" // creating_extension
 #include "executor/spi.h"
-#include "funcapi.h"
 #include "fmgr.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
@@ -579,38 +578,5 @@ DECLARE_PG_FUNCTION(ducklake_set_option) {
 	pgduckdb::DuckDBQueryOrThrow(query);
 
 	PG_RETURN_VOID();
-}
-
-DECLARE_PG_FUNCTION(ducklake_options) {
-	if (!pgduckdb::IsExtensionRegistered()) {
-		elog(ERROR, "pg_duckdb extension is not registered");
-	}
-
-	duckdb::string query = duckdb::StringUtil::Format(
-	    "SELECT option_name, description, value, scope, scope_entry FROM %s.options()", pgduckdb::PGDUCKLAKE_DB_NAME);
-
-	auto result = pgduckdb::DuckDBQueryOrThrow(query);
-
-	ReturnSetInfo *rsi = (ReturnSetInfo *)fcinfo->resultinfo;
-	InitMaterializedSRF(fcinfo, 0);
-
-	for (auto &row : *result) {
-		const int NATTS = 5;
-		Assert(rsi->expectedDesc->natts == NATTS);
-		Datum values[NATTS];
-		bool nulls[NATTS];
-		memset(nulls, 0, sizeof(nulls));
-
-		for (int col_idx = 0; col_idx < NATTS; col_idx++) {
-			if (row.IsNull(col_idx)) {
-				nulls[col_idx] = true;
-			} else {
-				values[col_idx] = CStringGetTextDatum(row.GetValue<std::string>(col_idx).c_str());
-			}
-		}
-		tuplestore_putvalues(rsi->setResult, rsi->expectedDesc, values, nulls);
-	}
-
-	PG_RETURN_NULL();
 }
 }

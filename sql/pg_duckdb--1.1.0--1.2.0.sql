@@ -89,16 +89,15 @@ Parameters:
 Returns the number of files cleaned up.';
 
 -- DuckLake set_option function
-CREATE FUNCTION ducklake.set_option(
+CREATE PROCEDURE ducklake.set_option(
     option_name text,
     value "any",
     scope regclass DEFAULT NULL
 )
-RETURNS void
 AS 'MODULE_PATHNAME', 'ducklake_set_option'
 LANGUAGE C;
 
-COMMENT ON FUNCTION ducklake.set_option(text, "any", regclass) IS
+COMMENT ON PROCEDURE ducklake.set_option(text, "any", regclass) IS
 'Set a DuckLake option.
 Parameters:
   option_name - Name of the option to set.
@@ -114,7 +113,7 @@ CREATE FUNCTION ducklake.options(
     OUT scope_entry text
 )
 RETURNS SETOF record
-AS 'MODULE_PATHNAME', 'ducklake_options'
+AS 'MODULE_PATHNAME', 'duckdb_only_function'
 LANGUAGE C;
 
 COMMENT ON FUNCTION ducklake.options() IS

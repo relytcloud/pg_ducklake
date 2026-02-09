@@ -1,4 +1,6 @@
 -- Test VACUUM on DuckLake tables
+-- Ensure data inlining is disabled so we create actual files
+CALL ducklake.set_option('data_inlining_row_limit', 0);
 -- Scenario 1: Merge adjacent files
 CREATE TABLE vacuum_merge (a int, b text) USING ducklake;
 -- Create multiple parquet files
