@@ -10,3 +10,5 @@ test: insert_unnest
 test: fdw
 test: vacuum
 test: options
+test: time_travel
+test: insert_unnest
