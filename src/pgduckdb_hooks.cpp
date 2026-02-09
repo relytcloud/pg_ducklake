@@ -101,11 +101,17 @@ ContainsDuckdbItems(Node *node, void *context) {
 		if (pgduckdb::IsDuckdbOnlyFunction(func->funcid)) {
 			return true;
 		}
+		if (pgduckdb::IsDucklakeOnlyFunction(func->funcid)) {
+			return true;
+		}
 	}
 
 	if (IsA(node, Aggref)) {
 		Aggref *func = castNode(Aggref, node);
 		if (pgduckdb::IsDuckdbOnlyFunction(func->aggfnoid)) {
+			return true;
+		}
+		if (pgduckdb::IsDucklakeOnlyFunction(func->aggfnoid)) {
 			return true;
 		}
 	}

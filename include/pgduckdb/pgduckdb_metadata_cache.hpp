@@ -5,6 +5,7 @@
 namespace pgduckdb {
 bool IsExtensionRegistered();
 bool IsDuckdbOnlyFunction(Oid function_oid);
+bool IsDucklakeOnlyFunction(Oid function_oid);
 uint64_t CacheVersion();
 Oid ExtensionOid();
 Oid SchemaOid();

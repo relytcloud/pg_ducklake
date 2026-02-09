@@ -51,6 +51,19 @@ bool outermost_query = true;
 
 char *
 pgduckdb_function_name(Oid function_oid, bool *use_variadic_p) {
+	if (pgduckdb::IsDucklakeOnlyFunction(function_oid)) {
+		/*
+		 * DuckDB currently doesn't support variadic functions, so we can just
+		 * always set this pointer to false.
+		 */
+		if (use_variadic_p) {
+			*use_variadic_p = false;
+		}
+
+		auto func_name = get_func_name(function_oid);
+		return psprintf("pgducklake.%s", quote_identifier(func_name));
+	}
+
 	if (!pgduckdb::IsDuckdbOnlyFunction(function_oid)) {
 		return nullptr;
 	}
