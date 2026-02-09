@@ -102,7 +102,10 @@ def _bulk_insert_query():
         return f"%s::{array_type}"
 
     column_list = ", ".join(columns)
-    unnest_clause = ", ".join(f"unnest({unnest_arg(col)})::{COL_TYPES.get(col, "TEXT")} as {col}" for col in columns)
+    unnest_clause = ", ".join(
+        f"unnest({unnest_arg(col)})::{COL_TYPES.get(col, 'TEXT')} as {col}"
+        for col in columns
+    )
 
     # use from unnest(...) which maps to pg_ruleutils logic we fixed
     return f"insert into hits ({column_list}) select {unnest_clause}"
