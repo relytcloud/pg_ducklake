@@ -98,6 +98,13 @@ SELECT COUNT(*) AS inlined_rows_after_disable FROM ducklake.:inlined_table_name;
                           4
 (1 row)
 
+-- Test 6: flush inlined data for one table
+CALL ducklake.flush_inlined_data('test_inlining'::regclass);
+SELECT COUNT(*) AS row_count_after_flush FROM test_inlining;
+ row_count_after_flush 
+----------------------
+                    6
+(1 row)
+
 -- Cleanup
 DROP TABLE test_inlining;
--- (flush_inlined_data tests moved to separate PR)
