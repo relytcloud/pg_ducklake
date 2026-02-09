@@ -129,3 +129,38 @@ Regression tests are in `test/regression/` (pg_duckdb) and `test/regression_duck
 - Tabs for indentation, spaces for alignment
 - Max 120 columns
 - Run `make format` before committing
+
+## Exposing DuckLake Functions and Procedures
+
+When exposing new DuckLake APIs to PostgreSQL SQL users, define SQL-visible objects in:
+
+- `sql/pg_duckdb--1.1.0--1.2.0.sql`
+
+DuckLake exposures currently fall into two categories.
+
+### 1) DuckLake procedures (`CALL ducklake_*(...)`)
+
+Examples: `ducklake_rewrite_data_files`, `ducklake_cleanup_old_files`, `ducklake_delete_orphaned_files`.
+
+- Expose them as `CREATE PROCEDURE ducklake.<proc>(...)` in SQL migration scripts.
+- Name conversion rule: C symbol `ducklake_<proc>` maps to SQL name `ducklake.<proc>`.
+- Back with `AS 'MODULE_PATHNAME', 'ducklake_<proc>' LANGUAGE C` and implement `DECLARE_PG_FUNCTION(ducklake_<proc>)`.
+- If upstream `ducklake_*` takes a first `catalog` argument, do not expose it in SQL. Always fill it with
+  `pgduckdb::PGDUCKLAKE_DB_NAME` in C++.
+- If upstream parameters include `schema` / `table_name` as strings, expose a single `regclass` parameter instead.
+  Validate/resolve it inside `DECLARE_PG_FUNCTION` (lookup relation OID, schema, table name) before constructing the
+  DuckDB query.
+- Prefer user-facing SQL names without the `ducklake_` prefix (for example `ducklake.set_option`), while C symbols
+  remain `ducklake_*`.
+
+### 2) DuckLake table functions (`SELECT * FROM <table_func>(...)`)
+
+Examples: `current_snapshot()`, `last_committed_snapshot()`, `options()`.
+
+- Expose as SQL functions bound to `duckdb_only_function`:
+  `CREATE FUNCTION ... AS 'MODULE_PATHNAME', 'duckdb_only_function' LANGUAGE C`.
+- This forces DuckDB-side execution and avoids PostgreSQL-side table-value materialization glue.
+- Add the function name to `BuildDucklakeOnlyFunctions()` in `src/pgduckdb_metadata_cache.cpp` so planner/ruleutils
+  treat it as DuckLake-only.
+- Do not add a dedicated `DECLARE_PG_FUNCTION` for these table functions unless custom PostgreSQL-side behavior is
+  explicitly required.
