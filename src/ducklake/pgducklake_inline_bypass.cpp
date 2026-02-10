@@ -17,6 +17,7 @@
 /* DuckDB headers must come BEFORE postgres headers to avoid macro conflicts */
 #include "pgduckdb/ducklake/pgducklake_inline_bypass.hpp"
 #include "pgduckdb/ducklake/pgducklake_defs.hpp"
+#include "pgduckdb/pg/explain.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_utils.hpp"
@@ -851,10 +852,9 @@ InlineBypass_ReScanCustomScan(CustomScanState *node) {
 static void
 InlineBypass_ExplainCustomScan(CustomScanState *node, List * /*ancestors*/, ExplainState *es) {
 	InlineBypassState *state = (InlineBypassState *)node;
-	ExplainPropertyText("DuckLake Inline Bypass", "true", es);
-	ExplainPropertyText("Target Table", psprintf("%s.%s", state->info.schema_name, state->info.table_name), es);
-	ExplainPropertyInteger("Columns", NULL, state->info.param_indices.size(), es);
-	ExplainPropertyInteger("Row Limit", NULL, state->info.data_inlining_row_limit, es);
+	pg::ExplainPropertyText("DuckLake Inline Bypass", "true", es);
+	pg::ExplainPropertyText("Target Table",
+	                                  psprintf("%s.%s", state->info.schema_name, state->info.table_name), es);
 }
 
 PlannedStmt *

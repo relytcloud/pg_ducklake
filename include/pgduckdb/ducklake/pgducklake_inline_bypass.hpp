@@ -13,13 +13,13 @@ namespace pgduckdb {
  * data table without going through DuckDB, avoiding multiple value conversions.
  */
 struct InlineBypassInfo {
-	Oid target_table_oid;              /* OID of the target DuckLake table */
-	std::vector<int> param_indices;    /* Which $N parameter for each column (0-based) */
-	std::vector<Oid> array_elem_types; /* Element type of each array parameter */
-	std::vector<Oid> array_types;      /* Array type OID of each parameter */
-	uint64_t data_inlining_row_limit;  /* Row limit for inlining (0 = disabled) */
-	const char *schema_name;           /* Schema name of target table */
-	const char *table_name;            /* Table name */
+	Oid target_table_oid = 0;                          /* OID of the target DuckLake table (InvalidOid is 0) */
+	std::vector<int> param_indices = {};               /* Which $N parameter for each column (0-based) */
+	std::vector<Oid> array_elem_types = {};            /* Element type of each array parameter */
+	std::vector<Oid> array_types = {};                 /* Array type OID of each parameter */
+	uint64_t data_inlining_row_limit = 0;              /* Row limit for inlining (0 = disabled) */
+	const char *schema_name = nullptr;                 /* Schema name of target table */
+	const char *table_name = nullptr;                  /* Table name */
 };
 
 /*
