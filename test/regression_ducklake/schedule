@@ -11,3 +11,4 @@ test: vacuum
 test: options
 test: time_travel
 test: insert_unnest
+test: inline_bypass

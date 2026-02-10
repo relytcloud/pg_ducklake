@@ -9,6 +9,7 @@ extern "C" {
 }
 
 #include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
+#include "pgduckdb/ducklake/pgducklake_inline_bypass.hpp"
 #include "pgduckdb/pgduckdb_background_worker.hpp"
 #include "pgduckdb/pgduckdb_node.hpp"
 #include "pgduckdb/pgduckdb_xact.hpp"
@@ -37,6 +38,7 @@ _PG_init(void) {
 	pgduckdb::InitGUCHooks();
 	DuckdbInitHooks();
 	DuckdbInitNode();
+	pgduckdb::InitInlineBypassNode();
 	pgduckdb::InitBackgroundWorkersShmem();
 	pgduckdb::RegisterDuckdbXactCallback();
 

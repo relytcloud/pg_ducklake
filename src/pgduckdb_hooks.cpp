@@ -35,6 +35,7 @@ extern "C" {
 #include "pgduckdb/vendor/pg_list.hpp"
 #include "pgduckdb/pgduckdb_node.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
+#include "pgduckdb/ducklake/pgducklake_inline_bypass.hpp"
 
 static planner_hook_type prev_planner_hook = NULL;
 static ExecutorStart_hook_type prev_executor_start_hook = NULL;
@@ -264,6 +265,14 @@ IsAllowedStatement(Query *query, bool throw_error) {
 static PlannedStmt *
 DuckdbPlannerHook_Cpp(Query *parse, const char *query_string, int cursor_options, ParamListInfo bound_params) {
 	if (pgduckdb::IsExtensionRegistered()) {
+		/* Check for inline bypass pattern first - this is an optimization for
+		 * INSERT INTO ducklake_table SELECT UNNEST($1), UNNEST($2), ...
+		 * that avoids going through DuckDB execution entirely. */
+		if (auto bypass_info = pgduckdb::DetectInlineBypassPattern(parse)) {
+			pgduckdb::TriggerActivity();
+			return pgduckdb::CreateInlineBypassPlan(*bypass_info, parse);
+		}
+
 		if (pgduckdb::NeedsDuckdbExecution(parse)) {
 			pgduckdb::TriggerActivity();
 			pgduckdb::IsAllowedStatement(parse, true);
