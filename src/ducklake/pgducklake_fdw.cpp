@@ -60,6 +60,7 @@ struct DucklakeFdwOption {
 static const struct DucklakeFdwOption valid_server_options[] = {
     {"dbname", ForeignServerRelationId, false},          // Target database name
     {"metadata_schema", ForeignServerRelationId, false}, // DuckLake metadata schema (default: ducklake)
+    {"frozen_url", ForeignServerRelationId, false},      // Frozen ducklake HTTP URL (mutually exclusive with dbname)
     {NULL, InvalidOid, false}                            // Sentinel
 };
 
@@ -158,6 +159,16 @@ EscapeDuckDBStringLiteral(const char *value) {
 }
 
 static void
+RegisterFrozenDucklakeForeignTable_Cpp(const char *frozen_url, const char *attach_as) {
+	auto escaped_url = EscapeDuckDBStringLiteral(frozen_url);
+	auto attach_query =
+	    duckdb::StringUtil::Format("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s", escaped_url.c_str(), attach_as);
+
+	elog(DEBUG1, "(DuckLake FDW) Attaching frozen database as '%s': %s", attach_as, attach_query.c_str());
+	pgduckdb::DuckDBQueryOrThrow(attach_query);
+}
+
+static void
 RegisterDucklakeForeignTable_Cpp(const char *dbname, const char *username, const char *metadata_schema,
                                  const char *attach_as) {
 	/* Escape string values to prevent SQL injection */
@@ -179,6 +190,15 @@ RegisterDucklakeForeignTable(Oid foreign_table_oid) {
 	ForeignTable *ft = GetForeignTable(foreign_table_oid);
 	ForeignServer *server = GetForeignServer(ft->serverid);
 
+	const char *frozen_url = GetOptionValue(server->options, "frozen_url");
+
+	if (frozen_url) {
+		/* Frozen ducklake: attach using the server name as the DuckDB database name */
+		auto attach_as = psprintf("%s", server->servername);
+		InvokeCPPFunc(RegisterFrozenDucklakeForeignTable_Cpp, frozen_url, attach_as);
+		return;
+	}
+
 	const char *metadata_schema = GetOptionValue(server->options, "metadata_schema");
 	const char *dbname = GetOptionValue(server->options, "dbname");
 
@@ -197,19 +217,18 @@ RegisterDucklakeForeignTable(Oid foreign_table_oid) {
 
 static void
 InferAndPopulateForeignTableColumns_Cpp(CreateForeignTableStmt *stmt, const char *schema_name, const char *table_name,
-                                        const char *dbname, const char *username, const char *metadata_schema) {
+                                        std::function<void(const char *)> attach_fn, const std::string &error_hint) {
 	const char *attach_name = FDW_PROBE_ATTACH_NAME;
 	auto probe_query = duckdb::StringUtil::Format("SELECT * FROM %s.%s.%s LIMIT 0", attach_name,
 	                                              quote_identifier(schema_name), quote_identifier(table_name));
 	auto detach_query = duckdb::StringUtil::Format("DETACH DATABASE IF EXISTS %s", attach_name);
 
-	RegisterDucklakeForeignTable_Cpp(dbname, username, metadata_schema, attach_name);
+	attach_fn(attach_name);
 	elog(DEBUG2, "(DuckLake FDW) Probing schema: %s", probe_query.c_str());
 	auto conn = pgduckdb::DuckDBManager::GetConnection();
 	auto prepared = conn->context->Prepare(probe_query);
 
 	if (prepared->HasError()) {
-		// Try to clean up the probe attachment before throwing error
 		try {
 			conn->Query(detach_query);
 		} catch (const duckdb::Exception &ex) {
@@ -218,15 +237,9 @@ InferAndPopulateForeignTableColumns_Cpp(CreateForeignTableStmt *stmt, const char
 			elog(WARNING, "(DuckLake FDW) Failed to detach probe database: %s", ex.what());
 		}
 
-		// Provide a helpful error message with context
-		auto error_msg = duckdb::StringUtil::Format(
-		    "Cannot create foreign table: DuckLake table \"%s.%s\" in database \"%s\" is not accessible.\n"
-		    "HINT: Verify that:\n"
-		    "  1. The table exists in the DuckLake catalog\n"
-		    "  2. The schema_name and table_name options are correct\n"
-		    "  3. The metadata_schema option points to the correct schema (default: 'ducklake')\n"
-		    "  4. You have permission to access the table",
-		    schema_name, table_name, dbname);
+		auto error_msg =
+		    duckdb::StringUtil::Format("Cannot create foreign table: DuckLake table \"%s.%s\" is not accessible.\n%s",
+		                               schema_name, table_name, error_hint);
 
 		throw duckdb::Exception(duckdb::ExceptionType::CATALOG, error_msg);
 	}
@@ -292,11 +305,31 @@ InferAndPopulateForeignTableColumns(CreateForeignTableStmt *stmt) {
 		        (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("schema_name and table_name options are required")));
 	}
 
-	const char *metadata_schema = GetOptionValue(server->options, "metadata_schema", "ducklake");
-	const char *dbname = GetOptionValue(server->options, "dbname", GetCurrentDatabaseName());
-	const char *username = GetUserNameFromId(GetUserId(), false);
-	InvokeCPPFunc(InferAndPopulateForeignTableColumns_Cpp, stmt, schema_name, table_name, dbname, username,
-	              metadata_schema);
+	const char *frozen_url = GetOptionValue(server->options, "frozen_url");
+
+	if (frozen_url) {
+		auto attach_fn = [frozen_url](const char *attach_name) {
+			RegisterFrozenDucklakeForeignTable_Cpp(frozen_url, attach_name);
+		};
+		std::string error_hint = "HINT: Verify that:\n"
+		                         "  1. The frozen_url is correct and accessible\n"
+		                         "  2. The schema_name and table_name options are correct\n"
+		                         "  3. The httpfs extension is available";
+		InvokeCPPFunc(InferAndPopulateForeignTableColumns_Cpp, stmt, schema_name, table_name, attach_fn, error_hint);
+	} else {
+		const char *metadata_schema = GetOptionValue(server->options, "metadata_schema", "ducklake");
+		const char *dbname = GetOptionValue(server->options, "dbname", GetCurrentDatabaseName());
+		const char *username = GetUserNameFromId(GetUserId(), false);
+		auto attach_fn = [dbname, username, metadata_schema](const char *attach_name) {
+			RegisterDucklakeForeignTable_Cpp(dbname, username, metadata_schema, attach_name);
+		};
+		std::string error_hint = "HINT: Verify that:\n"
+		                         "  1. The table exists in the DuckLake catalog\n"
+		                         "  2. The schema_name and table_name options are correct\n"
+		                         "  3. The metadata_schema option points to the correct schema (default: 'ducklake')\n"
+		                         "  4. You have permission to access the table";
+		InvokeCPPFunc(InferAndPopulateForeignTableColumns_Cpp, stmt, schema_name, table_name, attach_fn, error_hint);
+	}
 }
 
 /*
@@ -335,8 +368,14 @@ GetDucklakeForeignTableName(Oid foreign_table_oid) {
 
 	const char *schema_name = GetOptionValue(ft->options, "schema_name");
 	const char *table_name = GetOptionValue(ft->options, "table_name");
-	const char *dbname = GetOptionValue(server->options, "dbname", GetCurrentDatabaseName());
+	const char *frozen_url = GetOptionValue(server->options, "frozen_url");
 
+	if (frozen_url) {
+		/* For frozen ducklake, the attach name is the server name */
+		return psprintf("%s.%s.%s", server->servername, quote_identifier(schema_name), quote_identifier(table_name));
+	}
+
+	const char *dbname = GetOptionValue(server->options, "dbname", GetCurrentDatabaseName());
 	return psprintf("fdw_db_%s.%s.%s", dbname, quote_identifier(schema_name), quote_identifier(table_name));
 }
 
@@ -577,6 +616,30 @@ ducklake_fdw_validator(PG_FUNCTION_ARGS) {
 	}
 
 	pgduckdb::ValidateRequiredOptions(options_list, catalog);
+
+	/* Validate mutual exclusivity of frozen_url with dbname/metadata_schema */
+	if (catalog == ForeignServerRelationId) {
+		bool has_frozen_url = false;
+		bool has_dbname = false;
+		bool has_metadata_schema = false;
+
+		foreach_node(DefElem, def, options_list) {
+			if (strcmp(def->defname, "frozen_url") == 0) {
+				has_frozen_url = true;
+			} else if (strcmp(def->defname, "dbname") == 0) {
+				has_dbname = true;
+			} else if (strcmp(def->defname, "metadata_schema") == 0) {
+				has_metadata_schema = true;
+			}
+		}
+
+		if (has_frozen_url && (has_dbname || has_metadata_schema)) {
+			ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+			                errmsg("\"frozen_url\" cannot be used together with \"dbname\" or \"metadata_schema\""),
+			                errhint("A frozen ducklake server uses only \"frozen_url\". "
+			                        "Remove \"dbname\" and \"metadata_schema\" options.")));
+		}
+	}
 
 	PG_RETURN_VOID();
 }

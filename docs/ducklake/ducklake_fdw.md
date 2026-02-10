@@ -2,7 +2,9 @@
 
 The DuckLake Foreign Data Wrapper (FDW) provides read-only access to DuckLake tables from PostgreSQL.
 
-**Requirement:** The FDW only supports DuckLake tables that use the same PostgreSQL instance as their catalog service.
+The FDW supports two data source types:
+- **PostgreSQL-backed DuckLake**: Access DuckLake tables that use the same PostgreSQL instance as their catalog service.
+- **Frozen DuckLake**: Access frozen DuckLake snapshots hosted over HTTP.
 
 ## Quick Start
 
@@ -35,6 +37,9 @@ CREATE SERVER ducklake_server
 | :--- | :--- | :--- | :--- |
 | `dbname` | No | Current DB | The PostgreSQL database containing the DuckLake tables |
 | `metadata_schema` | No | `ducklake` | The schema where DuckLake metadata tables reside |
+| `frozen_url` | No | - | HTTP URL of a frozen DuckLake file (mutually exclusive with `dbname` and `metadata_schema`) |
+
+`frozen_url` cannot be combined with `dbname` or `metadata_schema`. A server is either PostgreSQL-backed or frozen (HTTP-backed).
 
 User mapping is unnecessary and not allowed. Since the FDW accesses DuckLake tables on the local PostgreSQL instance, it always uses the current session's credentials to preserve PostgreSQL permission checks.
 
@@ -80,6 +85,27 @@ CREATE FOREIGN TABLE warehouse_sales ()
 
 SELECT * FROM warehouse_sales WHERE region = 'West';
 ```
+
+## Frozen DuckLake
+
+Frozen DuckLake files are read-only snapshots published as a single file over HTTP. Use the `frozen_url` server option to point to one:
+
+```sql
+-- 1. Create a server pointing to a frozen DuckLake URL
+CREATE SERVER frozen_space
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/path/to/data.ducklake');
+
+-- 2. Create a foreign table (columns are auto-inferred)
+CREATE FOREIGN TABLE astronauts ()
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'astronauts');
+
+-- 3. Query it
+SELECT * FROM astronauts ORDER BY astronaut_id LIMIT 5;
+```
+
+Frozen DuckLake tables are always read-only. INSERT, UPDATE, and DELETE operations are not supported.
 
 ## Schema Changes
 

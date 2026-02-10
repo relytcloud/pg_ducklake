@@ -7,6 +7,7 @@ test: temp_table
 test: ddl
 test: data_inlining_row_limit
 test: fdw
+test: frozen_fdw
 test: vacuum
 test: options
 test: time_travel
