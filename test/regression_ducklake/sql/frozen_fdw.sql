@@ -21,7 +21,7 @@ CREATE SERVER frozen_invalid_3
 -- Create a server pointing to a frozen ducklake URL
 CREATE SERVER frozen_space
     FOREIGN DATA WRAPPER ducklake_fdw
-    OPTIONS (frozen_url 'https://raw.githubusercontent.com/marhar/frozen/main/space.ducklake');
+    OPTIONS (frozen_url 'https://raw.githubusercontent.com/marhar/frozen/fce88027556c98161ac3406c39e5a6d60561d34d/space.ducklake');
 
 -- ERROR if columns are specified
 CREATE FOREIGN TABLE frozen_test_cols (id INT, name TEXT)
