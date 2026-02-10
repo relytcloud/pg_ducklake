@@ -270,6 +270,8 @@ DuckdbPlannerHook_Cpp(Query *parse, const char *query_string, int cursor_options
 		 * that avoids going through DuckDB execution entirely. */
 		if (auto bypass_info = pgduckdb::DetectInlineBypassPattern(parse)) {
 			pgduckdb::TriggerActivity();
+			elog(NOTICE, "(PGDuckDB) Inline bypass: detected INSERT...SELECT UNNEST pattern for %s.%s",
+			     bypass_info->schema_name, bypass_info->table_name);
 			return pgduckdb::CreateInlineBypassPlan(*bypass_info, parse);
 		}
 

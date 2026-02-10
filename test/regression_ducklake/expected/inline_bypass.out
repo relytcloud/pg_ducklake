@@ -12,6 +12,7 @@ CREATE TABLE inline_bypass_test (
 PREPARE insert_arrays(int[], text[]) AS
 INSERT INTO inline_bypass_test SELECT UNNEST($1), UNNEST($2);
 EXECUTE insert_arrays(ARRAY[1, 2, 3], ARRAY['one', 'two', 'three']);
+NOTICE:  (PGDuckDB) Inline bypass: detected INSERT...SELECT UNNEST pattern for public.inline_bypass_test
 SELECT * FROM inline_bypass_test ORDER BY id;
  id | name  
 ----+-------
@@ -22,6 +23,7 @@ SELECT * FROM inline_bypass_test ORDER BY id;
 
 -- Test 2: Another batch insert
 EXECUTE insert_arrays(ARRAY[4, 5], ARRAY['four', 'five']);
+NOTICE:  (PGDuckDB) Inline bypass: detected INSERT...SELECT UNNEST pattern for public.inline_bypass_test
 SELECT * FROM inline_bypass_test ORDER BY id;
  id | name  
 ----+-------
