@@ -137,7 +137,7 @@ ORDER BY id;
 CREATE FOREIGN TABLE foreign_nonexistent ()
     SERVER ducklake_fdw_test
     OPTIONS (schema_name 'public', table_name 'nonexistent_table');
-ERROR:  (PGDuckDB/InferAndPopulateForeignTableColumns_Cpp) Catalog Error: Cannot create foreign table: DuckLake table "public.nonexistent_table" in database "regression" is not accessible.
+ERROR:  (PGDuckDB/InferAndPopulateForeignTableColumns_Cpp) Catalog Error: Cannot create foreign table: DuckLake table "public.nonexistent_table" is not accessible.
 HINT: Verify that:
   1. The table exists in the DuckLake catalog
   2. The schema_name and table_name options are correct
