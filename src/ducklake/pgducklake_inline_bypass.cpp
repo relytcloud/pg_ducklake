@@ -19,6 +19,7 @@
 #include "pgduckdb/ducklake/pgducklake_defs.hpp"
 #include "pgduckdb/pg/explain.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
+#include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_utils.hpp"
 #include "pgduckdb/utility/cpp_wrapper.hpp"
@@ -171,6 +172,10 @@ GetDataInliningRowLimit(Oid /*relid*/, const char *schema_name, const char *tabl
 
 std::optional<InlineBypassInfo>
 DetectInlineBypassPattern(Query *query) {
+	if (!ducklake_enable_inline_bypass) {
+		return std::nullopt;
+	}
+
 	/* Must be an INSERT command */
 	if (query->commandType != CMD_INSERT) {
 		return std::nullopt;

@@ -145,6 +145,7 @@ bool duckdb_parquet_metadata_cache = true;
 char *ducklake_default_table_path = strdup("");
 double ducklake_vacuum_delete_threshold = 0.1;
 char *ducklake_as_of_timestamp = strdup("");
+bool ducklake_enable_inline_bypass = true;
 
 static void
 DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
@@ -291,6 +292,11 @@ InitGUC() {
 	                     &duckdb_parquet_metadata_cache, PGC_SUSET, 0, NULL, DuckAssignParquetMetadataCache, NULL);
 
 	/* DuckLake specific GUCs */
+	DefineCustomVariable("ducklake.enable_inline_bypass",
+	                     "Enable the DuckLake inline bypass optimization for "
+	                     "INSERT ... SELECT UNNEST($n) statements",
+	                     &ducklake_enable_inline_bypass);
+
 	DefineCustomVariable("ducklake.default_table_path",
 	                     "Default directory path for DuckLake tables. If set, tables will be created under this path",
 	                     &ducklake_default_table_path, PGC_USERSET, 0, NULL, DuckAssignDuckLakeDefaultTablePath, NULL);

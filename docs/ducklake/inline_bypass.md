@@ -1,5 +1,7 @@
 # DuckLake Inline Bypass for `INSERT ... SELECT UNNEST`
 
+This feature is enabled by `ducklake.enable_inline_bypass` (default: `on`).
+
 This page documents the internal performance path for batched array inserts.
 
 Target pattern:
@@ -17,6 +19,7 @@ Bypass is considered only when all checks pass:
 
 - Statement is `INSERT`.
 - Target relation is a DuckLake table.
+- GUC `ducklake.enable_inline_bypass` is `on`.
 - `ducklake` option `data_inlining_row_limit` is greater than `0`.
 - Target expressions resolve to `UNNEST` of external params (`$1`, `$2`, ...).
 - Statement is not in an explicit transaction block.
@@ -86,7 +89,14 @@ For the matched pattern, it avoids the extra PG->DuckDB->PG conversion loop and 
 
 ## Operational Notes
 
-- Enable/disable by changing `data_inlining_row_limit`:
+- Hard-disable/enable the bypass path with the GUC:
+
+```sql
+SET ducklake.enable_inline_bypass = off;  -- force normal path
+SET ducklake.enable_inline_bypass = on;   -- allow bypass when pattern matches
+```
+
+- Control when bypass is eligible by changing `data_inlining_row_limit`:
 
 ```sql
 CALL ducklake.set_option('data_inlining_row_limit', 100);  -- enable for small/medium batches
