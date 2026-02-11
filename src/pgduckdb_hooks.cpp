@@ -83,7 +83,7 @@ ContainsDuckdbTables(List *rte_list) {
 static bool
 ContainsDucklakeForeignTables(List *rte_list) {
 	foreach_node(RangeTblEntry, rte, rte_list) {
-		if (rte->rtekind == RTE_RELATION && rte->relid != InvalidOid && pgduckdb::IsDucklakeForeignTable(rte->relid)) {
+		if (rte->rtekind == RTE_RELATION && pgduckdb::IsDucklakeForeignTable(rte->relid)) {
 			return true;
 		}
 	}
