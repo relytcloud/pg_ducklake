@@ -33,6 +33,8 @@ CREATE FOREIGN TABLE frozen_astronauts ()
     SERVER frozen_space
     OPTIONS (schema_name 'main', table_name 'astronauts');
 
+SET duckdb.force_execution = false;
+
 -- Query the frozen foreign table
 SELECT * FROM frozen_astronauts ORDER BY 1 LIMIT 5;
 
