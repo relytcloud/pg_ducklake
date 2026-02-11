@@ -34,6 +34,7 @@ HINT:  Leave the column list empty - column definitions are automatically inferr
 CREATE FOREIGN TABLE frozen_astronauts ()
     SERVER frozen_space
     OPTIONS (schema_name 'main', table_name 'astronauts');
+SET duckdb.force_execution = false;
 -- Query the frozen foreign table
 SELECT * FROM frozen_astronauts ORDER BY 1 LIMIT 5;
  astronaut_id |      name      | nationality | birth_date |    agency    | first_flight | total_flights | total_eva_hours | total_space_days |  status  

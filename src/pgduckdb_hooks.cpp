@@ -30,6 +30,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb_ddl.hpp"
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_background_worker.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/utility/copy.hpp"
 #include "pgduckdb/vendor/pg_explain.hpp"
 #include "pgduckdb/vendor/pg_list.hpp"
@@ -80,6 +81,16 @@ ContainsDuckdbTables(List *rte_list) {
 }
 
 static bool
+ContainsDucklakeForeignTables(List *rte_list) {
+	foreach_node(RangeTblEntry, rte, rte_list) {
+		if (rte->rtekind == RTE_RELATION && rte->relid != InvalidOid && pgduckdb::IsDucklakeForeignTable(rte->relid)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool
 ContainsDuckdbItems(Node *node, void *context) {
 	if (node == NULL)
 		return false;
@@ -87,6 +98,9 @@ ContainsDuckdbItems(Node *node, void *context) {
 	if (IsA(node, Query)) {
 		Query *query = (Query *)node;
 		if (ContainsDuckdbTables(query->rtable)) {
+			return true;
+		}
+		if (query->commandType == CMD_SELECT && ContainsDucklakeForeignTables(query->rtable)) {
 			return true;
 		}
 #if PG_VERSION_NUM >= 160000
