@@ -18,11 +18,121 @@ DuckLake is a DuckDB extension with the following characteristics:
 
 3. **Linking Complexity**: Linking directly against ducklake requires linking against the full DuckDB library, creating a heavyweight dependency.
 
-## Approach 1: SQL Interface (Current - Elegant & Practical)
+## Prior Art: How pg_mooncake Does It
+
+pg_mooncake (`../pg_mooncake/`) is a production project built on top of pg_duckdb with its own DuckDB extension (`duckdb_mooncake`). Studying its architecture reveals pragmatic solutions to the exact problems we face.
+
+### Architecture Overview
+
+pg_mooncake is a **three-component system**:
+
+```
+pg_mooncake  (Rust/pgrx PostgreSQL extension)
+     │
+     │  calls RegisterDuckdbTableAm() via extern "C" + dynamic_lookup
+     ▼
+pg_duckdb    (C++ PostgreSQL extension, git submodule)
+     │
+     │  embeds DuckDB engine; duckdb_mooncake installed from community repo at SQL time
+     ▼
+duckdb_mooncake  (C++ DuckDB extension, built & published separately)
+     │
+     │  calls back into pg_mooncake via dlsym(RTLD_DEFAULT, ...)
+     ▼
+pg_mooncake  (exports #[no_mangle] extern "C" functions)
+```
+
+### Key Finding 1: duckdb_mooncake is NOT built into DuckDB
+
+Despite having the source in-tree, `duckdb_mooncake` is **not statically compiled** into DuckDB. The pg_duckdb build's `pg_duckdb_extensions.cmake` only loads `json`, `icu`, and `httpfs` — no mooncake.
+
+Instead, `duckdb_mooncake` is installed at **SQL time** from DuckDB's community extension repository:
+
+```sql
+-- src/sql/bootstrap.sql (runs during CREATE EXTENSION pg_mooncake)
+SELECT duckdb.install_extension('mooncake', 'community');
+```
+
+The `make duckdb_mooncake` target in the top-level Makefile is a **developer-only** target for building and publishing the extension to the community repo. It is not a dependency of `make install`.
+
+**Actual flow**:
+```
+Build time:   pg_duckdb (C++, embeds DuckDB) → pg_mooncake (Rust/pgrx)
+SQL time:     CREATE EXTENSION pg_mooncake
+              → bootstrap.sql runs
+              → duckdb.install_extension('mooncake', 'community')
+              → downloads pre-built duckdb_mooncake binary from DuckDB community repo
+```
+
+### Key Finding 2: Cross-component communication uses C FFI only
+
+pg_mooncake **never calls pg_duckdb's C++ API** (e.g., `pgduckdb::DuckDBQueryOrThrow`). All cross-component communication uses plain C interfaces:
+
+**pg_mooncake → pg_duckdb** (standard direction):
+```rust
+// src/table.rs — declares pg_duckdb's exported C symbol
+extern "C" {
+    fn RegisterDuckdbTableAm(name: *const c_char, am: *const pg_sys::TableAmRoutine) -> bool;
+}
+```
+Resolved at load time via `-Wl,-undefined,dynamic_lookup` (in `.cargo/config.toml`), since pg_duckdb is already loaded through `shared_preload_libraries`.
+
+**duckdb_mooncake → pg_mooncake** (reverse callback via dlsym):
+```cpp
+// duckdb_mooncake/src/include/pgmooncake.hpp
+static get_init_query_fn get_init_query =
+    reinterpret_cast<get_init_query_fn>(dlsym(RTLD_DEFAULT, "pgmooncake_get_init_query"));
+```
+This lets the DuckDB extension call back into the PG extension to get PostgreSQL state (database name, LSN). The pg_mooncake side exports these with `#[no_mangle] pub extern "C"`:
+
+```rust
+// src/duckdb_mooncake.rs
+#[no_mangle]
+extern "C" fn pgmooncake_get_init_query() -> *mut c_char { ... }
+
+#[no_mangle]
+extern "C" fn pgmooncake_get_lsn() -> u64 { ... }
+```
+
+### Key Finding 3: dlsym is used only for the reverse callback
+
+`dlsym(RTLD_DEFAULT, ...)` is **not** the standard PostgreSQL pattern for inter-extension calls. pg_mooncake uses it only in one specific case: duckdb_mooncake (a DuckDB plugin running inside DuckDB) needs to call back into pg_mooncake (a PostgreSQL extension). Since duckdb_mooncake cannot link against PostgreSQL or pg_mooncake, `dlsym` with `RTLD_DEFAULT` searches all symbols loaded in the process — which works because pg_mooncake is already loaded.
+
+The standard PostgreSQL approach for resolving symbols from other extensions is `load_external_function()`:
+```c
+void *fn = load_external_function("$libdir/pg_duckdb", "RegisterDuckdbTableAm", false, NULL);
+```
+
+pg_mooncake skips this because Rust/pgrx + `-undefined,dynamic_lookup` makes `extern "C"` declarations simpler, and the symbol is guaranteed to exist since pg_duckdb is preloaded.
+
+### Key Finding 4: Rust/pgrx sidesteps the header conflict problem
+
+By writing the PostgreSQL extension in Rust (via pgrx), pg_mooncake completely avoids the C/C++ header conflict between PostgreSQL and DuckDB. PostgreSQL types come from `pgrx::pg_sys`, and all DuckDB interaction happens through C FFI or SQL — never through C++ headers.
+
+### Key Finding 5: pg_duckdb's exported C interface is minimal
+
+pg_duckdb deliberately exports very few symbols. The one that matters for extension developers is:
+
+```c
+// Marked with visibility("default") in pg_duckdb's source
+extern "C" __attribute__((visibility("default"))) bool
+RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
+```
+
+Everything else (the entire `pgduckdb::` C++ namespace) is hidden behind `-fvisibility=hidden`. This is intentional — pg_duckdb's public API is:
+- **C interface**: `RegisterDuckdbTableAm()` for table access method registration
+- **SQL interface**: `duckdb.raw_query()`, `duckdb.install_extension()`, etc.
+
+---
+
+## Approaches for pg_ducklake_next
+
+### Approach 1: SQL Interface (Current — Recommended)
 
 **Status**: ✅ Implemented in `src/pg_ducklake_next.cpp`
 
-**How it Works**:
+Following the pg_mooncake pattern: install ducklake from a repository at SQL time, interact via SQL.
+
 ```cpp
 // Use duckdb.raw_query() via SPI
 ExecuteDuckDBQuery("INSTALL ducklake");
@@ -31,255 +141,133 @@ ExecuteDuckDBQuery("ATTACH 'ducklake:metadata.db' AS my_catalog ...");
 ```
 
 **Pros**:
-- ✅ Clean and simple
-- ✅ No header conflicts
-- ✅ Lightweight (51KB extension)
-- ✅ Stable SQL API
+- Clean and simple, matching pg_mooncake's proven pattern
+- No header conflicts
+- Lightweight (51KB extension)
+- Stable SQL API
 
 **Cons**:
-- ❌ No access to C++ symbols like `DuckLakeMetadataManager::Register`
-- ❌ Limited to SQL operations
+- No access to C++ symbols like `DuckLakeMetadataManager::Register`
+- Limited to SQL operations
 
-**Use Case**: Best for standard ducklake operations (attach, create, insert, query).
+**Use Case**: Best for standard ducklake operations (attach, create, insert, query). This is what pg_mooncake does for all DuckDB interaction.
 
 ---
 
-## Approach 2: Static Compilation into DuckDB
+### Approach 2: Static Compilation into DuckDB
 
 **Status**: ⚠️ Requires rebuilding DuckDB and pg_duckdb
 
-**How it Works**:
-1. Modify DuckDB build to include ducklake statically
-2. Rebuild pg_duckdb against this custom DuckDB
-3. Include ducklake headers in our extension
-4. Reference ducklake symbols directly
+Compile ducklake directly into DuckDB via pg_duckdb's `pg_duckdb_extensions.cmake`:
 
-**Build Steps**:
-```bash
-# 1. Configure DuckDB with ducklake as static extension
-cd third_party/pg_duckdb/third_party/duckdb
-cmake -DCMAKE_BUILD_TYPE=Release \
-      -DEXTERNAL_EXTENSION_DIRECTORIES=../../../../ducklake \
-      -DBUILD_EXTENSIONS="ducklake" \
-      .
-
-# 2. Rebuild pg_duckdb
-cd ../../
-make clean && make
-
-# 3. Update our Makefile to include ducklake headers
-override PG_CPPFLAGS += -I$(CURDIR)/third_party/ducklake/src/include
+```cmake
+# third_party/pg_duckdb/third_party/pg_duckdb_extensions.cmake
+duckdb_extension_load(json)
+duckdb_extension_load(icu)
+duckdb_extension_load(ducklake
+    SOURCE_DIR ../../ducklake
+    LOAD_TESTS
+)
 ```
 
-**Code Example**:
-```cpp
-// Include ducklake headers (would need DuckDB headers first)
-#include "duckdb.hpp"
-#include "storage/ducklake_metadata_manager.hpp"
-#include "storage/ducklake_transaction.hpp"
-
-extern "C" Datum my_custom_function(PG_FUNCTION_ARGS) {
-    // Access DuckDB connection from pg_duckdb
-    auto conn = pgduckdb::DuckDBManager::GetConnection();
-
-    // Register custom metadata manager
-    duckdb::DuckLakeMetadataManager::Register("my_backend",
-        [](duckdb::DuckLakeTransaction &txn) {
-            return std::make_unique<MyMetadataManager>(txn);
-        });
-
-    PG_RETURN_VOID();
-}
-```
+Then include ducklake headers (before PostgreSQL headers) and reference symbols directly.
 
 **Pros**:
-- ✅ Full access to ducklake C++ API
-- ✅ Can register custom metadata managers
-- ✅ Direct function calls (no SQL overhead)
+- Full access to ducklake C++ API
+- Can call `DuckLakeMetadataManager::Register` directly
+- No runtime download needed
 
 **Cons**:
-- ❌ Requires custom DuckDB build
-- ❌ Complex build process
-- ❌ Header conflict management needed
-- ❌ Large binary size
-- ❌ Maintenance burden
+- Requires custom DuckDB + pg_duckdb rebuild
+- Must manage DuckDB ↔ PostgreSQL header conflicts (include order matters)
+- Large binary size
+- Maintenance burden: must rebuild when any component updates
 
-**Use Case**: When you need to extend ducklake with custom metadata backends or modify its internals.
+**Note**: pg_mooncake explicitly chose NOT to do this for duckdb_mooncake.
 
 ---
 
-## Approach 3: Shared Library with Symbol Export
+### Approach 3: Separate DuckDB Extension + C FFI Callbacks
+
+**Status**: ⚠️ Requires building a separate DuckDB extension
+
+This follows pg_mooncake's actual architecture most closely:
+
+1. Build ducklake as a standalone loadable DuckDB extension (it already is one)
+2. If ducklake needs to call back into our PG extension, export `#[no_mangle] extern "C"` / `extern "C"` functions from the PG extension
+3. ducklake (or a custom DuckDB extension wrapping ducklake) uses `dlsym(RTLD_DEFAULT, ...)` to find those functions at runtime
+4. Install via `duckdb.install_extension()` at SQL time
+
+```
+pg_ducklake_next (PG extension)
+    │ exports: extern "C" ducklake_next_get_config() via no_mangle
+    │ calls:   RegisterDuckdbTableAm() via dynamic_lookup
+    │ calls:   duckdb.install_extension('ducklake') via SPI
+    ▼
+pg_duckdb
+    │ loads DuckDB engine
+    ▼
+ducklake (DuckDB extension, installed from repo)
+    │ optionally calls back via dlsym(RTLD_DEFAULT, "ducklake_next_get_config")
+    ▼
+pg_ducklake_next (symbols resolved in process)
+```
+
+**Pros**:
+- Follows the pg_mooncake production pattern exactly
+- Clean C FFI boundaries, no header conflicts
+- Each component built independently
+
+**Cons**:
+- Reverse callbacks via `dlsym` are fragile (not type-safe, no compile-time checks)
+- Only works for functions the DuckDB extension needs to call back into PG
+- Does not give arbitrary access to ducklake C++ internals
+
+**Use Case**: When the DuckDB extension needs PostgreSQL state (e.g., current database name, LSN, configuration) to function properly.
+
+---
+
+### Approach 4: Shared Library with Exported C API
 
 **Status**: ⚠️ Requires custom ducklake build
 
-**How it Works**:
-1. Build ducklake as a shared library (not a DuckDB extension)
-2. Export specific symbols with visibility attributes
-3. Link our extension against ducklake.so
+Build ducklake as a shared library with an explicit C API layer:
 
-**Ducklake Modifications**:
-```cmake
-# Modified CMakeLists.txt
-add_library(ducklake_shared SHARED ${EXTENSION_SOURCES})
-set_target_properties(ducklake_shared PROPERTIES
-    CXX_VISIBILITY_PRESET default
-    VISIBILITY_INLINES_HIDDEN OFF)
-
-# Export specific symbols
-target_compile_definitions(ducklake_shared PRIVATE
-    DUCKLAKE_EXPORT=__attribute__((visibility("default"))))
-```
-
-**Header Wrapper** (`ducklake_c_api.h`):
-```cpp
-// C API wrapper to avoid header conflicts
+```c
+// ducklake_c_api.h — thin C wrapper around C++ internals
 extern "C" {
-    DUCKLAKE_EXPORT void ducklake_register_metadata_manager(
-        const char *name,
-        void *create_fn);
-
-    DUCKLAKE_EXPORT void* ducklake_get_metadata_manager(
-        void *transaction);
+    void ducklake_register_metadata_manager(const char *name, void *create_fn);
+    void *ducklake_create_metadata_manager(void *transaction);
 }
 ```
 
-**Our Extension**:
-```cpp
-extern "C" {
-#include "postgres.h"
-// ... postgres headers
-}
-
-// Include only the C API wrapper
-#include "ducklake_c_api.h"
-
-extern "C" Datum my_function(PG_FUNCTION_ARGS) {
-    ducklake_register_metadata_manager("my_backend", my_create_fn);
-    PG_RETURN_VOID();
-}
-```
-
-**Makefile**:
-```makefile
-override PG_CPPFLAGS += -I$(CURDIR)/third_party/ducklake/c_api
-SHLIB_LINK += -L$(CURDIR)/third_party/ducklake -lducklake_shared
-```
-
-**Pros**:
-- ✅ Access to ducklake symbols
-- ✅ Cleaner than static compilation
-- ✅ No PostgreSQL header conflicts (with C wrapper)
-
-**Cons**:
-- ❌ Requires ducklake modifications
-- ❌ Need to maintain C API wrapper
-- ❌ Symbol versioning management
-
-**Use Case**: When you need some C++ API access but want to keep clean boundaries.
-
----
-
-## Approach 4: IPC/Socket Communication
-
-**Status**: 💡 Conceptual
-
-**How it Works**:
-1. Create a separate DuckDB process with ducklake loaded
-2. Communicate via Unix socket or shared memory
-3. Send commands and receive responses
-
-**Not Recommended**: Too complex for this use case.
+**Pros**: Access to ducklake symbols without C++ header conflicts.
+**Cons**: Requires ducklake modifications and ongoing maintenance of the C wrapper.
 
 ---
 
 ## Recommendation
 
-For most use cases: **Use Approach 1 (SQL Interface)**
+**For standard use cases**: Use Approach 1 (SQL Interface). This is what pg_mooncake does in production — install the DuckDB extension from a repository at SQL time, interact entirely through SQL.
 
-Only consider Approach 2 or 3 if you absolutely need:
-- Custom metadata manager implementations
-- Performance-critical direct API access
-- Extension of ducklake's internal behaviors
+**If you need reverse callbacks** (DuckDB extension calling into PG extension): Use Approach 3, following pg_mooncake's `dlsym(RTLD_DEFAULT, ...)` pattern with `#[no_mangle] extern "C"` exports.
 
-## Example: Custom Metadata Manager (Approach 2)
+**If you need full C++ API access** to ducklake internals: Use Approach 2, but understand the build complexity and maintenance cost. pg_mooncake explicitly avoided this path.
 
-If you do need to register a custom metadata manager, here's the full pattern:
+## Summary Table
 
-```cpp
-// custom_metadata_manager.hpp
-#pragma once
-#include "storage/ducklake_metadata_manager.hpp"
+| Approach | Complexity | C++ API Access | Header Conflicts | pg_mooncake Uses? |
+|----------|-----------|---------------|-----------------|-------------------|
+| 1. SQL Interface | Low | No | None | Yes (primary) |
+| 2. Static into DuckDB | High | Full | Must manage | No |
+| 3. C FFI + dlsym | Medium | Callbacks only | None | Yes (reverse calls) |
+| 4. Shared lib + C API | Medium-High | Via wrapper | None | No |
 
-namespace duckdb {
+## References
 
-class RedisMetadataManager : public DuckLakeMetadataManager {
-public:
-    explicit RedisMetadataManager(DuckLakeTransaction &transaction);
-    ~RedisMetadataManager() override;
-
-    // Implement virtual methods
-    void Initialize() override;
-    void LoadCatalogInfo(DuckLakeCatalogInfo &info) override;
-    // ... 50+ more methods
-
-    static unique_ptr<DuckLakeMetadataManager> Create(
-        DuckLakeTransaction &transaction);
-};
-
-} // namespace duckdb
-```
-
-```cpp
-// custom_metadata_manager.cpp
-#include "custom_metadata_manager.hpp"
-#include <hiredis/hiredis.h>
-
-namespace duckdb {
-
-RedisMetadataManager::RedisMetadataManager(DuckLakeTransaction &transaction)
-    : DuckLakeMetadataManager(transaction) {
-    // Connect to Redis
-}
-
-void RedisMetadataManager::Initialize() {
-    // Initialize Redis schema
-}
-
-void RedisMetadataManager::LoadCatalogInfo(DuckLakeCatalogInfo &info) {
-    // Load from Redis
-}
-
-unique_ptr<DuckLakeMetadataManager>
-RedisMetadataManager::Create(DuckLakeTransaction &transaction) {
-    return make_uniq<RedisMetadataManager>(transaction);
-}
-
-// Registration helper
-void RegisterRedisMetadataManager() {
-    DuckLakeMetadataManager::Register("redis",
-        &RedisMetadataManager::Create);
-}
-
-} // namespace duckdb
-```
-
-```cpp
-// pg_extension.cpp
-extern "C" void _PG_init(void) {
-    duckdb::RegisterRedisMetadataManager();
-}
-
-extern "C" Datum test_redis_backend(PG_FUNCTION_ARGS) {
-    ExecuteDuckDBQuery("INSTALL ducklake");
-    ExecuteDuckDBQuery("LOAD ducklake");
-    ExecuteDuckDBQuery(
-        "ATTACH 'ducklake:redis://localhost' AS my_catalog");
-    PG_RETURN_VOID();
-}
-```
-
-## Conclusion
-
-The current implementation (Approach 1) is the **elegant solution** for standard ducklake usage. Only move to more complex approaches if you have specific requirements that cannot be met through the SQL interface.
-
-For accessing `DuckLakeMetadataManager::Register`, you would need Approach 2 (static compilation) or Approach 3 (shared library with exports).
+- pg_mooncake source: `../pg_mooncake/`
+- pg_mooncake → pg_duckdb linkage: `../pg_mooncake/src/table.rs:5-7`
+- duckdb_mooncake → pg_mooncake callbacks: `../pg_mooncake/duckdb_mooncake/src/include/pgmooncake.hpp`
+- pg_mooncake bootstrap SQL: `../pg_mooncake/src/sql/bootstrap.sql`
+- pg_duckdb symbol export: `../pg_mooncake/pg_duckdb/src/pgduckdb_table_am.cpp`
+- macOS dynamic lookup: `../pg_mooncake/.cargo/config.toml`
