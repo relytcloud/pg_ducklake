@@ -347,6 +347,10 @@ IsDucklakeForeignTableInternal(Oid relid) {
 
 bool
 IsDucklakeForeignTable(Oid relid) {
+	if (relid == InvalidOid) {
+		return false;
+	}
+
 	Relation rel = table_open(relid, NoLock);
 	bool result = false;
 
