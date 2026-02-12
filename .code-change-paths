@@ -1,0 +1,27 @@
+## Paths to mirror onto the code-change branch.
+## One path per line. Blank lines and lines starting with # are ignored.
+
+# Source and headers
+src/
+include/
+
+# Build system
+Makefile
+third_party/pg_duckdb_extensions.cmake
+.gitmodules
+
+# Extension metadata and SQL
+pg_duckdb.control
+sql/
+
+# Tests (both upstream modifications and new ducklake tests)
+test/
+
+# Docker
+Dockerfile
+docker-bake.hcl
+docker-compose.yml
+.dockerignore
+
+# CI
+.github/workflows/

@@ -1,0 +1,115 @@
+name: Sync code drift to code-change branch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Manual trigger to rebuild or catch up
+
+jobs:
+  sync-code-change:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/duckdb/pg_duckdb.git || true
+          git fetch upstream main
+
+      - name: Mirror commits to code-change branch
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # --- Read tracked paths from .code-change-paths ---
+          PATHS_FILE=".code-change-paths"
+          if [ ! -f "$PATHS_FILE" ]; then
+            echo "::error::$PATHS_FILE not found"
+            exit 1
+          fi
+          readarray -t TRACKED_PATHS < <(grep -v '^\s*#' "$PATHS_FILE" | grep -v '^\s*$')
+
+          if [ ${#TRACKED_PATHS[@]} -eq 0 ]; then
+            echo "::error::No paths listed in $PATHS_FILE"
+            exit 1
+          fi
+          echo "Tracked paths: ${TRACKED_PATHS[*]}"
+
+          MERGE_BASE=$(git merge-base main upstream/main)
+          echo "Merge base with upstream: $(git rev-parse --short "$MERGE_BASE")"
+
+          # --- Determine starting point ---
+          START="$MERGE_BASE"
+          NEED_REBUILD=true
+
+          if git rev-parse --verify origin/code-change >/dev/null 2>&1; then
+            git checkout code-change
+
+            # Verify code-change is still rooted at the current merge-base
+            if git merge-base --is-ancestor "$MERGE_BASE" code-change 2>/dev/null; then
+              # Read the last mirrored main SHA from the commit message trailer
+              LAST_MIRROR=$(git log -1 --format='%b' code-change \
+                | grep '^source-commit: ' | tail -1 | awk '{print $2}')
+
+              if [ -n "$LAST_MIRROR" ] && \
+                 git merge-base --is-ancestor "$LAST_MIRROR" main 2>/dev/null; then
+                START="$LAST_MIRROR"
+                NEED_REBUILD=false
+                echo "Incremental update from $(git rev-parse --short "$LAST_MIRROR")"
+              fi
+            fi
+          fi
+
+          if [ "$NEED_REBUILD" = true ]; then
+            echo "Rebuilding code-change branch from merge-base"
+            git checkout -B code-change "$MERGE_BASE"
+          fi
+
+          # --- Collect commits to mirror (chronological order) ---
+          readarray -t COMMITS < <(git rev-list --reverse "${START}..main")
+
+          if [ ${#COMMITS[@]} -eq 0 ]; then
+            echo "code-change is up to date."
+            exit 0
+          fi
+
+          echo "Mirroring ${#COMMITS[@]} commit(s)..."
+
+          for i in "${!COMMITS[@]}"; do
+            COMMIT="${COMMITS[$i]}"
+            echo "[$((i+1))/${#COMMITS[@]}] $(git rev-parse --short "$COMMIT") $(git log -1 --format='%s' "$COMMIT")"
+
+            # Preserve original author and date
+            AUTHOR=$(git log -1 --format='%an <%ae>' "$COMMIT")
+            DATE=$(git log -1 --format='%aI' "$COMMIT")
+
+            # Build commit message: original message + source-commit trailer
+            MSG_FILE=$(mktemp)
+            git log -1 --format='%B' "$COMMIT" > "$MSG_FILE"
+            printf "\nsource-commit: %s\n" "$COMMIT" >> "$MSG_FILE"
+
+            # Snapshot tracked paths at this commit
+            # 1) Remove current state (to detect deletions)
+            git rm -rf --quiet "${TRACKED_PATHS[@]}" 2>/dev/null || true
+            # 2) Overlay from the main commit
+            git checkout "$COMMIT" -- "${TRACKED_PATHS[@]}" 2>/dev/null || true
+            # 3) Stage
+            git add -A "${TRACKED_PATHS[@]}"
+
+            # Commit (--allow-empty for commits that don't touch tracked paths)
+            git commit --allow-empty \
+              --author="$AUTHOR" \
+              --date="$DATE" \
+              -F "$MSG_FILE"
+
+            rm -f "$MSG_FILE"
+          done
+
+          echo "Pushing code-change branch..."
+          git push --force origin code-change
