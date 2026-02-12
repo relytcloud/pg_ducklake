@@ -1,21 +1,12 @@
-# pg_ducklake_next — Statically embed ducklake into the PG extension.
-#
-# Build strategy:
-#   1. Ducklake is built by its own cmake-based build system (which also
-#      rebuilds DuckDB internally — slow first time, incremental after).
-#      Output: libducklake_extension.a
-#   2. We compile only our two bridge files:
-#      - src/pg_ducklake_pg.cpp   (PostgreSQL side, includes postgres.h)
-#      - src/pg_ducklake_duckdb.cpp (DuckDB side, includes duckdb.hpp)
-#   3. Final link: our .o files + libducklake_extension.a + libduckdb (from PG_LIB)
-#
-# Prerequisites:
-#   - pg_duckdb installed (provides libduckdb in PG_LIB and pg_duckdb headers)
-#   - git submodules initialized: git submodule update --init --recursive
+MODULE_big = pg_ducklake
+EXTENSION = pg_ducklake
+DATA = pg_ducklake.control $(wildcard sql/pg_ducklake--*.sql)
 
-EXTENSION = pg_ducklake_next
-MODULE_big = pg_ducklake_next
-DATA = sql/pg_ducklake_next--0.1.0.sql
+SRCS = $(wildcard src/*.cpp src/*/*.cpp)
+OBJS = $(subst .cpp,.o, $(SRCS))
+
+C_SRCS = $(wildcard src/*.c src/*/*.c)
+OBJS += $(subst .c,.o, $(C_SRCS))
 
 # ---------------------------------------------------------------------------
 # Path configuration
@@ -27,11 +18,6 @@ DUCKLAKE_DIR = $(CURDIR)/third_party/ducklake
 DUCKDB_BUILD_TYPE ?= release
 DUCKLAKE_BUILD_DIR = $(DUCKLAKE_DIR)/build/$(DUCKDB_BUILD_TYPE)
 DUCKLAKE_STATIC_LIB = $(DUCKLAKE_BUILD_DIR)/extension/ducklake/libducklake_extension.a
-
-# ---------------------------------------------------------------------------
-# Object files — just our two bridge files
-# ---------------------------------------------------------------------------
-OBJS = src/pg_ducklake_pg.o src/pg_ducklake_duckdb.o
 
 # ---------------------------------------------------------------------------
 # Include paths
@@ -51,7 +37,7 @@ LOCAL_INCLUDES = -I$(CURDIR)/include
 # ---------------------------------------------------------------------------
 
 # PG-facing TU: standard PGXS flags + bridge header path
-override PG_CPPFLAGS += $(LOCAL_INCLUDES)
+override PG_CPPFLAGS += $(LOCAL_INCLUDES) $(DUCKDB_INCLUDES)
 override PG_CXXFLAGS += -std=c++17
 
 # DuckDB-facing TU: no PG headers allowed
@@ -104,10 +90,6 @@ clean-ducklake:
 # ---------------------------------------------------------------------------
 
 # DuckDB bridge TU: compiled with DuckDB+ducklake headers, NOT PG headers.
-src/pg_ducklake_duckdb.o: src/pg_ducklake_duckdb.cpp $(DUCKLAKE_STATIC_LIB)
-	@if test ! -d $(DEPDIR); then mkdir -p $(DEPDIR); fi
-	$(CXX) $(DUCKDB_CXXFLAGS) $(DUCKDB_INCLUDES) $(LOCAL_INCLUDES) \
-		-c -o $@ $< -MMD -MP -MF $(DEPDIR)/$(*F).Po
 
 # PG-facing TU uses the default PGXS pattern rule (includes PG server headers).
 # Our PG_CPPFLAGS += $(LOCAL_INCLUDES) adds the bridge header path.
