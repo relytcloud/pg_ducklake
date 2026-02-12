@@ -1,4 +1,5 @@
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
@@ -60,7 +61,7 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
 
   /* Initialize DuckDB and attach the DuckLake catalog */
   try {
-    auto duckdb = static_cast<duckdb::DuckDB *>(GetDuckDBDatabase());
+    auto &duckdb = pgducklake::DuckLakeManager::GetDatabase();
     // pgduckdb::DuckDBQueryOrThrow(*connection,
     //                              "ATTACH 'ducklake:pgducklake:' AS pgducklake
     //                              "
