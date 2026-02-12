@@ -1,0 +1,16 @@
+CREATE TABLE t (a int, b int) using ducklake;
+INSERT INTO t VALUES (1, 101), (2, 202);
+SELECT * FROM t ORDER BY a;
+ a |  b  
+---+-----
+ 1 | 101
+ 2 | 202
+(2 rows)
+
+SELECT * FROM t WHERE a = 1;
+ a |  b  
+---+-----
+ 1 | 101
+(1 row)
+
+DROP TABLE t;

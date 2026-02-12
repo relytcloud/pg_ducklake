@@ -1,0 +1,70 @@
+-- Example from README: Create a PostgreSQL row-store (heap) table.
+CREATE TABLE row_store_table AS
+SELECT i AS id, 'hello pg_ducklake' AS msg
+FROM generate_series(1, 10000) AS i;
+-- Create a DuckLake column-store table via ETL.
+CREATE TABLE col_store_table USING ducklake AS
+SELECT *
+FROM row_store_table;
+-- Run analytics against the converted table.
+SELECT id, msg FROM col_store_table ORDER BY id LIMIT 10;
+ id |        msg        
+----+-------------------
+  1 | hello pg_ducklake
+  2 | hello pg_ducklake
+  3 | hello pg_ducklake
+  4 | hello pg_ducklake
+  5 | hello pg_ducklake
+  6 | hello pg_ducklake
+  7 | hello pg_ducklake
+  8 | hello pg_ducklake
+  9 | hello pg_ducklake
+ 10 | hello pg_ducklake
+(10 rows)
+
+-- Verify access methods via pg_catalog
+SELECT c.relname, a.amname
+FROM pg_class c
+JOIN pg_am a ON c.relam = a.oid
+WHERE c.relname IN ('row_store_table', 'col_store_table')
+ORDER BY c.relname;
+     relname     |  amname  
+-----------------+----------
+ col_store_table | ducklake
+ row_store_table | heap
+(2 rows)
+
+DROP TABLE row_store_table;
+DROP TABLE col_store_table;
+-- Example from README: CREATE AS with read_csv - using titanic dataset
+CREATE TABLE titanic USING ducklake AS
+SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
+SELECT *
+FROM titanic
+ORDER BY "PassengerId"
+LIMIT 10;
+ PassengerId | Survived | Pclass |                        Name                         |  Sex   | Age | SibSp | Parch |      Ticket      |  Fare   | Cabin | Embarked 
+-------------+----------+--------+-----------------------------------------------------+--------+-----+-------+-------+------------------+---------+-------+----------
+           1 |        0 |      3 | Braund, Mr. Owen Harris                             | male   |  22 |     1 |     0 | A/5 21171        |    7.25 |       | S
+           2 |        1 |      1 | Cumings, Mrs. John Bradley (Florence Briggs Thayer) | female |  38 |     1 |     0 | PC 17599         | 71.2833 | C85   | C
+           3 |        1 |      3 | Heikkinen, Miss. Laina                              | female |  26 |     0 |     0 | STON/O2. 3101282 |   7.925 |       | S
+           4 |        1 |      1 | Futrelle, Mrs. Jacques Heath (Lily May Peel)        | female |  35 |     1 |     0 | 113803           |    53.1 | C123  | S
+           5 |        0 |      3 | Allen, Mr. William Henry                            | male   |  35 |     0 |     0 | 373450           |    8.05 |       | S
+           6 |        0 |      3 | Moran, Mr. James                                    | male   |     |     0 |     0 | 330877           |  8.4583 |       | Q
+           7 |        0 |      1 | McCarthy, Mr. Timothy J                             | male   |  54 |     0 |     0 | 17463            | 51.8625 | E46   | S
+           8 |        0 |      3 | Palsson, Master. Gosta Leonard                      | male   |   2 |     3 |     1 | 349909           |  21.075 |       | S
+           9 |        1 |      3 | Johnson, Mrs. Oscar W (Elisabeth Vilhelmina Berg)   | female |  27 |     0 |     2 | 347742           | 11.1333 |       | S
+          10 |        1 |      2 | Nasser, Mrs. Nicholas (Adele Achem)                 | female |  14 |     1 |     0 | 237736           | 30.0708 |       | C
+(10 rows)
+
+-- Verify access method for titanic table
+SELECT c.relname, a.amname
+FROM pg_class c
+JOIN pg_am a ON c.relam = a.oid
+WHERE c.relname = 'titanic';
+ relname |  amname  
+---------+----------
+ titanic | ducklake
+(1 row)
+
+DROP TABLE titanic;

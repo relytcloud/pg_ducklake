@@ -29,6 +29,7 @@ USER postgres
 # directory into the target directory, and not the directory itself too.
 COPY --chown=postgres:postgres Makefile Makefile.global pg_duckdb.control ./
 COPY --chown=postgres:postgres .git/modules/third_party/duckdb/HEAD .git/modules/third_party/duckdb/HEAD
+COPY --chown=postgres:postgres .git/modules/third_party/ducklake/HEAD .git/modules/third_party/ducklake/HEAD
 COPY --chown=postgres:postgres sql sql
 COPY --chown=postgres:postgres src src
 COPY --chown=postgres:postgres include include
@@ -60,6 +61,10 @@ FROM base AS output
 
 RUN apt-get update -qq && \
     apt-get install -y ca-certificates libcurl4
+
+# Create CA bundle symlink for supporting Azure HTTPS connections
+RUN mkdir -p /etc/pki/tls/certs && \
+    ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
 
 # Automatically enable pg_duckdb
 RUN echo "shared_preload_libraries='pg_duckdb'" >> /usr/share/postgresql/postgresql.conf.sample

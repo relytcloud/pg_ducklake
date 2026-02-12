@@ -1,0 +1,24 @@
+-- Table AM 'ducklake' is created once the extension is installed
+SELECT amname FROM pg_am WHERE amname = 'ducklake';
+  amname  
+----------
+ ducklake
+(1 row)
+
+CREATE TABLE t (a int) USING ducklake;
+SELECT relname
+FROM pg_class
+WHERE relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake');
+ relname 
+---------
+ t
+(1 row)
+
+DROP TABLE t;
+DROP EXTENSION pg_duckdb;
+SELECT oid FROM pg_namespace WHERE nspname = 'ducklake';
+ oid 
+-----
+(0 rows)
+
+CREATE EXTENSION pg_duckdb;

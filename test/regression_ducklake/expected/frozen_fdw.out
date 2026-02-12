@@ -1,0 +1,76 @@
+-- Test Frozen DuckLake Foreign Data Wrapper
+--
+-- This tests the ability to access frozen (read-only, HTTP-based) DuckLake
+-- tables using the ducklake_fdw foreign data wrapper.
+-- Test validation: frozen_url cannot be used with dbname
+CREATE SERVER frozen_invalid_1
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', dbname 'mydb');
+ERROR:  "frozen_url" cannot be used together with "dbname" or "metadata_schema"
+HINT:  A frozen ducklake server uses only "frozen_url". Remove "dbname" and "metadata_schema" options.
+-- Test validation: frozen_url cannot be used with metadata_schema
+CREATE SERVER frozen_invalid_2
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', metadata_schema 'ducklake');
+ERROR:  "frozen_url" cannot be used together with "dbname" or "metadata_schema"
+HINT:  A frozen ducklake server uses only "frozen_url". Remove "dbname" and "metadata_schema" options.
+-- Test validation: frozen_url cannot be used with both dbname and metadata_schema
+CREATE SERVER frozen_invalid_3
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', dbname 'mydb', metadata_schema 'ducklake');
+ERROR:  "frozen_url" cannot be used together with "dbname" or "metadata_schema"
+HINT:  A frozen ducklake server uses only "frozen_url". Remove "dbname" and "metadata_schema" options.
+-- Create a server pointing to a frozen ducklake URL
+CREATE SERVER frozen_space
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://raw.githubusercontent.com/marhar/frozen/fce88027556c98161ac3406c39e5a6d60561d34d/space.ducklake');
+-- ERROR if columns are specified
+CREATE FOREIGN TABLE frozen_test_cols (id INT, name TEXT)
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'astronauts');
+ERROR:  cannot specify column definitions for DuckLake foreign table
+HINT:  Leave the column list empty - column definitions are automatically inferred
+-- Create a foreign table with auto-inferred columns
+CREATE FOREIGN TABLE frozen_astronauts ()
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'astronauts');
+SET duckdb.force_execution = false;
+-- Query the frozen foreign table
+SELECT * FROM frozen_astronauts ORDER BY 1 LIMIT 5;
+ astronaut_id |      name      | nationality | birth_date |    agency    | first_flight | total_flights | total_eva_hours | total_space_days |  status  
+--------------+----------------+-------------+------------+--------------+--------------+---------------+-----------------+------------------+----------
+            1 | Neil Armstrong | USA         | 08-05-1930 | NASA         | 03-16-1966   |             2 |            2.50 |             8.58 | Retired
+            2 | Buzz Aldrin    | USA         | 01-20-1930 | NASA         | 11-11-1966   |             2 |            5.50 |            12.25 | Retired
+            3 | Yuri Gagarin   | Russia      | 03-09-1934 | Soviet Union | 04-12-1961   |             1 |            0.00 |             0.07 | Deceased
+            4 | John Glenn     | USA         | 07-18-1921 | NASA         | 02-20-1962   |             2 |            0.00 |             8.75 | Deceased
+            5 | Sally Ride     | USA         | 05-26-1951 | NASA         | 06-18-1983   |             2 |            0.00 |            14.25 | Deceased
+(5 rows)
+
+-- Test read-only enforcement: INSERT should fail
+INSERT INTO frozen_astronauts VALUES (999, 'Test', 'Test', '2000-01-01', 'Test', '2000-01-01', 0, 0, 0, 'Test');
+ERROR:  cannot insert into foreign table "frozen_astronauts"
+-- Test read-only enforcement: UPDATE should fail
+UPDATE frozen_astronauts SET name = 'Modified' WHERE name = 'Test';
+ERROR:  cannot update foreign table "frozen_astronauts"
+-- Test read-only enforcement: DELETE should fail
+DELETE FROM frozen_astronauts WHERE name = 'Test';
+ERROR:  cannot delete from foreign table "frozen_astronauts"
+-- Test aggregation on frozen foreign table
+SELECT COUNT(*) FROM frozen_astronauts;
+ count 
+-------
+    85
+(1 row)
+
+-- Test error case: non-existent table in frozen ducklake
+CREATE FOREIGN TABLE frozen_nonexistent ()
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'nonexistent_table');
+ERROR:  (PGDuckDB/InferAndPopulateForeignTableColumns_Cpp) Catalog Error: Cannot create foreign table: DuckLake table "main.nonexistent_table" is not accessible.
+HINT: Verify that:
+  1. The frozen_url is correct and accessible
+  2. The schema_name and table_name options are correct
+  3. The httpfs extension is available
+-- Cleanup
+DROP FOREIGN TABLE frozen_astronauts;
+DROP SERVER frozen_space;

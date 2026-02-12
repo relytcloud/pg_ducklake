@@ -4,9 +4,14 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
+#include "storage/ducklake_metadata_manager.hpp"
+
 #include "pgduckdb/catalog/pgduckdb_storage.hpp"
+#include "pgduckdb/ducklake/pgducklake_metadata_manager.hpp"
 #include "pgduckdb/pg/guc.hpp"
 #include "pgduckdb/pg/permissions.hpp"
 #include "pgduckdb/pg/string_utils.hpp"
@@ -31,6 +36,7 @@ extern "C" {
 #include "postgres.h"
 
 #include "catalog/namespace.h"
+#include "commands/extension.h" // creating_extension
 #include "common/file_perm.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"        // superuser
@@ -92,9 +98,6 @@ void
 DuckDBManager::Initialize() {
 	elog(DEBUG2, "(PGDuckDB/DuckDBManager) Creating DuckDB instance");
 
-	// Block signals before initializing DuckDB to ensure signal is handled by the Postgres main thread only
-	pgduckdb::ThreadSignalBlockGuard guard;
-
 	// Make sure directories provided in config exists
 	std::filesystem::create_directories(duckdb_temporary_directory);
 	std::filesystem::create_directories(duckdb_extension_directory);
@@ -128,6 +131,13 @@ DuckDBManager::Initialize() {
 		std::string memory_limit = std::to_string(duckdb_maximum_memory) + "MiB";
 		config.options.maximum_memory = duckdb::DBConfig::ParseMemoryLimit(memory_limit);
 		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'maximum_memory'=%dMB", duckdb_maximum_memory);
+	} else if (duckdb_maximum_memory == -1) {
+		// If duckdb_maximum_memory is -1, set memory to 50% of system's available memory
+		auto fs = duckdb::FileSystem::CreateLocal();
+		config.options.maximum_memory =
+		    static_cast<duckdb::idx_t>(0.5 * duckdb::DBConfig::GetSystemAvailableMemory(*fs));
+		elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'maximum_memory'=50%% of system memory (%llu bytes)",
+		     static_cast<unsigned long long>(config.options.maximum_memory));
 	}
 	if (duckdb_max_temp_directory_size != NULL && strlen(duckdb_max_temp_directory_size) != 0) {
 		config.SetOptionByName("max_temp_directory_size", duckdb_max_temp_directory_size);
@@ -205,8 +215,18 @@ DuckDBManager::Initialize() {
 	pgduckdb::DuckDBQueryOrThrow(context, "SET TimeZone =" + duckdb::KeywordHelper::WriteQuoted(pg_time_zone));
 	pgduckdb::DuckDBQueryOrThrow(context, "SET default_collation =" +
 	                                          duckdb::KeywordHelper::WriteQuoted(duckdb_default_collation));
+	duckdb::string set_parquet_metadata_cache = duckdb_parquet_metadata_cache ? "true" : "false";
+	pgduckdb::DuckDBQueryOrThrow(context, "SET parquet_metadata_cache =" + set_parquet_metadata_cache);
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 	pgduckdb::DuckDBQueryOrThrow(context, "ATTACH DATABASE ':memory:' AS pg_temp;");
+
+	{
+		// pg_ducklake
+		if (!creating_extension) {
+			pgduckdb::DuckDBQueryOrThrow(context,
+			                             "ATTACH 'ducklake:pgducklake:' AS pgducklake (METADATA_SCHEMA 'ducklake')");
+		}
+	}
 
 	if (pgduckdb::IsMotherDuckEnabled()) {
 		auto timeout = FindMotherDuckBackgroundCatalogRefreshInactivityTimeout();

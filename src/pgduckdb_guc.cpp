@@ -9,7 +9,6 @@
 
 extern "C" {
 #include "postgres.h"
-#include "access/xact.h"
 #include "utils/guc.h"
 #include "utils/guc_tables.h"
 #include "miscadmin.h" // DataDir
@@ -129,7 +128,7 @@ char *duckdb_postgres_role = strdup("");
 bool duckdb_force_motherduck_views = false;
 
 int duckdb_maximum_threads = -1;
-int duckdb_maximum_memory = 4096; /* 4GB in MB */
+int duckdb_maximum_memory = -1; // -1 means use 50% of system's available memory
 char *duckdb_disabled_filesystems = strdup("");
 bool duckdb_enable_external_access = true;
 bool duckdb_allow_community_extensions = false;
@@ -142,6 +141,45 @@ char *duckdb_max_temp_directory_size = strdup("");
 char *duckdb_default_collation = strdup("");
 char *duckdb_azure_transport_option_type = strdup("");
 char *duckdb_custom_user_agent = strdup("");
+bool duckdb_parquet_metadata_cache = true;
+char *ducklake_default_table_path = strdup("");
+double ducklake_vacuum_delete_threshold = 0.1;
+char *ducklake_as_of_timestamp = strdup("");
+
+static void
+DuckAssignDuckLakeDefaultTablePath_Cpp(const char * /*new_path*/) {
+	if (!IsExtensionRegistered()) {
+		return;
+	}
+
+	// TODO: validate
+}
+
+static void
+DuckAssignParquetMetadataCache_Cpp(bool new_val) {
+	if (!IsExtensionRegistered()) {
+		return;
+	}
+
+	if (!DuckDBManager::IsInitialized()) {
+		return;
+	}
+
+	auto connection = pgduckdb::DuckDBManager::GetConnectionUnsafe();
+	duckdb::string set_query = new_val ? "SET parquet_metadata_cache = true" : "SET parquet_metadata_cache = false";
+	pgduckdb::DuckDBQueryOrThrow(*connection, set_query);
+	elog(DEBUG2, "[PGDuckDB] Set DuckDB option: 'parquet_metadata_cache'=%s", new_val ? "true" : "false");
+}
+
+static void
+DuckAssignParquetMetadataCache(bool newval, void * /*extra*/) {
+	InvokeCPPFunc(DuckAssignParquetMetadataCache_Cpp, newval);
+}
+
+static void
+DuckAssignDuckLakeDefaultTablePath(const char *newval, void * /*extra*/) {
+	InvokeCPPFunc(DuckAssignDuckLakeDefaultTablePath_Cpp, newval);
+}
 
 void
 InitGUC() {
@@ -201,11 +239,11 @@ InitGUC() {
 	    &duckdb_autoload_known_extensions, PGC_SUSET);
 
 	DefineCustomDuckDBVariable("duckdb.max_memory", "The maximum memory DuckDB can use in MB (e.g., 4096 for 4GB)",
-	                           &duckdb_maximum_memory, 0, INT_MAX, PGC_SUSET, GUC_UNIT_MB);
+	                           &duckdb_maximum_memory, -1, INT_MAX, PGC_SUSET, GUC_UNIT_MB);
 	DefineCustomDuckDBVariable(
 	    "duckdb.memory_limit",
 	    "The maximum memory DuckDB can use in MB (e.g., 4096 for 4GB), alias for duckdb.max_memory",
-	    &duckdb_maximum_memory, 0, INT_MAX, PGC_SUSET, GUC_UNIT_MB);
+	    &duckdb_maximum_memory, -1, INT_MAX, PGC_SUSET, GUC_UNIT_MB);
 
 	DefineCustomDuckDBVariable(
 	    "duckdb.temporary_directory",
@@ -247,6 +285,25 @@ InitGUC() {
 
 	DefineCustomDuckDBVariable("duckdb.custom_user_agent", "Additional user agent string to append to 'pg_duckdb'",
 	                           &duckdb_custom_user_agent, PGC_SUSET);
+
+	DefineCustomVariable("duckdb.parquet_metadata_cache",
+	                     "Whether to cache Parquet metadata for improved query performance",
+	                     &duckdb_parquet_metadata_cache, PGC_SUSET, 0, NULL, DuckAssignParquetMetadataCache, NULL);
+
+	/* DuckLake specific GUCs */
+	DefineCustomVariable("ducklake.default_table_path",
+	                     "Default directory path for DuckLake tables. If set, tables will be created under this path",
+	                     &ducklake_default_table_path, PGC_USERSET, 0, NULL, DuckAssignDuckLakeDefaultTablePath, NULL);
+
+	DefineCustomVariable("ducklake.vacuum_delete_threshold",
+	                     "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a data file. "
+	                     "Default is 0.1 (10%)",
+	                     &ducklake_vacuum_delete_threshold, 0.0, 1.0);
+
+	DefineCustomVariable("ducklake.as_of_timestamp",
+	                     "Timestamp for point-in-time queries on DuckLake tables. "
+	                     "When set, all DuckLake table queries use AT (TIMESTAMP => 'value')",
+	                     &ducklake_as_of_timestamp);
 }
 
 #if PG_VERSION_NUM < 160000

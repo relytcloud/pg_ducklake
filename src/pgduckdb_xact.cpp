@@ -13,6 +13,7 @@
 namespace pgduckdb {
 
 static CommandId next_expected_command_id = FirstCommandId;
+static CommandId ducklake_command_id_increment = FirstCommandId;
 static bool top_level_statement = true;
 
 namespace pg {
@@ -51,10 +52,12 @@ PreventInTransactionBlock(const char *statement_type) {
  * DidWrites() before Postgres has done the above, so very early in the command
  * handling. Even if you don't it's often not a problem, because we check again
  * at transaction end and also during any next call to ClaimCurrentCommandId().
+ *
+ * Writes to DuckLake metadata tables are allowed to coexist with DuckDB writes.
  */
 static bool
 DidWrites() {
-	return pg::GetCurrentCommandId() > next_expected_command_id;
+	return pg::GetCurrentCommandId() > (next_expected_command_id + ducklake_command_id_increment);
 }
 
 void
@@ -95,6 +98,11 @@ CheckForDisallowedMixedWrites() {
 	}
 }
 
+void
+IncrementDuckLakeCommandId(CommandId inc) {
+	ducklake_command_id_increment += inc;
+}
+
 /*
  * Claim the current command id as being executed by a DuckDB write query.
  *
@@ -118,13 +126,14 @@ ClaimCurrentCommandId(bool force) {
 	 */
 	CommandId new_command_id = pg::GetCurrentCommandId(true);
 
-	if (new_command_id != next_expected_command_id && !MixedWritesAllowed() && !force) {
+	if (new_command_id != next_expected_command_id + ducklake_command_id_increment && !MixedWritesAllowed() && !force) {
 		throw duckdb::NotImplementedException(
 		    "Writing to DuckDB and Postgres tables in the same transaction block is not supported");
 	}
 
 	pg::CommandCounterIncrement();
 	next_expected_command_id = pg::GetCurrentCommandId();
+	ducklake_command_id_increment = 0;
 }
 
 /*
@@ -246,6 +255,7 @@ DuckdbXactCallback_Cpp(XactEvent event) {
 			// Commit the DuckDB transaction too
 			context.transaction.Commit();
 		}
+		ducklake_command_id_increment = 0;
 		break;
 
 	case XACT_EVENT_ABORT:
@@ -263,6 +273,7 @@ DuckdbXactCallback_Cpp(XactEvent event) {
 			// Abort the DuckDB transaction too
 			context.transaction.Rollback(nullptr);
 		}
+		ducklake_command_id_increment = 0;
 		break;
 
 	case XACT_EVENT_PREPARE:

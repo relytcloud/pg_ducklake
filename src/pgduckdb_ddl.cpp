@@ -7,6 +7,8 @@
 #include "pgduckdb/pgduckdb_planner.hpp"
 #include "pgduckdb/pg/string_utils.hpp"
 
+#include "pgduckdb/ducklake/pgducklake_ddl.hpp"
+
 extern "C" {
 #include "postgres.h"
 #include "access/tableam.h"
@@ -45,6 +47,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb_duckdb.hpp"
 #include "pgduckdb/pgduckdb_background_worker.hpp"
 #include "pgduckdb/pgduckdb_fdw.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_userdata_cache.hpp"
 #include "pgduckdb/utility/copy.hpp"
@@ -459,10 +462,11 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 
 		char *access_method = stmt->accessMethod ? stmt->accessMethod : default_table_access_method;
 		bool is_duckdb_table = strcmp(access_method, "duckdb") == 0;
-		if (is_duckdb_table) {
+		bool is_ducklake_table = strcmp(access_method, "ducklake") == 0;
+		if (is_duckdb_table || is_ducklake_table) {
 			if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
 				ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-				                errmsg("Only one DuckDB table can be created in a single statement")));
+				                errmsg("Only one DuckDB or DuckLake table can be created in a single statement")));
 			}
 			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::CREATE_TABLE;
 			pgduckdb::ClaimCurrentCommandId();
@@ -485,6 +489,7 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 		}
 		char *access_method = stmt->into->accessMethod ? stmt->into->accessMethod : default_table_access_method;
 		bool is_duckdb_table = strcmp(access_method, "duckdb") == 0;
+		bool is_ducklake_table = strcmp(access_method, "ducklake") == 0;
 		if (is_duckdb_table) {
 			if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
 				ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
@@ -499,6 +504,23 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 			 * whether to execute the query in DuckDB or not.
 			 */
 			ctas_skip_data = stmt->into->skipData;
+			stmt->into->skipData = true;
+		}
+
+		if (is_ducklake_table) {
+			if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
+				ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				                errmsg("Only one DuckLake table can be created in a single statement")));
+			}
+			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::CREATE_TABLE;
+			pgduckdb::ClaimCurrentCommandId();
+			/*
+			 * Force skipData to false for ducklake tables, so that Postgres does
+			 * not execute the query, and save the original value in ducklake_ctas_skip_data
+			 * so we can use it later in ducklake_create_table_trigger to choose
+			 * whether to execute the query in DuckDB or not.
+			 */
+			pgduckdb::ducklake_ctas_skip_data = stmt->into->skipData;
 			stmt->into->skipData = true;
 		}
 
@@ -543,7 +565,7 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 		//   duckdb.query() call and cast them to the expected type. This way,
 		//   a "SELECT * FROM read_csv(...)" will always return the same
 		//   columns and column types, even if the CSV is changed.
-		bool needs_planning = is_duckdb_table || pgduckdb::NeedsDuckdbExecution(original_query) ||
+		bool needs_planning = is_duckdb_table || is_ducklake_table || pgduckdb::NeedsDuckdbExecution(original_query) ||
 		                      pgduckdb::ShouldTryToUseDuckdbExecution(original_query);
 
 		if (!needs_planning) {
@@ -644,10 +666,10 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 				return DuckdbHandleRenameViewPre(stmt);
 			}
 
-			if (pgduckdb::IsDuckdbTable(rel)) {
+			if (pgduckdb::IsDuckdbTable(rel) || pgduckdb::IsDucklakeTable(rel)) {
 				if (pgduckdb::top_level_duckdb_ddl_type != pgduckdb::DDLType::NONE) {
 					ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					                errmsg("Only one DuckDB %s can be renamed in a single statement",
+					                errmsg("Only one DuckDB or DuckLake %s can be renamed in a single statement",
 					                       stmt->renameType == OBJECT_TABLE ? "table" : "column")));
 				}
 				pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::ALTER_TABLE;
@@ -685,7 +707,8 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 		 * afterwards. We currently only do this to get a better error message,
 		 * because we don't support REFERENCES anyway.
 		 */
-		if (pgduckdb::IsDuckdbTable(relation) && pgduckdb::top_level_duckdb_ddl_type == pgduckdb::DDLType::NONE) {
+		if ((pgduckdb::IsDuckdbTable(relation) || pgduckdb::IsDucklakeTable(relation)) &&
+		    pgduckdb::top_level_duckdb_ddl_type == pgduckdb::DDLType::NONE) {
 			pgduckdb::top_level_duckdb_ddl_type = pgduckdb::DDLType::ALTER_TABLE;
 			pgduckdb::ClaimCurrentCommandId();
 		}
@@ -719,6 +742,26 @@ DuckdbHandleDDLPre(PlannedStmt *pstmt, const char *query_string) {
 	} else if (IsA(parsetree, AlterUserMappingStmt)) {
 		DuckdbHandleAlterUserMappingStmt(parsetree);
 		return false;
+	} else if (IsA(parsetree, CreateForeignTableStmt)) {
+		auto stmt = castNode(CreateForeignTableStmt, parsetree);
+
+		/* Look up the foreign server to check if it's using ducklake_fdw */
+		char *server_name = stmt->servername;
+		if (server_name) {
+			ForeignServer *server = GetForeignServerByName(server_name, false);
+			ForeignDataWrapper *fdw = GetForeignDataWrapper(server->fdwid);
+
+			if (strcmp(fdw->fdwname, DUCKLAKE_FDW_NAME) == 0) {
+				if (list_length(stmt->base.tableElts) != 0) {
+					ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+					                errmsg("cannot specify column definitions for DuckLake foreign table"),
+					                errhint("Leave the column list empty - column definitions are automatically "
+					                        "inferred")));
+				}
+
+				pgduckdb::InferAndPopulateForeignTableColumns(stmt);
+			}
+		}
 	}
 
 	return false;
@@ -1713,7 +1756,7 @@ DECLARE_PG_FUNCTION(duckdb_alter_table_trigger) {
 		JOIN pg_catalog.pg_class
 		ON cmds.objid = pg_class.oid
 		WHERE cmds.object_type in ('table', 'table column')
-		AND pg_class.relam = (SELECT oid FROM pg_am WHERE amname = 'duckdb')
+		AND pg_class.relam in (SELECT oid FROM pg_am WHERE amname in ('duckdb', 'ducklake'))
 		UNION ALL
 		SELECT objid as relid, false AS needs_to_check_temporary_set
 		FROM pg_catalog.pg_event_trigger_ddl_commands() cmds
@@ -1726,7 +1769,7 @@ DECLARE_PG_FUNCTION(duckdb_alter_table_trigger) {
 		JOIN pg_catalog.pg_class
 		ON cmds.objid = pg_class.oid
 		WHERE cmds.object_type in ('table', 'table column')
-		AND pg_class.relam != (SELECT oid FROM pg_am WHERE amname = 'duckdb')
+		AND pg_class.relam not in (SELECT oid FROM pg_am WHERE amname in ('duckdb', 'ducklake'))
 		AND pg_class.relpersistence = 't'
 		)",
 	                   0);

@@ -4,6 +4,7 @@
 #include "pgduckdb/pgduckdb_ddl.hpp"
 #include "pgduckdb/pg/relations.hpp"
 #include "pgduckdb/pg/locale.hpp"
+#include "pgduckdb/ducklake/pgducklake_timetravel.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -41,6 +42,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb.h"
 #include "pgduckdb/pgduckdb_table_am.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
+#include "pgduckdb/ducklake/pgducklake_fdw.hpp"
 #include "pgduckdb/pgduckdb_metadata_cache.hpp"
 #include "pgduckdb/pgduckdb_userdata_cache.hpp"
 
@@ -49,6 +51,19 @@ bool outermost_query = true;
 
 char *
 pgduckdb_function_name(Oid function_oid, bool *use_variadic_p) {
+	if (pgduckdb::IsDucklakeOnlyFunction(function_oid)) {
+		/*
+		 * DuckDB currently doesn't support variadic functions, so we can just
+		 * always set this pointer to false.
+		 */
+		if (use_variadic_p) {
+			*use_variadic_p = false;
+		}
+
+		auto func_name = get_func_name(function_oid);
+		return psprintf("pgducklake.%s", quote_identifier(func_name));
+	}
+
 	if (!pgduckdb::IsDuckdbOnlyFunction(function_oid)) {
 		return nullptr;
 	}
@@ -559,6 +574,15 @@ pgduckdb_db_and_schema_string(const char *postgres_schema_name, const char *duck
 }
 
 /*
+ * Check if a relation is a DuckLake foreign table.
+ * This is a C-callable wrapper around pgduckdb::IsDucklakeForeignTable.
+ */
+bool
+pgduckdb_is_ducklake_foreign_table(Oid relid) {
+	return pgduckdb::IsDucklakeForeignTable(relid);
+}
+
+/*
  * generate_relation_name computes the fully qualified name of the relation in
  * DuckDB for the specified Postgres OID. This includes the DuckDB database name
  * too.
@@ -573,9 +597,19 @@ pgduckdb_relation_name(Oid relation_oid) {
 	const char *postgres_schema_name = get_namespace_name_or_temp(relation->relnamespace);
 	const char *duckdb_table_am_name = pgduckdb::DuckdbTableAmGetName(relation_oid);
 
-	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
+	char *result = NULL;
+	if (relation->relkind == RELKIND_FOREIGN_TABLE && pgduckdb::IsDucklakeForeignTable(relation_oid)) {
+		result = pgduckdb::GetDucklakeForeignTableName(relation_oid);
+	} else {
+		const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
+		result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
 
-	char *result = psprintf("%s.%s", db_and_schema, quote_identifier(relname));
+		char *time_travel_result = pgduckdb::MaybeApplyTimeTravelSnapshot(relation_oid, db_and_schema, relname,
+		                                                                  pgduckdb::IsDucklakeTable(relation));
+		if (time_travel_result) {
+			result = time_travel_result;
+		}
+	}
 
 	ReleaseSysCache(tp);
 
@@ -890,10 +924,18 @@ pgduckdb_get_rename_relationdef(Oid relation_oid, RenameStmt *rename_stmt) {
 	}
 
 	Relation relation = relation_open(relation_oid, AccessShareLock);
-	Assert(pgduckdb::IsDuckdbTable(relation) || pgduckdb::IsMotherDuckView(relation));
+	Assert(pgduckdb::IsDuckdbTable(relation) || pgduckdb::IsDucklakeTable(relation) ||
+	       pgduckdb::IsMotherDuckView(relation));
 
 	const char *postgres_schema_name = get_namespace_name_or_temp(relation->rd_rel->relnamespace);
-	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, "duckdb");
+	const char *duckdb_table_am_name = "duckdb";
+	if (relation->rd_rel->relkind == RELKIND_RELATION) {
+		const char *table_am_name = pgduckdb::DuckdbTableAmGetName(relation->rd_tableam);
+		if (table_am_name != nullptr) {
+			duckdb_table_am_name = table_am_name;
+		}
+	}
+	const char *db_and_schema = pgduckdb_db_and_schema_string(postgres_schema_name, duckdb_table_am_name);
 	const char *old_table_name = psprintf("%s.%s", db_and_schema, quote_identifier(rename_stmt->relation->relname));
 
 	const char *relation_type = "TABLE";
@@ -1277,6 +1319,24 @@ pg_duckdb_get_oper_expr_make_ctx(const char *op_name, Node **, Node **arg2) {
 		ctx->is_negated = true;
 	}
 
+	/*
+	 * If match pattern is a constant text value, simply check if it has an escape character. If not, we can skip
+	 * the escape pattern so that DuckDB has opportunity to optimize the query.
+	 */
+	if (ctx->is_likeish_op && IsA(*arg2, Const)) {
+		auto arg2_const = (Const *)*arg2;
+		if (arg2_const->consttype == TEXTOID && !arg2_const->constisnull) {
+			text *text_value = DatumGetTextP(arg2_const->constvalue);
+			const char *p = VARDATA_ANY(text_value);
+			const char *p_end = p + VARSIZE_ANY_EXHDR(text_value);
+
+			// Only deal with default escape pattern for now
+			if (memchr(p, '\\', p_end - p) == NULL) {
+				ctx->escape_pattern = NULL;
+			}
+		}
+	}
+
 	if (ctx->is_likeish_op && IsA(*arg2, FuncExpr)) {
 		auto arg2_func = (FuncExpr *)*arg2;
 		auto func_name = get_func_name(arg2_func->funcid);
@@ -1310,7 +1370,9 @@ void
 pg_duckdb_get_oper_expr_suffix(StringInfo buf, void *vctx) {
 	auto ctx = static_cast<PGDuckDBGetOperExprContext *>(vctx);
 	if (ctx->is_likeish_op) {
-		appendStringInfo(buf, " ESCAPE %s", ctx->escape_pattern);
+		if (ctx->escape_pattern) {
+			appendStringInfo(buf, " ESCAPE %s", ctx->escape_pattern);
+		}
 
 		if (ctx->is_negated) {
 			appendStringInfo(buf, ")");

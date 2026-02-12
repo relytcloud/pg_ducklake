@@ -18,6 +18,11 @@ DUCKDB_GEN ?= ninja
 DUCKDB_VERSION = v1.4.3
 # duckdb build tweaks
 DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0
+# -Bsymbolic: required for postgres_scanner (used by DuckLake FDW) to avoid
+# ELF symbol conflict with PostgreSQL backend's pg_link_canary_is_frontend()
+ifeq ($(shell uname -s),Linux)
+DUCKDB_CMAKE_VARS += -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-Bsymbolic
+endif
 # set to 1 to disable asserts in DuckDB. This is particularly useful in combinition with MotherDuck.
 # When asserts are enabled the released motherduck extension will fail some of
 # those asserts. By disabling asserts it's possible to run a debug build of
@@ -72,7 +77,7 @@ endif
 
 COMPILER_FLAGS=-Wno-sign-compare -Wshadow -Wswitch -Wunused-parameter -Wunreachable-code -Wno-unknown-pragmas -Wall -Wextra ${ERROR_ON_WARNING}
 
-override PG_CPPFLAGS += -Iinclude -isystem third_party/duckdb/src/include -isystem third_party/duckdb/third_party/re2 -isystem $(INCLUDEDIR_SERVER) ${COMPILER_FLAGS}
+override PG_CPPFLAGS += -Iinclude -isystem third_party/duckdb/src/include -isystem third_party/duckdb/third_party/re2 -isystem third_party/ducklake/src/include -isystem $(INCLUDEDIR_SERVER) ${COMPILER_FLAGS}
 override PG_CXXFLAGS += -std=c++17 ${DUCKDB_BUILD_CXX_FLAGS} ${COMPILER_FLAGS} -Wno-register -Weffc++
 # Ignore declaration-after-statement warnings in our code. Postgres enforces
 # this because their ancient style guide requires it, but we don't care. It
@@ -82,6 +87,12 @@ override PG_CXXFLAGS += -std=c++17 ${DUCKDB_BUILD_CXX_FLAGS} ${COMPILER_FLAGS} -
 # changes to the vendored code in one place.
 override PG_CFLAGS += -Wno-declaration-after-statement
 
+# For ReleaseStatic: -Bsymbolic on pg_duckdb.so (libduckdb is statically linked)
+ifeq ($(DUCKDB_BUILD), ReleaseStatic)
+ifeq ($(shell uname -s), Linux)
+SHLIB_LINK += -Wl,-Bsymbolic
+endif
+endif
 SHLIB_LINK += $(PG_DUCKDB_LINK_FLAGS)
 
 include Makefile.global
@@ -95,7 +106,7 @@ src/pgduckdb.o: PG_CPPFLAGS += -DPG_DUCKDB_VERSION="\"$(PG_DUCKDB_VERSION)\""
 # includes those header files. This does mean that we rebuild our .o files
 # whenever we change the DuckDB version, but that seems like a fairly
 # reasonable thing to do anyway, even if not always strictly necessary always.
-$(OBJS): .git/modules/third_party/duckdb/HEAD
+$(OBJS): .git/modules/third_party/duckdb/HEAD .git/modules/third_party/ducklake/HEAD
 
 COMPILE.cc.bc += $(PG_CPPFLAGS)
 COMPILE.cxx.bc += $(PG_CXXFLAGS)
@@ -110,12 +121,17 @@ PYTEST_CONCURRENCY = auto
 check-regression-duckdb:
 	$(MAKE) -C test/regression check-regression-duckdb
 
+check-regression-ducklake:
+	$(MAKE) -C test/regression_ducklake check-regression-ducklake
+
 clean-regression:
 	$(MAKE) -C test/regression clean-regression
+	$(MAKE) -C test/regression_ducklake clean-regression
 
 # Specify AWS_REGION to make sure test output the same thing regardless of where they are run
 installcheck: all install
 	AWS_REGION=us-east-1 $(MAKE) check-regression-duckdb
+	$(MAKE) check-regression-ducklake
 
 pycheck: all install
 	LD_LIBRARY_PATH=$(PG_LIBDIR):${LD_LIBRARY_PATH} pytest -n $(PYTEST_CONCURRENCY)
@@ -128,9 +144,12 @@ schedulecheck:
 duckdb: $(FULL_DUCKDB_LIB)
 
 .git/modules/third_party/duckdb/HEAD:
-	git submodule update --init --recursive
+	git submodule update --init --recursive third_party/duckdb
 
-$(FULL_DUCKDB_LIB): .git/modules/third_party/duckdb/HEAD third_party/pg_duckdb_extensions.cmake
+.git/modules/third_party/ducklake/HEAD:
+	git submodule update --init --depth=0 third_party/ducklake
+
+$(FULL_DUCKDB_LIB): .git/modules/third_party/duckdb/HEAD .git/modules/third_party/ducklake/HEAD third_party/pg_duckdb_extensions.cmake
 ifeq ($(DUCKDB_BUILD), ReleaseStatic)
 	mkdir -p third_party/duckdb/build/release/vcpkg_installed
 endif
