@@ -1,0 +1,46 @@
+-- Test DuckLake initialization
+-- Extension should create ducklake schema
+SELECT nspname FROM pg_namespace WHERE nspname = 'ducklake';
+  nspname
+-----------
+ ducklake
+(1 row)
+
+-- Extension should create ducklake access method
+SELECT amname FROM pg_am WHERE amname = 'ducklake';
+  amname
+----------
+ ducklake
+(1 row)
+
+-- Extension should create _initialize function
+SELECT proname FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'ducklake' AND p.proname = '_initialize';
+   proname
+-------------
+ _initialize
+(1 row)
+
+-- Extension should create _am_handler function
+SELECT proname FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'ducklake' AND p.proname = '_am_handler';
+   proname
+--------------
+ _am_handler
+(1 row)
+
+-- Try creating a simple table with ducklake access method
+CREATE TABLE test_init (id int, value text) USING ducklake;
+-- Verify table was created with ducklake AM
+SELECT relname, am.amname
+FROM pg_class c
+JOIN pg_am am ON c.relam = am.oid
+WHERE c.relname = 'test_init';
+  relname   |  amname
+------------+----------
+ test_init | ducklake
+(1 row)
+
+DROP TABLE test_init;

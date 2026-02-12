@@ -16,16 +16,13 @@ namespace pgducklake {
 
 /**
  * Manager class for DuckDB/DuckLake operations.
- * Provides access to pg_duckdb's DuckDB instance and ensures DuckLake is loaded.
+ * Provides access to pg_duckdb's DuckDB instance.
+ *
+ * Note: DuckLake extension is loaded during _PG_init(), so it's already
+ * available when you use this class.
  */
 class DuckLakeManager {
 public:
-	/**
-	 * Ensure DuckLake extension is loaded into pg_duckdb's DuckDB instance.
-	 * This is idempotent and safe to call multiple times.
-	 */
-	static void EnsureLoaded();
-
 	/**
 	 * Get reference to pg_duckdb's DuckDB database instance.
 	 * Use this to access DuckDB APIs directly.

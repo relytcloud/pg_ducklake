@@ -14,5 +14,13 @@ PG_MODULE_MAGIC_EXT(.name = "pg_duckdb", .version = PG_DUCKDB_VERSION);
 PG_MODULE_MAGIC;
 #endif
 
-void _PG_init(void) {}
+// Defined in pgducklake_duckdb.cpp
+extern void ducklake_load_extension(void);
+
+void
+_PG_init(void) {
+	// Load DuckLake extension into pg_duckdb's DuckDB instance at initialization
+	ducklake_load_extension();
+}
+
 } // extern "C"

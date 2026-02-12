@@ -81,11 +81,10 @@ PostgreSQL and DuckDB headers cannot coexist in the same translation unit due to
 | File | Includes postgres.h | Includes duckdb.hpp | Purpose |
 |------|:---:|:---:|---------|
 | `src/pgducklake.cpp` | Yes | No | PostgreSQL extension entry point |
-| `src/pgducklake_table_am.cpp` | Yes | No | Table access method implementation |
+| `src/pgducklake_table_am.cpp` | Yes | No | Table access method (declares RegisterDuckdbTableAm locally) |
 | `src/pgducklake_ddl.cpp` | Yes | Yes | DDL operations (uses DuckLakeManager API, careful include order) |
 | `src/pgducklake_metadata_manager.cpp` | Yes | Yes | Metadata manager (uses careful include order) |
 | `src/pgducklake_duckdb.cpp` | No | Yes | DuckDB bridge (DuckLakeManager implementation) |
-| `include/pgducklake/pgduckdb.h` | No | No | pg_duckdb C interface (RegisterDuckdbTableAm) |
 | `include/pgducklake/pgducklake_duckdb.hpp` | No | Yes | DuckLakeManager C++ API |
 
 ### Component Relationships
@@ -94,11 +93,12 @@ PostgreSQL and DuckDB headers cannot coexist in the same translation unit due to
 pg_ducklake.so
 ├── PostgreSQL-facing code (src/pgducklake*.cpp)
 │   └── Implements table AM, DDL hooks, metadata operations
-│   └── Calls ducklake_ensure_loaded() via extern "C"
+│   └── _PG_init() calls ducklake_load_extension() at startup
 │
-├── DuckDB bridge (src/pg_ducklake_duckdb.cpp)
-│   └── ducklake_ensure_loaded():
+├── DuckDB bridge (src/pgducklake_duckdb.cpp)
+│   └── ducklake_load_extension():
 │          GetDuckDBDatabase()->LoadStaticExtension<DucklakeExtension>()
+│   └── DuckLakeManager: high-level C++ API for DuckDB operations
 │
 └── DuckLake static library (linked via -Wl,-force_load)
     └── All DuckLake implementation (49 .cpp files from third_party/ducklake/src/)
@@ -116,7 +116,7 @@ pg_ducklake.so
 
 3. **Dynamic Symbol Resolution**: Uses `-Wl,-undefined,dynamic_lookup` (macOS) to resolve pg_duckdb symbols at runtime. pg_duckdb must be loaded via `shared_preload_libraries`.
 
-4. **Static Extension Loading**: Uses DuckDB's `LoadStaticExtension<DucklakeExtension>()` to register DuckLake directly into pg_duckdb's DuckDB instance, accessed via `GetDuckDBDatabase()`.
+4. **Static Extension Loading**: DuckLake is loaded during `_PG_init()` using DuckDB's `LoadStaticExtension<DucklakeExtension>()` template. This happens once during `CREATE EXTENSION pg_ducklake`, ensuring DuckLake is immediately available after installation.
 
 ## File Structure
 
@@ -128,7 +128,6 @@ pg_ducklake.so
 - `src/pgducklake_ddl.cpp` - DDL event trigger handlers (CREATE/DROP TABLE)
 
 ### Headers
-- `include/pgducklake/pgduckdb.h` - pg_duckdb C interface (`RegisterDuckdbTableAm`)
 - `include/pgducklake/pgducklake_duckdb.hpp` - DuckLakeManager C++ API for DuckDB operations
 - `include/pgducklake/pgducklake_metadata_manager.hpp` - Metadata manager interface
 - `include/pgducklake/pgducklake_defs.hpp` - Shared constants
@@ -183,7 +182,7 @@ SHLIB_LINK += -Wl,-undefined,dynamic_lookup  # macOS
    - Use PostgreSQL APIs (SPI, catalog access, etc.)
 
 2. **DuckDB-side changes** (DuckLake registration, query execution):
-   - Edit `src/pg_ducklake_duckdb.cpp`
+   - Edit `src/pgducklake_duckdb.cpp`
    - This includes DuckDB/DuckLake headers **only**
    - Never include PostgreSQL headers here
 
@@ -222,6 +221,42 @@ When adding new DuckLake operations:
 
 5. **Not force-loading DuckLake**: Without `-Wl,-force_load` (macOS) or `--whole-archive` (Linux), the linker drops unreferenced DuckLake symbols, causing `LoadStaticExtension<T>()` to fail.
 
+## SQL Functions and Features
+
+### Initialization
+
+**`ducklake._initialize()`**
+- Called automatically during `CREATE EXTENSION pg_ducklake`
+- Creates data directory: `$DATADIR/pg_ducklake`
+- Attaches DuckLake catalog: `ATTACH 'ducklake:pgducklake:' AS pgducklake`
+- Configured with metadata schema and data path
+- Can only be called during extension creation
+
+### DDL Event Triggers
+
+**`ducklake._create_table_trigger()`**
+- Event trigger on CREATE TABLE / CREATE TABLE AS
+- Auto-detects tables using ducklake access method
+- Generates CREATE TABLE DDL from PostgreSQL table definition
+- Creates corresponding DuckDB table in `pgducklake.schema.table` namespace
+- Maps PostgreSQL types to DuckDB types using `format_type_with_typemod()`
+- Supports:
+  - Basic column types (int, text, numeric, timestamp, varchar, etc.)
+  - NOT NULL constraints
+  - Multi-column tables
+- Does not yet support:
+  - DEFAULT values
+  - CHECK constraints
+  - UNIQUE/PRIMARY KEY constraints
+  - Foreign keys (explicitly rejected)
+  - Temporary tables (explicitly rejected)
+
+**`ducklake._drop_trigger()`**
+- Event trigger on SQL DROP
+- Queries DuckLake metadata to find corresponding DuckDB tables
+- Executes `DROP TABLE IF EXISTS` in DuckDB
+- Logs warnings if drop fails (doesn't block PostgreSQL DROP)
+
 ## Testing Strategy
 
 Tests use PostgreSQL's regression test framework (`pg_regress`). Each test:
@@ -236,6 +271,34 @@ Test execution:
 - Runs tests in schedule order
 - Compares output with `test/regression/expected/*.out`
 
+**Available tests:**
+- `initialization` - Tests extension creation, schema setup, and basic table creation
+- `ddl_triggers` - Tests automatic CREATE/DROP table triggers, data insertion/selection
+- `basic` - Basic DML operations
+
+## Implementation Notes
+
+### DDL Trigger Architecture
+
+The DDL trigger implementation follows these principles:
+
+1. **No tight coupling to pg_duckdb**: Uses only `DuckLakeManager::ExecuteQuery()` API
+2. **PostgreSQL catalog introspection**: Reads table structure from `pg_class`, `pg_attribute`, `pg_type`
+3. **Type mapping**: Uses PostgreSQL's `format_type_with_typemod()` which produces types DuckDB understands
+4. **Event trigger pattern**: Standard PostgreSQL event trigger using `pg_event_trigger_ddl_commands()` and `pg_event_trigger_dropped_objects()`
+
+### Table Definition Generation
+
+The `GenerateCreateTableDDL()` function:
+1. Opens the relation with `AccessShareLock`
+2. Builds qualified name: `pgducklake.schema.table`
+3. Iterates `TupleDesc` to extract columns
+4. Maps each column using `format_type_with_typemod()`
+5. Adds NOT NULL constraints where applicable
+6. Returns DDL string for execution
+
+This approach avoids dependency on pg_duckdb's internal table definition parsing and keeps the code simple and maintainable.
+
 ## Key Technical Details
 
 ### DuckLakeManager API
@@ -246,9 +309,6 @@ The `DuckLakeManager` class provides a high-level C++ interface for DuckDB/DuckL
 namespace pgducklake {
 class DuckLakeManager {
 public:
-    // Ensure DuckLake extension is loaded (idempotent)
-    static void EnsureLoaded();
-
     // Get reference to pg_duckdb's DuckDB database instance
     static duckdb::DuckDB& GetDatabase();
 
@@ -263,9 +323,15 @@ public:
 
 **Implementation details:**
 - Wraps pg_duckdb's low-level `GetDuckDBDatabase()` C function (returns `void*`)
-- `EnsureLoaded()` uses DuckDB's `LoadStaticExtension<DucklakeExtension>()` template
-- Tracks loaded state to make `EnsureLoaded()` idempotent
+- DuckLake extension is loaded in `_PG_init()` during extension initialization
 - Defined in `include/pgducklake/pgducklake_duckdb.hpp`, implemented in `src/pgducklake_duckdb.cpp`
+
+**Extension Lifecycle:**
+```
+1. LOAD 'pg_duckdb'              (via shared_preload_libraries)
+2. CREATE EXTENSION pg_ducklake  → _PG_init() → ducklake_load_extension()
+3. DuckLake is now registered with DuckDB's ExtensionManager
+```
 
 ### Symbol Visibility
 
@@ -274,6 +340,7 @@ pg_duckdb exports a minimal C interface:
 - `RegisterDuckdbTableAm()` - Registers custom table access methods
 
 All C++ symbols in the `pgduckdb::` namespace are hidden (`-fvisibility=hidden`). This extension:
-1. Imports `GetDuckDBDatabase()` in the DuckDB-facing translation unit
-2. Wraps it with `DuckLakeManager` to provide type-safe, high-level APIs
-3. Never exposes raw `GetDuckDBDatabase()` to other code
+1. Imports `GetDuckDBDatabase()` in the DuckDB-facing translation unit (`src/pgducklake_duckdb.cpp`)
+2. Declares `RegisterDuckdbTableAm()` locally in the one file that needs it (`src/pgducklake_table_am.cpp`)
+3. Wraps `GetDuckDBDatabase()` with `DuckLakeManager` to provide type-safe, high-level APIs
+4. Never exposes raw pg_duckdb symbols via headers

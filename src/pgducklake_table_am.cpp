@@ -7,7 +7,8 @@ extern "C" {
 #include "commands/vacuum.h"
 #include "executor/tuptable.h"
 
-#include "pgducklake/pgduckdb.h"
+// Exported by pg_duckdb - register a custom table access method
+extern bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
 }
 
 extern "C" {

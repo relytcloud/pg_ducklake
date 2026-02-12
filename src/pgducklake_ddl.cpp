@@ -10,7 +10,9 @@ extern "C" {
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_type.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h" // creating_extension
 #include "executor/spi.h"
@@ -23,14 +25,73 @@ extern "C" {
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/relcache.h"
+#include "utils/syscache.h"
 #include "utils/timestamp.h"
-
-#include "pgducklake/pgduckdb.h"
 }
 
 namespace pgduckdb {
 bool ducklake_ctas_skip_data = false;
 } // namespace pgduckdb
+
+// Helper function to generate CREATE TABLE DDL for DuckDB
+static std::string
+GenerateCreateTableDDL(Oid relid) {
+  Relation rel = relation_open(relid, AccessShareLock);
+
+  // Get schema and table names
+  const char *schema_name = get_namespace_name(RelationGetNamespace(rel));
+  const char *table_name = RelationGetRelationName(rel);
+
+  // Build qualified table name: pgducklake.schema.table
+  std::string qualified_name = duckdb::StringUtil::Format(
+      "%s.%s.%s",
+      pgducklake::PGDUCKLAKE_DB_NAME,
+      schema_name,
+      table_name);
+
+  StringInfoData ddl;
+  initStringInfo(&ddl);
+
+  appendStringInfo(&ddl, "CREATE TABLE %s (", qualified_name.c_str());
+
+  // Iterate over columns
+  TupleDesc tupdesc = RelationGetDescr(rel);
+  bool first_column = true;
+
+  for (int i = 0; i < tupdesc->natts; i++) {
+    Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
+
+    if (attr->attisdropped) {
+      continue;
+    }
+
+    if (!first_column) {
+      appendStringInfoString(&ddl, ", ");
+    }
+    first_column = false;
+
+    // Column name
+    const char *colname = NameStr(attr->attname);
+    appendStringInfo(&ddl, "%s ", quote_identifier(colname));
+
+    // Map PostgreSQL type to DuckDB type
+    // For now, use format_type_with_typemod which gives us the PostgreSQL type
+    // DuckDB supports most common PostgreSQL types
+    const char *typename_str = format_type_with_typemod(attr->atttypid, attr->atttypmod);
+    appendStringInfoString(&ddl, typename_str);
+
+    // Handle NOT NULL constraint
+    if (attr->attnotnull) {
+      appendStringInfoString(&ddl, " NOT NULL");
+    }
+  }
+
+  appendStringInfoString(&ddl, ")");
+
+  relation_close(rel, AccessShareLock);
+
+  return std::string(ddl.data);
+}
 
 extern "C" {
 
@@ -61,14 +122,18 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
 
   /* Initialize DuckDB and attach the DuckLake catalog */
   try {
-    auto &duckdb = pgducklake::DuckLakeManager::GetDatabase();
-    // pgduckdb::DuckDBQueryOrThrow(*connection,
-    //                              "ATTACH 'ducklake:pgducklake:' AS pgducklake
-    //                              "
-    //                              "(METADATA_SCHEMA 'ducklake', DATA_PATH '" +
-    //                                  data_path + "')");
-    // /* Reset DuckDB instance to apply initialization settings */
-    // pgduckdb::DuckDBManager::Reset();
+    std::string attach_query = duckdb::StringUtil::Format(
+        "ATTACH 'ducklake:pgducklake:' AS pgducklake "
+        "(METADATA_SCHEMA 'ducklake', DATA_PATH '%s')",
+        data_path.c_str());
+
+    const char *error_msg = nullptr;
+    int result = pgducklake::DuckLakeManager::ExecuteQuery(attach_query.c_str(), &error_msg);
+    if (result != 0) {
+      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                      errmsg("failed to attach DuckLake catalog: %s",
+                             error_msg ? error_msg : "unknown error")));
+    }
   } catch (const std::exception &e) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to initialize DuckLake: %s", e.what())));
@@ -142,48 +207,42 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   bool is_temporary = DatumGetBool(is_temporary_datum);
 
   if (is_temporary) {
-    elog(ERROR, "TODO: create a DuckLake table as a temporary table is not "
-                "supported yet");
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("temporary tables are not supported with ducklake access method")));
   }
-
-  // std::string create_table_string(pgducklake_get_tabledef(relid));
-  std::string create_table_string;
-
-  elog(DEBUG1, "create_table_string: %s", create_table_string.c_str());
 
   AtEOXact_GUC(false, save_nestlevel);
   SPI_finish();
 
-  // auto connection = pgduckdb::DuckDBManager::GetConnection(false);
-
-  std::string set_table_path_string;
-  // auto &table_path = pgduckdb::ducklake_default_table_path;
-  char *table_path;
-  if (table_path == nullptr || strlen(table_path) == 0) {
-    // If path is empty or null, reset the DuckDB variable
-    set_table_path_string = "RESET ducklake_default_table_path";
-    elog(DEBUG2,
-         "[PGDuckDB] Reset DuckDB option: 'ducklake_default_table_path'");
-  } else {
-    set_table_path_string = "SET ducklake_default_table_path=" +
-                            duckdb::KeywordHelper::WriteQuoted(table_path);
-    elog(DEBUG2,
-         "[PGDuckDB] Set DuckDB option: 'ducklake_default_table_path'=%s",
-         table_path);
+  // Generate CREATE TABLE DDL for DuckDB
+  std::string create_table_ddl;
+  try {
+    create_table_ddl = GenerateCreateTableDDL(relid);
+  } catch (const std::exception &e) {
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("failed to generate CREATE TABLE DDL: %s", e.what())));
   }
 
-  // pgduckdb::DuckDBQueryOrThrow(*connection, set_table_path_string + ";" +
-  //                                               create_table_string);
-  // if (IsA(parsetree, CreateTableAsStmt) &&
-  // !pgduckdb::ducklake_ctas_skip_data) {
-  //   auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
-  //   auto ctas_query = (Query *)ctas_stmt->query;
-  //   const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
-  //   std::string insert_string = std::string("INSERT INTO ") +
-  //                               pgduckdb_relation_name(relid) + " " +
-  //                               ctas_query_string;
-  //   pgduckdb::DuckDBQueryOrThrow(*connection, insert_string);
-  // }
+  elog(DEBUG1, "Creating DuckLake table: %s", create_table_ddl.c_str());
+
+  // Execute CREATE TABLE in DuckDB
+  const char *error_msg = nullptr;
+  int result = pgducklake::DuckLakeManager::ExecuteQuery(create_table_ddl.c_str(), &error_msg);
+  if (result != 0) {
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("failed to create DuckLake table: %s",
+                    error_msg ? error_msg : "unknown error")));
+  }
+
+  // Handle CREATE TABLE AS (CTAS) - populate data
+  if (IsA(parsetree, CreateTableAsStmt) && !pgduckdb::ducklake_ctas_skip_data) {
+    // For CTAS, the data will be inserted by PostgreSQL's executor
+    // We don't need to do anything here as the table AM will handle INSERT operations
+    elog(DEBUG1, "CREATE TABLE AS detected - data will be populated via table AM");
+  }
 
   PG_RETURN_NULL();
 }
@@ -197,10 +256,8 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
   auto save_nestlevel = NewGUCNestLevel();
   SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
                   PGC_S_SESSION);
-  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
-                  PGC_S_SESSION);
 
-  // We only care about ducklake table drop
+  // Check if any tables were dropped
   int ret = SPI_exec(R"(
 		SELECT 1
 		FROM pg_catalog.pg_event_trigger_dropped_objects()
@@ -219,21 +276,20 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
   }
 
   /*
-   * We cannot see dropped objects in pg_class at this point,
-   * so we directly query ducklake metadata.
-   * Could be buggy.
+   * Query DuckLake metadata to find tables that need to be dropped.
+   * We can't use pg_class here since the tables are already dropped.
    */
   ret = SPI_exec(R"(
 		SELECT cmds.schema_name, cmds.object_name
 		FROM pg_catalog.pg_event_trigger_dropped_objects() cmds
 		JOIN ducklake.ducklake_table AS tbl
-		ON cmds.object_name = tbl.table_name
+		  ON cmds.object_name = tbl.table_name
 		JOIN ducklake.ducklake_schema AS schema
-		ON cmds.schema_name = schema.schema_name
-		AND tbl.schema_id = schema.schema_id
+		  ON cmds.schema_name = schema.schema_name
+		  AND tbl.schema_id = schema.schema_id
 		WHERE cmds.object_type = 'table'
-		AND tbl.end_snapshot IS NULL
-		AND schema.end_snapshot IS NULL
+		  AND tbl.end_snapshot IS NULL
+		  AND schema.end_snapshot IS NULL
 		)",
                  0);
 
@@ -241,19 +297,29 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
     elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
   }
 
-  // auto connection = pgduckdb::DuckDBManager::GetConnection(true);
-
+  // Drop corresponding DuckDB tables
   for (uint64_t proc = 0; proc < SPI_processed; ++proc) {
     HeapTuple tuple = SPI_tuptable->vals[proc];
 
     char *schema_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
     char *table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
 
-    char *drop_query =
-        psprintf("DROP TABLE %s.%s.%s", pgducklake::PGDUCKLAKE_DB_NAME,
-                 schema_name, table_name);
-    elog(DEBUG1, "drop query: %s", drop_query);
-    // pgduckdb::DuckDBQueryOrThrow(*connection, drop_query);
+    std::string drop_ddl = duckdb::StringUtil::Format(
+        "DROP TABLE IF EXISTS %s.%s.%s",
+        pgducklake::PGDUCKLAKE_DB_NAME,
+        schema_name,
+        table_name);
+
+    elog(DEBUG1, "Dropping DuckLake table: %s", drop_ddl.c_str());
+
+    const char *error_msg = nullptr;
+    int result = pgducklake::DuckLakeManager::ExecuteQuery(drop_ddl.c_str(), &error_msg);
+    if (result != 0) {
+      // Log warning but don't fail - table might already be gone
+      elog(WARNING, "failed to drop DuckLake table %s.%s: %s",
+           schema_name, table_name,
+           error_msg ? error_msg : "unknown error");
+    }
   }
 
   AtEOXact_GUC(false, save_nestlevel);

@@ -18,22 +18,8 @@ extern "C" void *GetDuckDBDatabase(void);
 
 namespace pgducklake {
 
-// Track whether DuckLake has been loaded
-static bool ducklake_loaded = false;
-
 // Thread-local storage for error messages
 static thread_local std::string last_error;
-
-void
-DuckLakeManager::EnsureLoaded() {
-	if (ducklake_loaded) {
-		return;
-	}
-
-	auto &db = GetDatabase();
-	db.LoadStaticExtension<duckdb::DucklakeExtension>();
-	ducklake_loaded = true;
-}
 
 duckdb::DuckDB &
 DuckLakeManager::GetDatabase() {
@@ -73,13 +59,14 @@ DuckLakeManager::ExecuteQuery(const char *query, const char **errmsg_out) {
 } // namespace pgducklake
 
 /*
- * C interface functions for backward compatibility or C-only callers.
- * These simply delegate to the DuckLakeManager class.
+ * C interface functions for PostgreSQL-facing code.
+ * These provide extern "C" linkage for calling from PostgreSQL translation units.
  */
 
 extern "C" void
-ducklake_ensure_loaded(void) {
-	pgducklake::DuckLakeManager::EnsureLoaded();
+ducklake_load_extension(void) {
+	auto &db = pgducklake::DuckLakeManager::GetDatabase();
+	db.LoadStaticExtension<duckdb::DucklakeExtension>();
 }
 
 extern "C" int

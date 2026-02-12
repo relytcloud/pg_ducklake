@@ -1,1 +1,3 @@
+test: initialization
+test: ddl_triggers
 test: basic
