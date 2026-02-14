@@ -1,6 +1,6 @@
 [submodule "third_party/pg_duckdb"]
 	path = third_party/pg_duckdb
-	url = https://github.com/qsliu2017/pg_duckdb.git
+	url = https://github.com/relytcloud/pg_duckdb.git
 [submodule "third_party/ducklake"]
 	path = third_party/ducklake
 	url = https://github.com/relytcloud/ducklake.git
