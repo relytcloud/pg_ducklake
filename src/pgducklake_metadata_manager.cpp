@@ -34,8 +34,9 @@ extern "C" {
 #include "utils/syscache.h"
 }
 
-// Include after PostgreSQL headers (since it also includes postgres.h)
+// Include after PostgreSQL headers (since these also include postgres.h)
 #include "pgducklake/utility/cpp_wrapper.hpp"
+#include "pgducklake/utility/unsafe_command_id_guard.hpp"
 #include <cstring>
 
 namespace pgducklake {
@@ -109,8 +110,8 @@ CreateSPIResult(const duckdb::string &query) {
   elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
 
   PostgresScopedStackReset scoped_stack_reset;
+  UnsafeCommandIdGuard command_id_guard;
 
-  // CommandId cid_before_commit = pg::GetCurrentCommandId();
   SPI_connect();
   PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -131,8 +132,6 @@ CreateSPIResult(const duckdb::string &query) {
     AtEOXact_GUC(false, save_nestlevel);
     PopActiveSnapshot();
     SPI_finish();
-    // IncrementDuckLakeCommandId(pg::GetCurrentCommandId() -
-    // cid_before_commit);
 
     // Return an empty result
     duckdb::vector<duckdb::string> names;
@@ -190,7 +189,6 @@ CreateSPIResult(const duckdb::string &query) {
   AtEOXact_GUC(false, save_nestlevel);
   PopActiveSnapshot();
   SPI_finish();
-  // IncrementDuckLakeCommandId(pg::GetCurrentCommandId() - cid_before_commit);
 
   // Create and return the MaterializedQueryResult
   duckdb::StatementProperties properties;

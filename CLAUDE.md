@@ -169,7 +169,14 @@ pg_ducklake.so
 
 4. **Deferred Static Extension Loading**: During `_PG_init()`, the metadata manager is registered eagerly, and a callback is registered via pg_duckdb's `RegisterDuckdbLoadExtension()`. The actual `LoadStaticExtension<DucklakeExtension>()` call is deferred until pg_duckdb's `DuckDBManager::Initialize()` runs, ensuring the DuckDB instance is fully configured before extensions are loaded.
 
-5. **Vendored Type Conversion**: Rather than linking against pg_duckdb's type conversion utilities (which creates dependency cascades and header conflicts), we vendor minimal type conversion code. The vendored utilities in `src/pgducklake_pg_types.cpp` provide:
+5. **Mixed-Write Detection Bypass (`UnsafeCommandIdGuard`)**: pg_duckdb prevents writing to both PostgreSQL and DuckDB tables in the same transaction by tracking `next_expected_command_id`. DuckLake metadata operations (SPI writes to `ducklake_*` tables, DDL via `raw_query()`) falsely trigger this detection because they advance PostgreSQL's command counter as a side effect. The `UnsafeCommandIdGuard` RAII class in `include/pgducklake/utility/unsafe_command_id_guard.hpp` synchronizes pg_duckdb's counter with PostgreSQL's current command ID on construction and destruction, making internal metadata writes invisible to the check. Used in:
+   - `CreateSPIResult()` in `src/pgducklake_metadata_manager.cpp` (metadata query execution)
+   - `ducklake_create_table_trigger()` in `src/pgducklake_ddl.cpp` (DDL via `raw_query()`)
+   - `ducklake_drop_trigger()` in `src/pgducklake_ddl.cpp` (DDL via `raw_query()`)
+
+   The guard includes `postgres.h` and `access/xact.h`, so it must be included AFTER DuckDB/DuckLake headers (same positioning as `cpp_wrapper.hpp`).
+
+6. **Vendored Type Conversion**: Rather than linking against pg_duckdb's type conversion utilities (which creates dependency cascades and header conflicts), we vendor minimal type conversion code. The vendored utilities in `src/pgducklake_pg_types.cpp` provide:
    - `DetoastPostgresDatum()` - Detoasts PostgreSQL varlena values
    - `ConvertPostgresToDuckValue()` - Converts PostgreSQL Datum to DuckDB Vector
    - `ConvertPostgresToDuckColumnType()` - Maps PostgreSQL types to DuckDB LogicalTypes
@@ -198,6 +205,7 @@ pg_ducklake.so
 - `include/pgducklake/pgducklake_pg_types.hpp` - Type conversion utilities (vendored from pg_duckdb)
 - `include/pgducklake/pgducklake_defs.hpp` - Shared constants
 - `include/pgducklake/utility/cpp_wrapper.hpp` - PostgreSQL/C++ interop utilities
+- `include/pgducklake/utility/unsafe_command_id_guard.hpp` - RAII guard to suppress pg_duckdb mixed-write detection for metadata operations
 
 ### Configuration
 - `pg_ducklake.control` - Extension metadata (requires='pg_duckdb')
@@ -229,6 +237,12 @@ pg_ducklake.so
 - Callbacks are stored in a static `std::vector<DuckDBLoadExtension>` and invoked after the DuckDB instance is fully configured
 - pg_ducklake uses this to defer `LoadStaticExtension<DucklakeExtension>()` until the DuckDB instance is ready
 - Added as ~15 lines: a typedef, a vector, a registration function, and a for-loop in `Initialize()`
+
+**`DuckdbUnsafeGetNextExpectedCommandId()` / `DuckdbUnsafeSetNextExpectedCommandId(uint32_t)`** (in `src/pgduckdb_xact.cpp`):
+- Exposes get/set access to pg_duckdb's `next_expected_command_id` static variable
+- Used by pg_ducklake's `UnsafeCommandIdGuard` to suppress false mixed-write detection during DuckLake metadata operations
+- Named "Unsafe" because misuse can mask genuine mixed-write violations
+- Added as ~20 lines: two `extern "C"` functions with `visibility("default")` after the `pgduckdb` namespace
 
 ### How to Add New Hooks
 
@@ -402,6 +416,32 @@ The `GenerateCreateTableDDL()` function:
 
 This approach avoids dependency on pg_duckdb's internal table definition parsing and keeps the code simple and maintainable.
 
+### Mixed-Write Detection and `UnsafeCommandIdGuard`
+
+pg_duckdb prevents writing to both PostgreSQL and DuckDB tables within the same transaction block. It does this by tracking `next_expected_command_id` in `pgduckdb_xact.cpp`: each DuckDB write claims a PostgreSQL command ID, and if the counter advances beyond the expected value, it means PostgreSQL also wrote (triggering the error).
+
+**The problem for pg_ducklake:** DuckLake metadata operations inherently write to both systems:
+- DDL triggers: PostgreSQL creates the table (advancing the command counter), then the trigger calls `duckdb.raw_query()` to create the corresponding DuckDB table
+- Metadata manager: SPI executes INSERT/UPDATE/DELETE on `ducklake_*` PostgreSQL tables as part of DuckDB transactions
+
+These are logically part of DuckDB operations, but pg_duckdb sees them as PostgreSQL writes.
+
+**The solution:** `UnsafeCommandIdGuard` (in `include/pgducklake/utility/unsafe_command_id_guard.hpp`):
+- **Constructor**: Sets `next_expected_command_id = GetCurrentCommandId(false)`, absorbing any prior PostgreSQL writes (e.g., DDL that advanced the counter before the trigger fires)
+- **Destructor**: Does the same, absorbing any writes during the guard's scope (e.g., SPI metadata INSERTs/UPDATEs)
+- **Error safety**: If a PostgreSQL `ereport(ERROR)` longjmps past the destructor, pg_duckdb's transaction abort handler (`XACT_EVENT_ABORT`) resets `next_expected_command_id = FirstCommandId`, so no stale state leaks
+
+**Usage pattern:**
+```cpp
+{
+    pgducklake::UnsafeCommandIdGuard command_id_guard;
+    // PostgreSQL writes here won't trigger mixed-write detection
+    ExecuteDuckDBQuery(ddl, &error_msg);
+}
+```
+
+The hooks (`DuckdbUnsafeGetNextExpectedCommandId/Set`) are exported from pg_duckdb's `pgduckdb_xact.cpp` as `extern "C"` with `visibility("default")`, following the same pattern as `RegisterDuckdbLoadExtension`.
+
 ### Vendored Type Conversion
 
 The metadata manager needs to convert PostgreSQL data to DuckDB format when executing metadata queries through SPI. Rather than depending on pg_duckdb's type conversion utilities (which would create build complexity and dependency cascades), we vendor minimal type conversion code.
@@ -500,10 +540,13 @@ pg_duckdb exports a minimal C interface:
 - `GetDuckDBDatabase()` - Returns `duckdb::DuckDB*` as `void*`
 - `RegisterDuckdbTableAm()` - Registers custom table access methods
 - `RegisterDuckdbLoadExtension()` - Registers a callback to be invoked when a new DuckDB backend is created (used for deferred extension loading)
+- `DuckdbUnsafeGetNextExpectedCommandId()` - Returns pg_duckdb's `next_expected_command_id` for mixed-write detection bypass
+- `DuckdbUnsafeSetNextExpectedCommandId(uint32_t)` - Sets pg_duckdb's `next_expected_command_id`
 
 All C++ symbols in the `pgduckdb::` namespace are hidden (`-fvisibility=hidden`). This extension:
 1. Imports `GetDuckDBDatabase()` in the DuckDB-facing translation unit (`src/pgducklake_duckdb.cpp`)
 2. Declares `RegisterDuckdbTableAm()` locally in the one file that needs it (`src/pgducklake_table_am.cpp`)
 3. Declares `RegisterDuckdbLoadExtension()` in `src/pgducklake.cpp` to register the deferred loader
-4. Wraps `GetDuckDBDatabase()` with `DuckLakeManager` to provide type-safe, high-level APIs
-5. Never exposes raw pg_duckdb symbols via headers
+4. Declares `DuckdbUnsafeGetNextExpectedCommandId/Set` in `include/pgducklake/utility/unsafe_command_id_guard.hpp` for the mixed-write guard
+5. Wraps `GetDuckDBDatabase()` with `DuckLakeManager` to provide type-safe, high-level APIs
+6. Never exposes raw pg_duckdb symbols via headers

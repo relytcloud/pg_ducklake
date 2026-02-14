@@ -52,14 +52,6 @@ static Oid GetRawQueryFuncOid() {
   return cached;
 }
 
-static inline void DuckdbRecycleDdb() {
-  List *funcname = list_make2(makeString(pstrdup("duckdb")),
-                              makeString(pstrdup("recycle_ddb")));
-  Oid funcoid = LookupFuncName(funcname, 0, NULL, false);
-  list_free(funcname);
-  OidFunctionCall0(funcoid);
-}
-
 /*
  * Call duckdb.raw_query()
  */
@@ -125,7 +117,6 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
   ExecuteDuckDBQuery("SELECT 1", NULL);
   
   // Recycle DuckDB instance
-  DuckdbRecycleDdb();
 
   PG_RETURN_VOID();
 }
