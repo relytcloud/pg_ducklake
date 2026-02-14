@@ -26,19 +26,20 @@ extern "C" {
 }
 
 extern "C" void ducklake_init_extension(void) {
-  duckdb::DuckLakeMetadataManager::Register(
-      "pgducklake", pgducklake::PgDuckLakeMetadataManager::Create);
 }
 
 extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
-  auto *context = static_cast<duckdb::ClientContext *>(context_ptr);
   db->LoadStaticExtension<duckdb::DucklakeExtension>();
 
-  duckdb::string query = "ATTACH 'ducklake:pgducklake:' AS pgducklake "
+  auto context = static_cast<duckdb::ClientContext *>(context_ptr);
+
+  duckdb::DuckLakeMetadataManager::Register(
+      "__pgducklake", pgducklake::PgDuckLakeMetadataManager::Create);
+  duckdb::string query = "ATTACH 'ducklake:__pgducklake:' AS pgducklake "
                          "(METADATA_SCHEMA 'ducklake'";
-  if (creating_extension) {
     auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+    if (creating_extension) {
     try {
       std::filesystem::create_directory(data_path);
     } catch (const std::filesystem::filesystem_error &e) {
@@ -47,9 +48,9 @@ extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
                errmsg("failed to create DuckLake data directory \"%s\": %s",
                       data_path.c_str(), e.what())));
     }
+    }
 
     query += ", DATA_PATH '" + data_path + "'";
-  }
   query += ")";
 
   elog(DEBUG1, "Executing query: %s", query.c_str());
