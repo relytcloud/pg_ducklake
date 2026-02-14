@@ -128,21 +128,13 @@ static duckdb::LogicalType ConvertPostgresToBaseDuckType(Oid typid) {
 }
 
 duckdb::LogicalType ConvertPostgresToDuckColumnType(Form_pg_attribute &attribute) {
-  auto base_type = ConvertPostgresToBaseDuckType(attribute->atttypid);
-
-  if (base_type.id() == duckdb::LogicalTypeId::SQLNULL) {
-    // Unsupported type
-    elog(WARNING, "Unsupported PostgreSQL type OID: %u, using VARCHAR", attribute->atttypid);
-    return duckdb::LogicalType::VARCHAR;
-  }
-
-  // Handle array types
+  // Check array types first: array OIDs (e.g. 3807 for jsonb[]) are not in the
+  // base-type switch, but their element type (e.g. 3802 for jsonb) is.
   Oid elem_type = get_element_type(attribute->atttypid);
   if (elem_type != InvalidOid) {
-    // This is an array type
     auto elem_base_type = ConvertPostgresToBaseDuckType(elem_type);
     if (elem_base_type.id() == duckdb::LogicalTypeId::SQLNULL) {
-      elog(WARNING, "Unsupported array element type OID: %u", elem_type);
+      elog(WARNING, "Unsupported array element type OID: %u, using VARCHAR", elem_type);
       return duckdb::LogicalType::VARCHAR;
     }
 
@@ -157,6 +149,13 @@ duckdb::LogicalType ConvertPostgresToDuckColumnType(Form_pg_attribute &attribute
       list_type = duckdb::LogicalType::LIST(list_type);
     }
     return list_type;
+  }
+
+  // Not an array — try direct type conversion
+  auto base_type = ConvertPostgresToBaseDuckType(attribute->atttypid);
+  if (base_type.id() == duckdb::LogicalTypeId::SQLNULL) {
+    elog(WARNING, "Unsupported PostgreSQL type OID: %u, using VARCHAR", attribute->atttypid);
+    return duckdb::LogicalType::VARCHAR;
   }
 
   return base_type;

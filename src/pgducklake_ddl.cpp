@@ -73,6 +73,14 @@ int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   volatile int result = 0;
   MemoryContext saved_context = CurrentMemoryContext;
 
+  // Suppress NOTICE messages from duckdb.raw_query() which unconditionally
+  // emits "result: ..." via elog(NOTICE).
+  //
+  // FIXME: should we modify pg_duckdb?
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("client_min_messages", "warning", PGC_USERSET,
+                  PGC_S_SESSION);
+
   PG_TRY();
   {
     DuckdbRawQuery(query);
@@ -91,6 +99,8 @@ int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
     result = 1;
   }
   PG_END_TRY();
+
+  AtEOXact_GUC(false, save_nestlevel);
 
   return result;
 }

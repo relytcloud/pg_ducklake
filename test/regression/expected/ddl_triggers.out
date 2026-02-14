@@ -1,8 +1,8 @@
 -- Test DDL event triggers
 -- Verify event triggers were created
 SELECT evtname FROM pg_event_trigger WHERE evtname LIKE 'ducklake%' ORDER BY evtname;
-            evtname
----------------------------------
+            evtname            
+-------------------------------
  ducklake_create_table_trigger
  ducklake_drop_trigger
 (2 rows)
@@ -18,7 +18,7 @@ SELECT relname, am.amname
 FROM pg_class c
 JOIN pg_am am ON c.relam = am.oid
 WHERE c.relname = 'products';
- relname  |  amname
+ relname  |  amname  
 ----------+----------
  products | ducklake
 (1 row)
@@ -28,7 +28,7 @@ INSERT INTO products VALUES (1, 'Widget', 19.99);
 INSERT INTO products VALUES (2, 'Gadget', 29.99);
 -- Query the data
 SELECT * FROM products ORDER BY product_id;
- product_id | product_name | price
+ product_id | product_name | price 
 ------------+--------------+-------
           1 | Widget       | 19.99
           2 | Gadget       | 29.99
@@ -43,7 +43,7 @@ CREATE TABLE orders (
 ) USING ducklake;
 -- Verify second table
 SELECT relname FROM pg_class WHERE relname = 'orders' AND relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake');
- relname
+ relname 
 ---------
  orders
 (1 row)
@@ -52,7 +52,7 @@ SELECT relname FROM pg_class WHERE relname = 'orders' AND relam = (SELECT oid FR
 DROP TABLE products;
 -- Verify it's gone from PostgreSQL
 SELECT relname FROM pg_class WHERE relname = 'products';
- relname
+ relname 
 ---------
 (0 rows)
 
