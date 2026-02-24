@@ -1,0 +1,20 @@
+-- Test ducklake.set_option() procedure
+
+-- 1. Set a global option
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+
+-- 2. Set a table-scoped option
+CREATE TABLE options_test (a int) USING ducklake;
+
+CALL ducklake.set_option('data_inlining_row_limit', 50, 'options_test'::regclass);
+
+-- 3. Verify data insertion works with inlining enabled
+INSERT INTO options_test VALUES (1), (2), (3);
+SELECT * FROM options_test ORDER BY a;
+
+-- 4. Test invalid option name
+CALL ducklake.set_option('nonexistent_option', 42);
+
+-- Cleanup
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+DROP TABLE options_test;

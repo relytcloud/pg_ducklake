@@ -5,3 +5,5 @@ test: temp_table
 test: insert_unnest
 test: ctas
 test: gucs
+test: options
+test: data_inlining_row_limit

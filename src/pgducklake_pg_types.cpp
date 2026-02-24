@@ -7,6 +7,7 @@
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/uuid.hpp"
+#include "duckdb/common/types/vector.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -166,6 +167,46 @@ duckdb::LogicalType ConvertPostgresToDuckColumnType(Form_pg_attribute &attribute
 //------------------------------------------------------------------------------
 
 void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &result, uint64_t offset) {
+  // Handle array types: decompose PostgreSQL arrays into DuckDB LIST values
+  Oid elem_type = get_element_type(attr_type);
+  if (elem_type != InvalidOid) {
+    ArrayType *arr = DatumGetArrayTypeP(value);
+    int nelems;
+    Datum *elems;
+    bool *nulls;
+    int16 elemlen;
+    bool elembyval;
+    char elemalign;
+
+    get_typlenbyvalalign(elem_type, &elemlen, &elembyval, &elemalign);
+    deconstruct_array(arr, elem_type, elemlen, elembyval, elemalign, &elems,
+                      &nulls, &nelems);
+
+    auto &list_entry = duckdb::ListVector::GetData(result)[offset];
+    auto current_size = duckdb::ListVector::GetListSize(result);
+    list_entry.offset = current_size;
+    list_entry.length = nelems;
+
+    duckdb::ListVector::Reserve(result, current_size + nelems);
+    auto &child = duckdb::ListVector::GetEntry(result);
+
+    for (int i = 0; i < nelems; i++) {
+      if (nulls && nulls[i]) {
+        duckdb::FlatVector::SetNull(child, current_size + i, true);
+      } else {
+        ConvertPostgresToDuckValue(elem_type, elems[i], child,
+                                   current_size + i);
+      }
+    }
+
+    duckdb::ListVector::SetListSize(result, current_size + nelems);
+
+    pfree(elems);
+    if (nulls)
+      pfree(nulls);
+    return;
+  }
+
   switch (attr_type) {
   case BOOLOID:
     duckdb::FlatVector::GetData<bool>(result)[offset] = DatumGetBool(value);
