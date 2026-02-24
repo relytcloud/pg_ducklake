@@ -328,40 +328,74 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
  * Returns the number of files cleaned up.
  */
 DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
-  // auto connection = pgduckdb::DuckDBManager::GetConnection();
+  std::string query;
 
-  // char *cleanup_query;
   if (PG_ARGISNULL(0)) {
-    /* Clean up all scheduled files */
-    elog(INFO, "Cleaning up all scheduled files");
-    // cleanup_query =
-    //     psprintf("SELECT count(*) FROM ducklake_cleanup_old_files('%s', "
-    //              "cleanup_all => true)",
-    //              pgducklake::PGDUCKLAKE_DB_NAME);
+    query = duckdb::StringUtil::Format(
+        "SELECT count(*) FROM ducklake_cleanup_old_files('%s', "
+        "cleanup_all => true)",
+        pgducklake::PGDUCKLAKE_DB_NAME);
   } else {
-    /* Convert interval to string using PostgreSQL's interval_out */
     Interval *interval = PG_GETARG_INTERVAL_P(0);
     char *interval_str = DatumGetCString(
         DirectFunctionCall1(interval_out, IntervalPGetDatum(interval)));
 
-    /* Clean up files older than specified interval */
-    // cleanup_query =
-    //     psprintf("SELECT count(*) FROM ducklake_cleanup_old_files('%s', "
-    //              "older_than => now() - INTERVAL '%s')",
-    //              pgducklake::PGDUCKLAKE_DB_NAME, interval_str);
-    (void)interval_str; // Suppress unused warning
+    query = duckdb::StringUtil::Format(
+        "SELECT count(*) FROM ducklake_cleanup_old_files('%s', "
+        "older_than => now() - INTERVAL '%s')",
+        pgducklake::PGDUCKLAKE_DB_NAME, interval_str);
   }
 
-  // auto result = pgduckdb::DuckDBQueryOrThrow(*connection, cleanup_query);
-  // auto chunk = result->Fetch();
+  const char *error_msg = nullptr;
+  int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to clean up old files: %s",
+                           error_msg ? error_msg : "unknown error")));
+  }
 
-  // int64_t files_cleaned = 0;
-  // if (chunk && chunk->size() > 0) {
-  //   files_cleaned = chunk->GetValue(0, 0).GetValue<int64_t>();
-  // }
-
-  // PG_RETURN_INT64(files_cleaned);
+  /* TODO: parse result count from DuckDB query result */
   PG_RETURN_INT64(0);
+}
+
+DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
+  auto query = duckdb::StringUtil::Format(
+      "CALL ducklake_flush_inlined_data(%s",
+      duckdb::KeywordHelper::WriteQuoted(pgducklake::PGDUCKLAKE_DB_NAME)
+          .c_str());
+
+  if (PG_NARGS() > 0 && !PG_ARGISNULL(0)) {
+    Oid relid = PG_GETARG_OID(0);
+    if (!OidIsValid(relid)) {
+      elog(ERROR, "invalid table OID");
+    }
+
+    char *table_name = get_rel_name(relid);
+    if (!table_name) {
+      elog(ERROR, "Could not find relation with OID %u", relid);
+    }
+    char *schema_name = get_namespace_name(get_rel_namespace(relid));
+    if (!schema_name) {
+      elog(ERROR, "Could not find namespace for relation with OID %u", relid);
+    }
+
+    query +=
+        ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
+    query +=
+        ", schema_name => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
+  }
+
+  query += ")";
+
+  const char *error_msg = nullptr;
+  int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to flush inlined data: %s",
+                           error_msg ? error_msg : "unknown error")));
+  }
+
+  PG_RETURN_VOID();
 }
 
 DECLARE_PG_FUNCTION(ducklake_set_option) {
@@ -450,7 +484,13 @@ DECLARE_PG_FUNCTION(ducklake_set_option) {
 
   elog(DEBUG2, "[PGDuckDB] Executing set_option: %s", query.c_str());
 
-  // pgduckdb::DuckDBQueryOrThrow(query);
+  const char *error_msg = nullptr;
+  int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to set DuckLake option: %s",
+                           error_msg ? error_msg : "unknown error")));
+  }
 
   PG_RETURN_VOID();
 }

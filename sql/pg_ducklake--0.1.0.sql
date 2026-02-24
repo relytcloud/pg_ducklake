@@ -46,3 +46,39 @@ BEGIN
     PERFORM ducklake._initialize();
 END
 $$;
+
+-- set_option procedure
+CREATE PROCEDURE ducklake.set_option(
+    option_name text,
+    value "any",
+    scope regclass DEFAULT NULL
+)
+AS 'MODULE_PATHNAME', 'ducklake_set_option'
+LANGUAGE C;
+
+-- options function (DuckDB-only — pg_duckdb routes the query to DuckDB)
+CREATE FUNCTION ducklake.options(
+    OUT option_name text,
+    OUT description text,
+    OUT value text,
+    OUT scope text,
+    OUT scope_entry text
+)
+RETURNS SETOF record
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- flush_inlined_data procedure
+CREATE PROCEDURE ducklake.flush_inlined_data(
+    scope regclass DEFAULT NULL
+)
+AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
+LANGUAGE C;
+
+-- cleanup_old_files function
+CREATE FUNCTION ducklake.ducklake_cleanup_old_files(
+    older_than interval DEFAULT NULL
+)
+RETURNS bigint
+AS 'MODULE_PATHNAME', 'ducklake_cleanup_old_files'
+LANGUAGE C;
