@@ -1,0 +1,143 @@
+name: CI
+on:
+  push:
+    branches: ["main", "alpha-1"]
+    tags: ["v*"]
+  pull_request:
+
+# Cancel in-progress jobs if a new commit is pushed to the same branch (except for main)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !contains(github.ref, 'main') }}
+
+jobs:
+  build-and-test:
+    name: "Build and test"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: REL_14_STABLE
+            type: release
+          - version: REL_15_STABLE
+            type: release
+          - version: REL_16_STABLE
+            type: release
+          - version: REL_17_STABLE
+            type: release
+          - version: REL_18_STABLE
+            type: release
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Test details
+        run: echo Build and test pg_ducklake with PostgreSQL ${{ matrix.version }} branch
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+          sudo apt-get install -y build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev \
+            libssl-dev libxml2-utils xsltproc pkg-config libc++-dev libc++abi-dev libglib2.0-dev libtinfo6 cmake \
+            libstdc++-12-dev ninja-build libcurl4-openssl-dev
+          echo "${PWD}/postgres/inst/bin" >> $GITHUB_PATH
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ubuntu-24.04-${{ matrix.version }}
+          create-symlink: true
+
+      - name: Checkout pg_ducklake extension code
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          path: pg_ducklake
+
+      - name: Checkout PostgreSQL code
+        run: |
+          rm -rf postgres
+          git clone --branch ${{ matrix.version }} --single-branch --depth 1 https://github.com/postgres/postgres.git
+
+      - name: Compute Version SHAs
+        id: versions
+        run: |
+          pushd pg_ducklake/third_party/pg_duckdb/third_party/duckdb
+          DUCKDB_SHA=`git rev-parse HEAD`
+          echo "duckdb_sha=${DUCKDB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Got DUCKDB_SHA='${DUCKDB_SHA}'"
+          popd
+          pushd pg_ducklake/third_party/ducklake
+          DUCKLAKE_SHA=`git rev-parse HEAD`
+          echo "ducklake_sha=${DUCKLAKE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Got DUCKLAKE_SHA='${DUCKLAKE_SHA}'"
+          popd
+          pushd postgres
+          POSTGRES_SHA=`git rev-parse HEAD`
+          echo "postgres_sha=${POSTGRES_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Got POSTGRES_SHA='${POSTGRES_SHA}'"
+
+      - name: Setup PG build cache
+        id: cache-pg-build
+        uses: actions/cache@v4
+        with:
+          path: postgres/inst
+          key: pg-build-ubuntu-24.04-${{ steps.versions.outputs.postgres_sha }}
+
+      - name: Build PostgreSQL code
+        if: steps.cache-pg-build.outputs.cache-hit != 'true'
+        working-directory: postgres
+        run: |
+          ./configure --prefix=$PWD/inst/ --enable-cassert --enable-debug --with-openssl --with-icu --with-libxml --with-lz4
+          make -j8 install
+
+      - name: Setup DuckDB build cache
+        id: cache-duckdb-build
+        uses: actions/cache@v4
+        with:
+          path: pg_ducklake/third_party/pg_duckdb/third_party/duckdb/build/
+          key: duckdb-build-ubuntu-24.04-${{ steps.versions.outputs.duckdb_sha }}-ninja
+
+      - name: Setup DuckLake build cache
+        id: cache-ducklake-build
+        uses: actions/cache@v4
+        with:
+          path: pg_ducklake/third_party/ducklake/build/
+          key: ducklake-build-ubuntu-24.04-${{ steps.versions.outputs.ducklake_sha }}-${{ steps.versions.outputs.duckdb_sha }}
+
+      - name: Build and install pg_duckdb extension
+        id: build-pg-duckdb
+        working-directory: pg_ducklake
+        run: |
+          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
+          make -C third_party/pg_duckdb DUCKDB_BUILD_TYPE=${{ matrix.type }} -j8 install
+
+      - name: Build DuckLake static library
+        id: build-ducklake
+        working-directory: pg_ducklake
+        run: |
+          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
+          make ducklake DUCKDB_BUILD_TYPE=${{ matrix.type }}
+
+      - name: Build pg_ducklake extension
+        id: build-pg-ducklake
+        working-directory: pg_ducklake
+        run: |
+          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
+          make DUCKDB_BUILD_TYPE=${{ matrix.type }} -j8 install
+
+      - name: Run regression tests
+        id: check-regression
+        working-directory: pg_ducklake
+        run: |
+          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
+          make check-regression DUCKDB_BUILD_TYPE=${{ matrix.type }}
+
+      - name: Print regression.diffs if regression tests failed
+        if: failure() && steps.check-regression.outcome == 'failure'
+        run: cat pg_ducklake/test/regression/regression.diffs && false
+
+      - name: Print postmaster.log if regression tests failed
+        if: failure() && steps.check-regression.outcome == 'failure'
+        run: cat pg_ducklake/test/regression/tmp_check/log/postmaster.log
