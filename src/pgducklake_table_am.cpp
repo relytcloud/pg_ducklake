@@ -145,7 +145,9 @@ duckdb_index_delete_tuples(Relation /*rel*/, TM_IndexDeleteOp * /*delstate*/) {
 static void duckdb_tuple_insert(Relation /*relation*/,
                                 TupleTableSlot * /*slot*/, CommandId /*cid*/,
                                 int /*options*/, BulkInsertState /*bistate*/) {
-  NOT_IMPLEMENTED();
+  /* No-op: CTAS data population is handled by the DDL event trigger via DuckDB.
+   * Normal INSERTs are routed through pg_duckdb's execution path, not the table
+   * AM. */
 }
 
 static void duckdb_tuple_insert_speculative(Relation /*relation*/,
@@ -167,7 +169,7 @@ static void duckdb_multi_insert(Relation /*relation*/,
                                 TupleTableSlot ** /*slots*/, int /*ntuples*/,
                                 CommandId /*cid*/, int /*options*/,
                                 BulkInsertState /*bistate*/) {
-  NOT_IMPLEMENTED();
+  /* No-op: see duckdb_tuple_insert */
 }
 
 static TM_Result duckdb_tuple_delete(Relation /*relation*/, ItemPointer /*tid*/,
@@ -212,7 +214,7 @@ static TM_Result duckdb_tuple_lock(Relation /*relation*/, ItemPointer /*tid*/,
 }
 
 static void duckdb_finish_bulk_insert(Relation /*relation*/, int /*options*/) {
-  NOT_IMPLEMENTED();
+  /* No-op */
 }
 
 /* ------------------------------------------------------------------------

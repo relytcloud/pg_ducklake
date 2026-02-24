@@ -217,13 +217,26 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
                            error_msg ? error_msg : "unknown error")));
   }
 
-  // Handle CREATE TABLE AS (CTAS) - populate data
+  // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
   if (IsA(parsetree, CreateTableAsStmt) && !pgduckdb::ducklake_ctas_skip_data) {
-    // For CTAS, the data will be inserted by PostgreSQL's executor
-    // We don't need to do anything here as the table AM will handle INSERT
-    // operations
-    elog(DEBUG1,
-         "CREATE TABLE AS detected - data will be populated via table AM");
+    auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
+    auto ctas_query = (Query *)ctas_stmt->query;
+    const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
+    std::string insert_string = std::string("INSERT INTO ") +
+                                pgduckdb_relation_name(relid) + " " +
+                                ctas_query_string;
+
+    elog(DEBUG1, "CTAS data population: %s", insert_string.c_str());
+
+    const char *insert_error_msg = nullptr;
+    int insert_result =
+        ExecuteDuckDBQuery(insert_string.c_str(), &insert_error_msg);
+    if (insert_result != 0) {
+      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                      errmsg("failed to populate DuckLake table via CTAS: %s",
+                             insert_error_msg ? insert_error_msg
+                                              : "unknown error")));
+    }
   }
 
   PG_RETURN_NULL();

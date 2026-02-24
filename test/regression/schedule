@@ -3,3 +3,4 @@ test: ddl_triggers
 test: basic
 test: temp_table
 test: insert_unnest
+test: ctas
