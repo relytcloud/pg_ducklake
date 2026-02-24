@@ -71,6 +71,9 @@ endif
 # ---------------------------------------------------------------------------
 include Makefile.global
 
+installcheck: all install
+	$(MAKE) -C test/regression check-regression
+
 check-regression:
 	$(MAKE) -C test/regression check-regression
 

@@ -35,8 +35,8 @@ extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto context = static_cast<duckdb::ClientContext *>(context_ptr);
 
   duckdb::DuckLakeMetadataManager::Register(
-      "__pgducklake", pgducklake::PgDuckLakeMetadataManager::Create);
-  duckdb::string query = "ATTACH 'ducklake:__pgducklake:' AS pgducklake "
+      "pgducklake", pgducklake::PgDuckLakeMetadataManager::Create);
+  duckdb::string query = "ATTACH 'ducklake:pgducklake:' AS pgducklake "
                          "(METADATA_SCHEMA 'ducklake'";
     auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
     if (creating_extension) {

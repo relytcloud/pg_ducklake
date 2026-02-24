@@ -41,7 +41,7 @@ jobs:
           sudo apt-get install -y build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev \
             libssl-dev libxml2-utils xsltproc pkg-config libc++-dev libc++abi-dev libglib2.0-dev libtinfo6 cmake \
             libstdc++-12-dev ninja-build libcurl4-openssl-dev
-          echo "${PWD}/postgres/inst/bin" >> $GITHUB_PATH
+          echo "${PWD}/postgres/inst/bin:$PATH" >> $GITHUB_PATH
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -106,38 +106,20 @@ jobs:
           path: pg_ducklake/third_party/ducklake/build/
           key: ducklake-build-ubuntu-24.04-${{ steps.versions.outputs.ducklake_sha }}-${{ steps.versions.outputs.duckdb_sha }}
 
-      - name: Build and install pg_duckdb extension
-        id: build-pg-duckdb
+      - name: Build pg_duckdb and pg_ducklake
+        id: build
         working-directory: pg_ducklake
-        run: |
-          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
-          make -C third_party/pg_duckdb DUCKDB_BUILD_TYPE=${{ matrix.type }} -j8 install
+        run: ERROR_ON_WARNING=1 make -j8 install_pg_duckdb install DUCKDB_BUILD_TYPE=${{ matrix.type }}
 
-      - name: Build DuckLake static library
-        id: build-ducklake
+      - name: Run make installcheck
+        id: installcheck
         working-directory: pg_ducklake
-        run: |
-          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
-          make ducklake DUCKDB_BUILD_TYPE=${{ matrix.type }}
-
-      - name: Build pg_ducklake extension
-        id: build-pg-ducklake
-        working-directory: pg_ducklake
-        run: |
-          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
-          make DUCKDB_BUILD_TYPE=${{ matrix.type }} -j8 install
-
-      - name: Run regression tests
-        id: check-regression
-        working-directory: pg_ducklake
-        run: |
-          export PG_CONFIG=$PWD/../postgres/inst/bin/pg_config
-          make check-regression DUCKDB_BUILD_TYPE=${{ matrix.type }}
+        run: make installcheck DUCKDB_BUILD_TYPE=${{ matrix.type }}
 
       - name: Print regression.diffs if regression tests failed
-        if: failure() && steps.check-regression.outcome == 'failure'
+        if: failure() && steps.installcheck.outcome == 'failure'
         run: cat pg_ducklake/test/regression/regression.diffs && false
 
       - name: Print postmaster.log if regression tests failed
-        if: failure() && steps.check-regression.outcome == 'failure'
+        if: failure() && steps.installcheck.outcome == 'failure'
         run: cat pg_ducklake/test/regression/tmp_check/log/postmaster.log

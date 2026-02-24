@@ -34,22 +34,19 @@ This project chose the embedded approach because:
 git submodule update --init --recursive
 
 # Build and install pg_duckdb first (required dependency)
-make -C third_party/pg_duckdb PG_CONFIG=$PWD/pg-17/bin/pg_config install -j4
+make install_pg_duckdb PG_CONFIG=$PWD/pg-17/bin/pg_config -j4
 
-# Build DuckLake static library
-make ducklake PG_CONFIG=$PWD/pg-17/bin/pg_config
-
-# Build the extension
-make PG_CONFIG=$PWD/pg-17/bin/pg_config
-
-# Install the extension
-make install PG_CONFIG=$PWD/pg-17/bin/pg_config
+# Build and install pg_ducklake (builds DuckLake static library automatically)
+make install PG_CONFIG=$PWD/pg-17/bin/pg_config -j4
 ```
 
 ### Testing
 
 ```bash
-# Run all regression tests
+# Build, install, and run all regression tests
+make installcheck PG_CONFIG=$PWD/pg-17/bin/pg_config
+
+# Run regression tests only (skip build/install)
 make check-regression PG_CONFIG=$PWD/pg-17/bin/pg_config
 
 # Run a single test
