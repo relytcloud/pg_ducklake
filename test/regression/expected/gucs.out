@@ -1,0 +1,56 @@
+-- Test DuckLake GUCs
+SHOW ducklake.default_table_path;
+ ducklake.default_table_path 
+-----------------------------
+ 
+(1 row)
+
+SHOW ducklake.vacuum_delete_threshold;
+ ducklake.vacuum_delete_threshold 
+----------------------------------
+ 0.1
+(1 row)
+
+SHOW ducklake.as_of_timestamp;
+ ducklake.as_of_timestamp 
+--------------------------
+ 
+(1 row)
+
+SHOW ducklake.enable_inline_bypass;
+ ducklake.enable_inline_bypass 
+-------------------------------
+ on
+(1 row)
+
+-- Test setting GUCs
+SET ducklake.default_table_path = '/tmp/test_path';
+SHOW ducklake.default_table_path;
+ ducklake.default_table_path 
+-----------------------------
+ /tmp/test_path
+(1 row)
+
+RESET ducklake.default_table_path;
+SHOW ducklake.default_table_path;
+ ducklake.default_table_path 
+-----------------------------
+ 
+(1 row)
+
+SET ducklake.vacuum_delete_threshold = 0.5;
+SHOW ducklake.vacuum_delete_threshold;
+ ducklake.vacuum_delete_threshold 
+----------------------------------
+ 0.5
+(1 row)
+
+RESET ducklake.vacuum_delete_threshold;
+SET ducklake.enable_inline_bypass = false;
+SHOW ducklake.enable_inline_bypass;
+ ducklake.enable_inline_bypass 
+-------------------------------
+ off
+(1 row)
+
+RESET ducklake.enable_inline_bypass;

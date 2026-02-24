@@ -1,4 +1,5 @@
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
@@ -33,9 +34,6 @@ extern "C" {
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
 
-namespace pgduckdb {
-bool ducklake_ctas_skip_data = false;
-} // namespace pgduckdb
 
 /*
  * Look up the OID of duckdb.raw_query(text), cached per backend.
@@ -218,7 +216,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   }
 
   // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
-  if (IsA(parsetree, CreateTableAsStmt) && !pgduckdb::ducklake_ctas_skip_data) {
+  if (IsA(parsetree, CreateTableAsStmt) && !pg_ducklake::ctas_skip_data) {
     auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
     auto ctas_query = (Query *)ctas_stmt->query;
     const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);

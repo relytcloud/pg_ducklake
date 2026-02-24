@@ -1,3 +1,5 @@
+#include "pgducklake/pgducklake_guc.hpp"
+
 extern "C" {
 #include "postgres.h"
 
@@ -27,6 +29,8 @@ void _PG_init(void) {
   ducklake_init_extension();
   // Register callback for deferred static extension loading
   RegisterDuckdbLoadExtension(ducklake_load_extension);
+  // Register DuckLake GUCs
+  pg_ducklake::RegisterGUCs();
 }
 
 } // extern "C"

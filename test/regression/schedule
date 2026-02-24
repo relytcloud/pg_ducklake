@@ -4,3 +4,4 @@ test: basic
 test: temp_table
 test: insert_unnest
 test: ctas
+test: gucs
