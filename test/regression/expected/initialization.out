@@ -1,10 +1,10 @@
 -- Table AM 'ducklake' is created once the extension is installed
-SELECT * FROM pg_extension;
-  oid  |   extname   | extowner | extnamespace | extrelocatable | extversion | extconfig | extcondition 
--------+-------------+----------+--------------+----------------+------------+-----------+--------------
- 13907 | plpgsql     |       10 |           11 | f              | 1.0        |           | 
- 16385 | pg_duckdb   |       10 |         2200 | f              | 1.1.0      |           | 
- 16775 | pg_ducklake |       10 |         2200 | f              | 0.1.0      |           | 
+SELECT extname, extowner, extnamespace, extrelocatable, extversion, extconfig, extcondition FROM pg_extension;
+   extname   | extowner | extnamespace | extrelocatable | extversion | extconfig | extcondition 
+-------------+----------+--------------+----------------+------------+-----------+--------------
+ plpgsql     |       10 |           11 | f              | 1.0        |           | 
+ pg_duckdb   |       10 |         2200 | f              | 1.1.0      |           | 
+ pg_ducklake |       10 |         2200 | f              | 0.1.0      |           | 
 (3 rows)
 
 SELECT amname FROM pg_am WHERE amname = 'ducklake';

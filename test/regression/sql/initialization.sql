@@ -1,6 +1,6 @@
 -- Table AM 'ducklake' is created once the extension is installed
 
-SELECT * FROM pg_extension;
+SELECT extname, extowner, extnamespace, extrelocatable, extversion, extconfig, extcondition FROM pg_extension;
 
 SELECT amname FROM pg_am WHERE amname = 'ducklake';
 
