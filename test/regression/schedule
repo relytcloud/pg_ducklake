@@ -1,3 +1,4 @@
 test: initialization
 test: ddl_triggers
 test: basic
+test: temp_table
