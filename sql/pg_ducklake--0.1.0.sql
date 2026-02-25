@@ -33,6 +33,17 @@ CREATE FUNCTION ducklake._drop_trigger()
 CREATE EVENT TRIGGER ducklake_drop_trigger ON sql_drop
     EXECUTE FUNCTION ducklake._drop_trigger();
 
+-- ALTER TABLE Event Trigger
+CREATE FUNCTION ducklake._alter_table_trigger()
+    RETURNS event_trigger
+    SET search_path = pg_catalog, pg_temp
+    AS 'MODULE_PATHNAME', 'ducklake_alter_table_trigger'
+    LANGUAGE C;
+
+CREATE EVENT TRIGGER ducklake_alter_table_trigger ON ddl_command_end
+    WHEN tag IN ('ALTER TABLE')
+    EXECUTE FUNCTION ducklake._alter_table_trigger();
+
 -- Initialization function
 CREATE FUNCTION ducklake._initialize()
     RETURNS void

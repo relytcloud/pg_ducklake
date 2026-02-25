@@ -494,4 +494,75 @@ DECLARE_PG_FUNCTION(ducklake_set_option) {
 
   PG_RETURN_VOID();
 }
+
+DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
+  if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
+    elog(ERROR, "not fired by event trigger manager");
+
+  EventTriggerData *trigger_data = (EventTriggerData *)fcinfo->context;
+  Node *parsetree = trigger_data->parsetree;
+
+  SPI_connect();
+
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
+                  PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
+                  PGC_S_SESSION);
+
+  int ret = SPI_exec(R"(
+		SELECT DISTINCT objid AS relid
+		FROM pg_catalog.pg_event_trigger_ddl_commands() cmds
+		JOIN pg_catalog.pg_class
+		ON cmds.objid = pg_class.oid
+		WHERE cmds.object_type IN ('table', 'table column')
+		AND pg_class.relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake')
+		)",
+                     0);
+
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+
+  if (SPI_processed == 0) {
+    AtEOXact_GUC(false, save_nestlevel);
+    SPI_finish();
+    PG_RETURN_NULL();
+  }
+
+  HeapTuple tuple = SPI_tuptable->vals[0];
+  bool isnull;
+  Datum relid_datum =
+      SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+  if (isnull)
+    elog(ERROR, "Expected relid to be returned, but found NULL");
+
+  Oid relid = DatumGetObjectId(relid_datum);
+
+  AtEOXact_GUC(false, save_nestlevel);
+  SPI_finish();
+
+  /* Generate DDL using pg_duckdb's ruleutils functions */
+  char *ddl_str;
+  if (IsA(parsetree, RenameStmt)) {
+    ddl_str = pgduckdb_get_rename_relationdef(relid, (RenameStmt *)parsetree);
+  } else if (IsA(parsetree, AlterTableStmt)) {
+    ddl_str =
+        pgduckdb_get_alter_tabledef(relid, (AlterTableStmt *)parsetree);
+  } else {
+    elog(ERROR, "Unexpected parsetree type in ALTER TABLE trigger: %d",
+         nodeTag(parsetree));
+  }
+
+  elog(DEBUG1, "ALTER TABLE DDL for DuckLake: %s", ddl_str);
+
+  const char *error_msg = nullptr;
+  int result = ExecuteDuckDBQuery(ddl_str, &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to alter DuckLake table: %s",
+                           error_msg ? error_msg : "unknown error")));
+  }
+
+  PG_RETURN_NULL();
+}
 }

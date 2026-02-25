@@ -9,6 +9,9 @@ extern "C" {
 
 // Exported by pg_duckdb - register a custom table access method
 extern bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
+
+// Exported by pg_duckdb - check if ALTER TABLE DDL is in progress
+extern bool DuckdbIsAlterTableInProgress(void);
 }
 
 extern "C" {
@@ -76,6 +79,10 @@ static bool duckdb_scan_getnextslot(TableScanDesc /*sscan*/,
                                     ScanDirection /*direction*/,
                                     TupleTableSlot *slot) {
   /* If we are executing ALTER TABLE we return empty tuple */
+  if (DuckdbIsAlterTableInProgress()) {
+    ExecClearTuple(slot);
+    return false;
+  }
   NOT_IMPLEMENTED();
 }
 
@@ -308,6 +315,9 @@ static double duckdb_index_build_range_scan(
     bool /*progress*/, BlockNumber /*start_blockno*/, BlockNumber /*numblocks*/,
     IndexBuildCallback /*callback*/, void * /*callback_state*/,
     TableScanDesc /*scan*/) {
+  if (DuckdbIsAlterTableInProgress()) {
+    return 0;
+  }
   NOT_IMPLEMENTED();
 }
 
