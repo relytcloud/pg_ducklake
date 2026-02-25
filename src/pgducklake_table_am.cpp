@@ -12,6 +12,10 @@ extern bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
 
 // Exported by pg_duckdb - check if ALTER TABLE DDL is in progress
 extern bool DuckdbIsAlterTableInProgress(void);
+
+// Defined in pgducklake_vacuum.cpp
+extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
+                               BufferAccessStrategy bstrategy);
 }
 
 extern "C" {
@@ -278,9 +282,9 @@ static void duckdb_copy_for_cluster(
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_vacuum(Relation /*onerel*/, VacuumParams * /*params*/,
-                          BufferAccessStrategy /*bstrategy*/) {
-  NOT_IMPLEMENTED();
+static void duckdb_vacuum(Relation onerel, VacuumParams *params,
+                          BufferAccessStrategy bstrategy) {
+  ducklake_do_vacuum(onerel, params, bstrategy);
 }
 
 #if PG_VERSION_NUM >= 170000

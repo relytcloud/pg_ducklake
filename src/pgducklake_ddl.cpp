@@ -53,7 +53,7 @@ static inline void DuckdbRawQuery(const char *query) {
  * Returns 0 on success, 1 on error.
  * On error, sets *errmsg_out to the error message (if non-null).
  */
-int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
+extern "C" int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   static thread_local std::string last_error;
 
   // Volatile to survive PG_CATCH longjmp
