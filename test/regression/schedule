@@ -7,3 +7,4 @@ test: ctas
 test: gucs
 test: options
 test: data_inlining_row_limit
+test: readme_examples
