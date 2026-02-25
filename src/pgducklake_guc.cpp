@@ -1,3 +1,9 @@
+/*
+ * pgducklake_guc.cpp — DuckLake GUC definitions and registration.
+ *
+ * Defines extension-level configuration variables and registers them in _PG_init().
+ */
+
 #include "pgducklake/pgducklake_guc.hpp"
 
 extern "C" {

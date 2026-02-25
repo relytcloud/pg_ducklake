@@ -1,3 +1,10 @@
+/*
+ * pgducklake.cpp — PostgreSQL extension bootstrap entry points.
+ *
+ * Defines module metadata and _PG_init(), wiring GUC registration and pg_duckdb
+ * callback registration for DuckLake extension loading.
+ */
+
 #include "pgduckdb/pgduckdb_contracts.h"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_guc.hpp"

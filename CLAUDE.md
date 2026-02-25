@@ -60,6 +60,21 @@ Treat `third_party/pg_duckdb` as upstream:
 - Keep diffs minimal and upstream-friendly.
 - Ensure zero behavior change when hooks are unused.
 
+## Docs Style
+
+To avoid _Docs Rot_, **DO NOT write docs everywhere**. Consider replacing the documentation with:
+
+- self-contained regression tests
+- header comments of source files
+- SKILLs under @.claude/skills/
+- @README.md and @CLAUDE.md
+
+Guidelines:
+
+- Write header comments for each source file, explaining the purpose and usage of the file. Maintain comments after each edit.
+- Only include comments that are essential to understanding functionality or convey non-obvious information. Otherwise, let code speak for itself.
+- Only write docs about high-level concepts and design decisions if really necessary.
+
 ## Miscellaneous
 
 - When modifying multiple files, run file modification tasks in parallel whenever possible, instead of processing them sequentially

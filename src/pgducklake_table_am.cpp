@@ -1,3 +1,10 @@
+/*
+ * pgducklake_table_am.cpp — Table access method surface for DuckLake tables.
+ *
+ * Provides a PostgreSQL TableAM implementation used for routing and compatibility,
+ * delegating unsupported paths and integrating VACUUM hooks where needed.
+ */
+
 #include "pgduckdb/pgduckdb_contracts.h"
 
 extern "C" {

@@ -1,3 +1,10 @@
+/*
+ * pgducklake_metadata_manager.cpp — PostgreSQL-backed DuckLake metadata manager.
+ *
+ * Implements DuckLake metadata operations by translating DuckDB requests into SQL
+ * against the ducklake_* metadata tables in PostgreSQL.
+ */
+
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
 // DuckDB headers first

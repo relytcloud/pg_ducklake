@@ -1,3 +1,10 @@
+/*
+ * pgducklake_ddl.cpp — Event-trigger based DuckLake DDL synchronization.
+ *
+ * Captures PostgreSQL DDL and executes equivalent DuckDB statements via
+ * duckdb.raw_query() for DuckLake-managed relations.
+ */
+
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
