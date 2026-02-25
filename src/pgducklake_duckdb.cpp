@@ -8,13 +8,13 @@
  * through PostgreSQL's SPI in the PostgreSQL-facing translation units.
  */
 
+#include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
-#include "duckdb.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "ducklake_extension.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
-#include <duckdb/main/client_context.hpp>
 #include <filesystem>
 
 extern "C" {
@@ -25,8 +25,7 @@ extern "C" {
 #include "utils/elog.h"
 }
 
-extern "C" void ducklake_init_extension(void) {
-}
+extern "C" void ducklake_init_extension(void) {}
 
 extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
@@ -35,11 +34,12 @@ extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto context = static_cast<duckdb::ClientContext *>(context_ptr);
 
   duckdb::DuckLakeMetadataManager::Register(
-      "pgducklake", pgducklake::PgDuckLakeMetadataManager::Create);
-  duckdb::string query = "ATTACH 'ducklake:pgducklake:' AS pgducklake "
-                         "(METADATA_SCHEMA 'ducklake'";
-    auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
-    if (creating_extension) {
+      PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
+  duckdb::string query = "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG
+                         ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
+                         "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED;
+  auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+  if (creating_extension) {
     try {
       std::filesystem::create_directory(data_path);
     } catch (const std::filesystem::filesystem_error &e) {
@@ -48,9 +48,9 @@ extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
                errmsg("failed to create DuckLake data directory \"%s\": %s",
                       data_path.c_str(), e.what())));
     }
-    }
+  }
 
-    query += ", DATA_PATH '" + data_path + "'";
+  query += ", DATA_PATH '" + data_path + "'";
   query += ")";
 
   elog(DEBUG1, "Executing query: %s", query.c_str());

@@ -5,35 +5,24 @@
 
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <filesystem>
 
 extern "C" {
 #include "postgres.h"
 
-#include "access/relation.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_class.h"
-#include "catalog/pg_type.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h" // creating_extension
 #include "executor/spi.h"
 #include "fmgr.h"
-#include "lib/stringinfo.h"
-#include "miscadmin.h"
 #include "nodes/value.h"
 #include "parser/parse_func.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
-#include "utils/rel.h"
-#include "utils/relcache.h"
-#include "utils/syscache.h"
 #include "utils/timestamp.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
-
 
 /*
  * Look up the OID of duckdb.raw_query(text), cached per backend.
@@ -76,8 +65,7 @@ int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   //
   // FIXME: should we modify pg_duckdb?
   auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("client_min_messages", "warning", PGC_USERSET,
-                  PGC_S_SESSION);
+  SetConfigOption("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION);
 
   PG_TRY();
   {
@@ -103,7 +91,6 @@ int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   return result;
 }
 
-
 extern "C" {
 
 DECLARE_PG_FUNCTION(ducklake_initialize) {
@@ -123,8 +110,6 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
   }
   // force creating DuckDB instance
   ExecuteDuckDBQuery("SELECT 1", NULL);
-  
-  // Recycle DuckDB instance
 
   PG_RETURN_VOID();
 }
@@ -230,10 +215,10 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
     int insert_result =
         ExecuteDuckDBQuery(insert_string.c_str(), &insert_error_msg);
     if (insert_result != 0) {
-      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                      errmsg("failed to populate DuckLake table via CTAS: %s",
-                             insert_error_msg ? insert_error_msg
-                                              : "unknown error")));
+      ereport(ERROR,
+              (errcode(ERRCODE_INTERNAL_ERROR),
+               errmsg("failed to populate DuckLake table via CTAS: %s",
+                      insert_error_msg ? insert_error_msg : "unknown error")));
     }
   }
 
@@ -298,8 +283,8 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
     char *table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
 
     std::string drop_ddl = duckdb::StringUtil::Format(
-        "DROP TABLE IF EXISTS %s.%s.%s", pgducklake::PGDUCKLAKE_DB_NAME,
-        schema_name, table_name);
+        "DROP TABLE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG ".%s.%s", schema_name,
+        table_name);
 
     elog(DEBUG1, "Dropping DuckLake table: %s", drop_ddl.c_str());
 
@@ -331,19 +316,19 @@ DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
   std::string query;
 
   if (PG_ARGISNULL(0)) {
-    query = duckdb::StringUtil::Format(
-        "SELECT count(*) FROM ducklake_cleanup_old_files('%s', "
-        "cleanup_all => true)",
-        pgducklake::PGDUCKLAKE_DB_NAME);
+    query = "SELECT count(*) FROM "
+            "ducklake_cleanup_old_files(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED ", "
+            "cleanup_all => true)";
   } else {
     Interval *interval = PG_GETARG_INTERVAL_P(0);
     char *interval_str = DatumGetCString(
         DirectFunctionCall1(interval_out, IntervalPGetDatum(interval)));
 
     query = duckdb::StringUtil::Format(
-        "SELECT count(*) FROM ducklake_cleanup_old_files('%s', "
+        "SELECT count(*) FROM "
+        "ducklake_cleanup_old_files(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED ", "
         "older_than => now() - INTERVAL '%s')",
-        pgducklake::PGDUCKLAKE_DB_NAME, interval_str);
+        interval_str);
   }
 
   const char *error_msg = nullptr;
@@ -359,10 +344,8 @@ DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
 }
 
 DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
-  auto query = duckdb::StringUtil::Format(
-      "CALL ducklake_flush_inlined_data(%s",
-      duckdb::KeywordHelper::WriteQuoted(pgducklake::PGDUCKLAKE_DB_NAME)
-          .c_str());
+  std::string query =
+      "CALL ducklake_flush_inlined_data(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED;
 
   if (PG_NARGS() > 0 && !PG_ARGISNULL(0)) {
     Oid relid = PG_GETARG_OID(0);
@@ -458,7 +441,7 @@ DECLARE_PG_FUNCTION(ducklake_set_option) {
 
   // Use ducklake_set_option('catalog', 'option', value, ...) directly
   auto query = duckdb::StringUtil::Format(
-      "CALL %s.set_option(%s, %s", pgducklake::PGDUCKLAKE_DB_NAME,
+      "CALL " PGDUCKLAKE_DUCKDB_CATALOG ".set_option(%s, %s",
       duckdb::KeywordHelper::WriteQuoted(option_name).c_str(),
       value_str.c_str());
 
@@ -531,8 +514,7 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
 
   HeapTuple tuple = SPI_tuptable->vals[0];
   bool isnull;
-  Datum relid_datum =
-      SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+  Datum relid_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
   if (isnull)
     elog(ERROR, "Expected relid to be returned, but found NULL");
 
@@ -546,8 +528,7 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
   if (IsA(parsetree, RenameStmt)) {
     ddl_str = pgduckdb_get_rename_relationdef(relid, (RenameStmt *)parsetree);
   } else if (IsA(parsetree, AlterTableStmt)) {
-    ddl_str =
-        pgduckdb_get_alter_tabledef(relid, (AlterTableStmt *)parsetree);
+    ddl_str = pgduckdb_get_alter_tabledef(relid, (AlterTableStmt *)parsetree);
   } else {
     elog(ERROR, "Unexpected parsetree type in ALTER TABLE trigger: %d",
          nodeTag(parsetree));

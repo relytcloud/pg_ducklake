@@ -15,6 +15,7 @@
 #include "common/ducklake_util.hpp"
 
 // Our vendored type conversion utilities
+#include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_pg_types.hpp"
 
 // PostgreSQL headers
@@ -235,7 +236,8 @@ PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot,
 
 bool PgDuckLakeMetadataManager::IsInitialized() {
 
-  auto tup = SearchSysCache1(NAMESPACENAME, CStringGetDatum("ducklake"));
+  auto tup =
+      SearchSysCache1(NAMESPACENAME, CStringGetDatum(PGDUCKLAKE_PG_SCHEMA));
 
   if (!HeapTupleIsValid(tup))
     return false;
