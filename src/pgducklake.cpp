@@ -1,4 +1,5 @@
 #include "pgducklake/pgducklake_guc.hpp"
+#include "pgduckdb/pgduckdb_contracts.h"
 
 extern "C" {
 #include "postgres.h"
@@ -18,15 +19,9 @@ PG_MODULE_MAGIC;
 #endif
 
 // Forward declaration of C interface functions
-void ducklake_init_extension(void);
 void ducklake_load_extension(void *db, void *context);
 
-typedef void (*DuckDBLoadExtension)(void *db, void *context);
-bool RegisterDuckdbLoadExtension(DuckDBLoadExtension extension);
-
 void _PG_init(void) {
-  // Register the DuckLake metadata manager (eager, no DuckDB instance needed)
-  ducklake_init_extension();
   // Register callback for deferred static extension loading
   RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register DuckLake GUCs

@@ -1,3 +1,5 @@
+#include "pgduckdb/pgduckdb_contracts.h"
+
 extern "C" {
 #include "postgres.h"
 
@@ -6,12 +8,6 @@ extern "C" {
 #include "catalog/index.h"
 #include "commands/vacuum.h"
 #include "executor/tuptable.h"
-
-// Exported by pg_duckdb - register a custom table access method
-extern bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
-
-// Exported by pg_duckdb - check if ALTER TABLE DDL is in progress
-extern bool DuckdbIsAlterTableInProgress(void);
 
 // Defined in pgducklake_vacuum.cpp
 extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params,

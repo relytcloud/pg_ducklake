@@ -1,11 +1,11 @@
 #pragma once
 
+#include "pgduckdb/pgduckdb_contracts.h"
+
 extern "C" {
 #include "postgres.h"
 
 #include "access/xact.h"
-
-void DuckdbUnsafeSetNextExpectedCommandId(uint32_t command_id);
 }
 
 namespace pgducklake {

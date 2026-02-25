@@ -25,8 +25,6 @@ extern "C" {
 #include "utils/elog.h"
 }
 
-extern "C" void ducklake_init_extension(void) {}
-
 extern "C" void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
   db->LoadStaticExtension<duckdb::DucklakeExtension>();
