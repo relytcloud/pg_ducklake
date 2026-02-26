@@ -11,14 +11,13 @@ RUN apt-get update -qq && \
     postgresql-server-dev-${POSTGRES_VERSION} \
     build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev \
     libssl-dev libxml2-utils xsltproc pkg-config libc++-dev libc++abi-dev libglib2.0-dev \
-    libtinfo6 cmake libstdc++-12-dev liblz4-dev ccache ninja-build git libcurl4-openssl-dev && \
+    libtinfo5 cmake libstdc++-12-dev liblz4-dev ccache ninja-build git libcurl4-openssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
 ENV PATH=/usr/lib/ccache:$PATH
 ENV CCACHE_DIR=/ccache
-ENV PG_CONFIG=/usr/lib/postgresql/${POSTGRES_VERSION}/bin/pg_config
 
 # permissions so we can run as `postgres` (uid=999,gid=999)
 RUN mkdir /out
@@ -41,12 +40,14 @@ RUN rm -rf third_party/pg_duckdb/.git && \
     cp .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD \
       third_party/pg_duckdb/.git/modules/third_party/duckdb/HEAD
 
-RUN make clean-all || true
+RUN make clean-all
 
 # build and install both extensions
 RUN --mount=type=cache,target=/ccache/,uid=999,gid=999 echo "Available CPUs=$(nproc)" && \
-    make -j$(nproc) install-pg_duckdb install
-
+    make -j$(nproc) pg_duckdb && \
+    make -j$(nproc)
+# install into location specified by pg_config for tests
+RUN make install-pg_duckdb install
 # install into /out for packaging
 RUN DESTDIR=/out make install-pg_duckdb install
 
@@ -64,14 +65,9 @@ RUN make installcheck
 FROM base AS output
 
 RUN apt-get update -qq && \
-    apt-get install -y ca-certificates libcurl4 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y ca-certificates libcurl4
 
-# Create CA bundle symlink for supporting Azure HTTPS connections
-RUN mkdir -p /etc/pki/tls/certs && \
-    ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
-
-# Automatically preload pg_duckdb
+# Automatically preload pg_duckdb,pg_ducklake
 RUN echo "shared_preload_libraries='pg_duckdb,pg_ducklake'" >> /usr/share/postgresql/postgresql.conf.sample
 COPY --chown=postgres:postgres docker/init.d/ /docker-entrypoint-initdb.d/
 
