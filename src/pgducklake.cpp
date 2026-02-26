@@ -26,11 +26,16 @@ PG_MODULE_MAGIC_EXT(.name = "pg_ducklake", .version = PG_DUCKLAKE_VERSION);
 PG_MODULE_MAGIC;
 #endif
 
+// FDW initialization (hooks, utility hook)
+void ducklake_fdw_init(void);
+
 void _PG_init(void) {
   // Register callback for deferred static extension loading
   RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register DuckLake GUCs
   pg_ducklake::RegisterGUCs();
+  // Register FDW hooks (external table check, pre-prepare, relation name, utility)
+  ducklake_fdw_init();
 }
 
 } // extern "C"
