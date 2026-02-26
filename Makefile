@@ -1,4 +1,6 @@
-.PHONY: ducklake clean-ducklake pg_duckdb install_pg_duckdb
+.PHONY: clean-all \
+	ducklake clean-ducklake \
+	pg_duckdb install-pg_duckdb clean-pg_duckdb
 
 MODULE_big = pg_ducklake
 EXTENSION = pg_ducklake
@@ -72,7 +74,7 @@ endif
 include Makefile.global
 
 installcheck: all install
-	$(MAKE) -C test/regression check-regression
+	$(MAKE) check-regression
 
 check-regression:
 	$(MAKE) -C test/regression check-regression
@@ -107,8 +109,11 @@ $(PG_DUCKDB_TARGET): $(PG_DUCKDB_HEAD)
 	DUCKDB_BUILD_TYPE=$(DUCKDB_BUILD_TYPE) \
 	$(MAKE) -C $(PG_DUCKDB_DIR)
 
-install_pg_duckdb: pg_duckdb
+install-pg_duckdb: pg_duckdb
 	$(MAKE) -C $(PG_DUCKDB_DIR) install
+
+clean-pg_duckdb:
+	$(MAKE) -C $(PG_DUCKDB_DIR) clean-all
 
 # ---------------------------------------------------------------------------
 # Build ducklake using its own cmake-based build system
@@ -133,7 +138,9 @@ clean-ducklake:
 # PG-facing TU uses the default PGXS pattern rule (includes PG server headers).
 # Our PG_CPPFLAGS += $(LOCAL_INCLUDES) adds the bridge header path.
 
-$(OBJS): $(PG_DUCKDB_HEAD)
+$(OBJS): $(PG_DUCKDB_HEAD) $(DUCKLAKE_HEAD)
 
 # Shared library depends on ducklake static lib
 $(shlib): $(DUCKLAKE_STATIC_LIB)
+
+clean-all: clean clean-regression clean-pg_duckdb clean-ducklake

@@ -109,7 +109,7 @@ jobs:
       - name: Build pg_duckdb and pg_ducklake
         id: build
         working-directory: pg_ducklake
-        run: ERROR_ON_WARNING=1 make -j8 install_pg_duckdb install DUCKDB_BUILD_TYPE=${{ matrix.type }}
+        run: ERROR_ON_WARNING=1 make -j8 install-pg_duckdb install DUCKDB_BUILD_TYPE=${{ matrix.type }}
 
       - name: Run make installcheck
         id: installcheck

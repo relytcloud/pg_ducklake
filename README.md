@@ -73,7 +73,7 @@ Requirements:
 git clone https://github.com/relytcloud/pg_ducklake
 cd pg_ducklake
 # (Optional) install pg_duckdb
-# make install_pg_duckdb
+# make install-pg_duckdb
 make install
 ```
 

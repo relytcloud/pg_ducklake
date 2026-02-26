@@ -18,7 +18,7 @@ via DuckDB's `LoadStaticExtension<T>()`.
 
 ```bash
 git submodule update --init --recursive
-PG_CONFIG=<pg_config> make install_pg_duckdb
+PG_CONFIG=<pg_config> make install-pg_duckdb
 PG_CONFIG=<pg_config> make install
 PG_CONFIG=<pg_config> make installcheck
 

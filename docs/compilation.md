@@ -62,7 +62,7 @@ sudo apt install \
 
 ```sh
 make -j$(nproc) pg_duckdb
-sudo make install_pg_duckdb
+sudo make install-pg_duckdb
 ```
 
 ### Build and Install pg_ducklake
