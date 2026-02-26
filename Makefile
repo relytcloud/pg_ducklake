@@ -42,7 +42,7 @@ LOCAL_INCLUDES = -I$(CURDIR)/include
 
 # PG-facing TU: standard PGXS flags + bridge header path
 override PG_CPPFLAGS += $(LOCAL_INCLUDES) $(DUCKDB_INCLUDES)
-override PG_CXXFLAGS += -std=c++17
+override PG_CXXFLAGS += -std=c++17 -Wno-register
 
 # DuckDB-facing TU: no PG headers allowed
 DUCKDB_CXXFLAGS = -std=c++17 -fPIC
