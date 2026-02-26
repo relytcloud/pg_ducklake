@@ -145,7 +145,6 @@ GROUP BY "Pclass", "Sex";
 
 We welcome contributions! Please see:
 
-- [Contributing Guidelines](CONTRIBUTING.md)
 - [Issues](https://github.com/relytcloud/pg_ducklake/issues) for bug reports
 
 ## Acknowledgments
