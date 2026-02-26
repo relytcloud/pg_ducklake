@@ -121,13 +121,108 @@ jobs:
           docker pull --platform linux/arm64 pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}
 
           BRANCH="${{ needs.docker_build.outputs.branch_tag }}"
-          TARGET_REPO="${{ needs.docker_build.outputs.target_repo }}"
 
-          echo "Will push merged image to '${TARGET_REPO}'."
+          echo "Merging multi-arch image to ci-builds."
           docker buildx imagetools create \
-            --tag     ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}            \
+            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${BRANCH}         \
             --tag pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }} \
             pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }} \
             pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}
 
           docker buildx imagetools inspect pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}
+
+  clickbench_test:
+    name: ClickBench for Postgres ${{ matrix.postgres }} on ${{ matrix.platform }}
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        postgres: ["14", "15", "16", "17", "18"]
+        platform: ["amd64", "arm64"]
+      fail-fast: false
+
+    runs-on: ${{ matrix.platform == 'amd64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
+    needs: docker_merge
+
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: pgducklake
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Checkout ClickBench repository
+        uses: actions/checkout@v4
+        with:
+          repository: ClickHouse/ClickBench
+          path: clickbench
+
+      - name: Pull test image
+        run: |
+          docker pull pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}
+
+      - name: Run ClickBench
+        working-directory: clickbench/pg_ducklake
+        run: |
+          # Replace docker image in benchmark.sh with our test image
+          sed -i "s|pgducklake/pgducklake:18-main|pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}|g" benchmark.sh
+
+          chmod +x benchmark.sh
+          ./benchmark.sh 2>&1 | tee benchmark.log
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickbench-results-pg${{ matrix.postgres }}-${{ matrix.platform }}
+          path: |
+            clickbench/pg_ducklake/benchmark.log
+            clickbench/pg_ducklake/log.txt
+
+  docker_promote:
+    name: Promote Docker image for Postgres ${{ matrix.postgres }}
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        postgres: ["14", "15", "16", "17", "18"]
+
+    runs-on: ubuntu-24.04
+    needs: clickbench_test
+
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: pgducklake
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Determine target repository
+        id: target
+        run: |
+          # If main or tag, promote to pgducklake/pgducklake
+          git init
+          git remote add origin https://github.com/${{ github.repository }}
+          git fetch --tags --no-recurse-submodules origin ${{ github.ref }}
+
+          BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9\-\.]/-/g' | tr '[:upper:]' '[:lower:]')
+
+          if [ "${{ github.ref }}" = "refs/heads/main" ] || git rev-parse --verify ${BRANCH}^{tag} > /dev/null 2>&1; then
+            TARGET_REPO='pgducklake/pgducklake'
+          else
+            TARGET_REPO='pgducklake/ci-builds'
+          fi
+
+          echo "target_repo=$TARGET_REPO" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Promote multi-arch image
+        run: |
+          TARGET_REPO="${{ steps.target.outputs.target_repo }}"
+          BRANCH="${{ steps.target.outputs.branch }}"
+
+          echo "Promoting image to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
+
+          docker buildx imagetools create \
+            --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH} \
+            pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}
+
+          docker buildx imagetools inspect ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}
