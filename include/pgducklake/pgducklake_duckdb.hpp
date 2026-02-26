@@ -14,3 +14,4 @@
  * the DuckLake static extension into it.
  */
 void ducklake_load_extension(void *db, void *context);
+void *ducklake_get_duckdb_database(void);

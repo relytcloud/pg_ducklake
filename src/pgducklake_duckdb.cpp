@@ -25,9 +25,24 @@ extern "C" {
 #include "utils/elog.h"
 }
 
+/* Include postgres_scanner extension header AFTER PostgreSQL headers to avoid Index conflict */
+#include "postgres_scanner_extension.hpp"
+
+static void *stored_duckdb_database = nullptr;
+
+void *ducklake_get_duckdb_database(void) {
+  return stored_duckdb_database;
+}
+
 void ducklake_load_extension(void *db_ptr, void *context_ptr) {
+  stored_duckdb_database = db_ptr;
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
+
+  /* Load DuckLake extension for DuckLake table access method */
   db->LoadStaticExtension<duckdb::DucklakeExtension>();
+
+  /* Load postgres_scanner extension for FDW support (with -Bsymbolic fix) */
+  db->LoadStaticExtension<PostgresScannerExtension>();
 
   auto context = static_cast<duckdb::ClientContext *>(context_ptr);
 

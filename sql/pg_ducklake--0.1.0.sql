@@ -93,3 +93,21 @@ CREATE FUNCTION ducklake.ducklake_cleanup_old_files(
 RETURNS bigint
 AS 'MODULE_PATHNAME', 'ducklake_cleanup_old_files'
 LANGUAGE C;
+
+-- Foreign Data Wrapper
+CREATE FUNCTION ducklake._fdw_handler()
+RETURNS fdw_handler
+AS 'MODULE_PATHNAME', 'ducklake_fdw_handler'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION ducklake._fdw_validator(
+    options text[],
+    catalog oid
+)
+RETURNS void
+AS 'MODULE_PATHNAME', 'ducklake_fdw_validator'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FOREIGN DATA WRAPPER ducklake_fdw
+  HANDLER ducklake._fdw_handler
+  VALIDATOR ducklake._fdw_validator;
