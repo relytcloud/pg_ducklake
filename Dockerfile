@@ -16,9 +16,6 @@ RUN apt-get update -qq && \
 
 WORKDIR /build
 
-ENV PATH=/usr/lib/ccache:$PATH
-ENV CCACHE_DIR=/ccache
-
 # permissions so we can run as `postgres` (uid=999,gid=999)
 RUN mkdir /out
 RUN chown -R postgres:postgres . /usr/lib/postgresql /usr/share/postgresql /out
@@ -43,7 +40,7 @@ RUN rm -rf third_party/pg_duckdb/.git && \
 RUN make clean-all
 
 # build and install both extensions
-RUN --mount=type=cache,target=/ccache/,uid=999,gid=999 echo "Available CPUs=$(nproc)" && \
+RUN echo "Available CPUs=$(nproc)" && \
     make -j$(nproc) pg_duckdb && \
     make -j$(nproc)
 # install into location specified by pg_config for tests
