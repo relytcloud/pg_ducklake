@@ -41,7 +41,7 @@ RUN make clean-all
 
 # build and install both extensions
 RUN echo "Available CPUs=$(nproc)" && \
-    make -j$(nproc) install-duckdb && \
+    make -j$(nproc) -C third_party/pg_duckdb install-duckdb && \
     make -j$(nproc) pg_duckdb && \
     make -j$(nproc)
 # install into location specified by pg_config for tests
