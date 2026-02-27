@@ -14,7 +14,7 @@ via DuckDB's `LoadStaticExtension<T>()`.
 
 ## Build and Test Commands
 
-`PG_CONFIG` is required. Usually a local pg is installed under workdir, e.g. `PG_CONFIG=$PWD/pg-17/bin/pg_config`, to avoid conflicts with other worktrees. If neither local pg nor global pg is found, stop and ask user.
+`PG_CONFIG` is required. Usually a local pg is installed under workdir, e.g. `PG_CONFIG=$(pwd)/pg-17/bin/pg_config`, to avoid conflicts with other worktrees. If neither local pg nor global pg is found, stop and ask user.
 
 ```bash
 git submodule update --init --recursive
