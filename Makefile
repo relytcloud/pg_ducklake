@@ -42,7 +42,7 @@ LOCAL_INCLUDES = -I$(CURDIR)/include
 
 # PG-facing TU: standard PGXS flags + bridge header path
 override PG_CPPFLAGS += $(LOCAL_INCLUDES) $(DUCKDB_INCLUDES)
-override PG_CXXFLAGS += -std=c++17 -Wno-register
+override PG_CXXFLAGS += -std=c++17 -Wno-register -Weffc++
 
 # DuckDB-facing TU: no PG headers allowed
 DUCKDB_CXXFLAGS = -std=c++17 -fPIC
@@ -139,6 +139,9 @@ clean-ducklake:
 # Our PG_CPPFLAGS += $(LOCAL_INCLUDES) adds the bridge header path.
 
 $(OBJS): $(PG_DUCKDB_HEAD) $(DUCKLAKE_HEAD)
+
+COMPILE.cc.bc += $(PG_CPPFLAGS)
+COMPILE.cxx.bc += $(PG_CXXFLAGS)
 
 # Shared library depends on ducklake static lib
 $(shlib): $(DUCKLAKE_STATIC_LIB)
