@@ -221,6 +221,13 @@ IsDuckdbTempTable(Oid relid) {
 	return temporary_duckdb_tables.count(relid) > 0;
 }
 
+static bool allow_subtransaction = false;
+
+void
+SetAllowSubtransaction(bool allow) {
+	allow_subtransaction = allow;
+}
+
 static void
 DuckdbXactCallback_Cpp(XactEvent event) {
 	/*
@@ -246,6 +253,7 @@ DuckdbXactCallback_Cpp(XactEvent event) {
 
 		next_expected_command_id = FirstCommandId;
 		pg::force_allow_writes = false;
+		allow_subtransaction = false;
 		if (modified_temporary_duckdb_tables) {
 			modified_temporary_duckdb_tables = false;
 			temporary_duckdb_tables_old.clear();
@@ -262,6 +270,7 @@ DuckdbXactCallback_Cpp(XactEvent event) {
 	case XACT_EVENT_PARALLEL_ABORT:
 		next_expected_command_id = FirstCommandId;
 		pg::force_allow_writes = false;
+		allow_subtransaction = false;
 		if (modified_temporary_duckdb_tables) {
 			modified_temporary_duckdb_tables = false;
 			/* The transaction failed, so we restore original set of temporary
@@ -324,7 +333,7 @@ DuckdbSubXactCallback_Cpp(SubXactEvent event) {
 		return;
 	}
 
-	if (event == SUBXACT_EVENT_START_SUB) {
+	if (event == SUBXACT_EVENT_START_SUB && !allow_subtransaction) {
 		throw duckdb::NotImplementedException("SAVEPOINT is not supported in DuckDB");
 	}
 }
@@ -333,6 +342,43 @@ static void
 DuckdbSubXactCallback(SubXactEvent event, SubTransactionId /*my_subid*/, SubTransactionId /*parent_subid*/,
                       void * /*arg*/) {
 	InvokeCPPFunc(DuckdbSubXactCallback_Cpp, event);
+}
+
+/*
+ * Pre-commit the DuckDB transaction before PG starts its commit phase.
+ *
+ * This is called from the ProcessUtility hook when an explicit COMMIT command
+ * is detected, while the PG transaction is still in TBLOCK_INPROGRESS.
+ * DuckLake's FlushChanges may need subtransactions for retry on concurrent
+ * PK violations, and subtransaction rollback requires the parent transaction
+ * to be "in progress" (asserted by RollbackAndReleaseCurrentSubTransaction).
+ * During XACT_EVENT_PRE_COMMIT, the parent is in TBLOCK_END which fails
+ * this assert. By pre-committing here, we avoid the issue entirely.
+ *
+ * The PRE_COMMIT callback naturally skips the DuckDB commit because
+ * HasActiveTransaction() returns false after we commit here.
+ */
+void
+PreCommitDuckDB() {
+	if (!DuckDBManager::IsInitialized()) {
+		return;
+	}
+	auto connection = DuckDBManager::GetConnectionUnsafe();
+	auto &context = *connection->context;
+	if (!context.transaction.HasActiveTransaction()) {
+		return;
+	}
+	/*
+	 * If there are disallowed mixed writes (DuckDB + Postgres writes in
+	 * the same transaction), don't pre-commit. Let the PRE_COMMIT callback
+	 * handle it, where PG can fully abort the transaction cleanly.
+	 * Pre-committing here would bypass the mixed writes detection (since
+	 * ddb::DidWrites() returns false after DuckDB commit).
+	 */
+	if (DidDisallowedMixedWrites()) {
+		return;
+	}
+	context.transaction.Commit();
 }
 
 static bool transaction_handler_configured = false;

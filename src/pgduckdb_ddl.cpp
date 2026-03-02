@@ -1188,6 +1188,22 @@ static void
 DuckdbUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only_tree, ProcessUtilityContext context,
                   ParamListInfo params, struct QueryEnvironment *query_env, DestReceiver *dest, QueryCompletion *qc) {
 
+	/*
+	 * Pre-commit the DuckDB transaction for explicit COMMIT commands.
+	 * This must happen BEFORE PG's EndTransactionBlock() changes the
+	 * blockState to TBLOCK_END, because DuckLake's FlushChanges may
+	 * need subtransactions for retry on concurrent PK violations.
+	 * Subtransaction rollback asserts the parent transaction is
+	 * "in progress", which fails during XACT_EVENT_PRE_COMMIT.
+	 */
+	Node *parsetree = pstmt->utilityStmt;
+	if (IsA(parsetree, TransactionStmt)) {
+		TransactionStmt *stmt = castNode(TransactionStmt, parsetree);
+		if (stmt->kind == TRANS_STMT_COMMIT) {
+			InvokeCPPFunc(pgduckdb::PreCommitDuckDB);
+		}
+	}
+
 	if (!DuckdbShouldCallDDLHooks(pstmt)) {
 		return prev_process_utility_hook(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
 	}

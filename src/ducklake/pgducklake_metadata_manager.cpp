@@ -16,6 +16,7 @@
 #include "pgduckdb/pgduckdb_types.hpp"
 
 #include "pgduckdb/pgduckdb_detoast.hpp"
+#include "pgduckdb/pgduckdb_xact.hpp"
 #include "pgduckdb/pg/string_utils.hpp"
 
 extern "C" {
@@ -23,12 +24,15 @@ extern "C" {
 #include "access/genam.h"
 #include "access/skey.h"
 #include "access/table.h"
+#include "access/xact.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "executor/spi.h"
 #include "utils/elog.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
+#include "utils/memutils.h"
+#include "utils/resowner.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 }
@@ -103,97 +107,165 @@ InsertSPITupleTableIntoChunk(duckdb::DataChunk &output, SPITupleTable *tuptable,
 	}
 }
 
+/*
+ * Execute a SQL query via SPI inside a subtransaction.
+ *
+ * The subtransaction ensures that SPI errors (e.g. PK violations during
+ * concurrent DuckLake commits) are cleanly rolled back without aborting the
+ * whole PG transaction.  On error the subtransaction is rolled back and the
+ * PG error is converted to a C++ exception, which DuckLake's FlushChanges()
+ * retry loop can catch and retry with a fresh snapshot.
+ *
+ * The pattern follows PL/pgSQL's exec_stmt_block:
+ *   1. Save CurrentMemoryContext and CurrentResourceOwner
+ *   2. BeginInternalSubTransaction
+ *   3. PushActiveSnapshot inside the subtransaction (owned by subtxn resource owner)
+ *   4. On success: PopActiveSnapshot, ReleaseCurrentSubTransaction, restore owner
+ *   5. On failure: RollbackAndReleaseCurrentSubTransaction cleans up snapshot,
+ *      restore owner
+ */
 static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIResult(const duckdb::string &query) {
 	elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
 
 	PostgresScopedStackReset scoped_stack_reset;
-
 	CommandId cid_before_commit = pg::GetCurrentCommandId();
+
+	/* Save context/owner before subtransaction changes them */
+	MemoryContext oldcontext = CurrentMemoryContext;
+	ResourceOwner oldowner = CurrentResourceOwner;
+
+	duckdb::unique_ptr<duckdb::QueryResult> result;
+	int ret = 0;
+
+	/*
+	 * SPI_connect/SPI_finish are managed outside the subtransaction to avoid
+	 * AfterTrigger query_depth tracking issues. SPI_connect doesn't do work
+	 * that needs transactional rollback �� it just sets up the SPI stack.
+	 * The subtransaction wraps only SPI_execute so that partial writes from
+	 * multi-statement batches can be atomically rolled back on PK violations.
+	 */
 	SPI_connect();
 	PushActiveSnapshot(GetTransactionSnapshot());
-
 	auto save_nestlevel = NewGUCNestLevel();
 	SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
 
-	// Execute the query in read-only mode
-	int ret = SPI_execute(query.c_str(), false, 0);
+	/* Allow the subtransaction to bypass DuckDB's sub-xact callback.
+	 * Everything is inside PG_TRY so the flag is always reset. */
+	SetAllowSubtransaction(true);
+	PG_TRY();
+	{
+		BeginInternalSubTransaction(NULL);
+		/* Switch back to caller's memory context (subtxn changes it) */
+		MemoryContextSwitchTo(oldcontext);
 
-	if (ret < 0) {
-		elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
+		ret = SPI_execute(query.c_str(), false, 0);
+
+		if (ret < 0) {
+			elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
+		}
+
+		/* Copy result data out of SPI memory before we disconnect */
+		SPITupleTable *tuptable = SPI_tuptable;
+
+		if (!tuptable) {
+			duckdb::vector<duckdb::string> names;
+			duckdb::StatementProperties properties;
+			duckdb::ClientProperties client_properties;
+			auto &allocator = duckdb::Allocator::DefaultAllocator();
+			auto empty_collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator);
+			result = duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+			    ConvertSPIResultToDuckStatementType(ret), properties, names, std::move(empty_collection),
+			    client_properties);
+		} else {
+			TupleDesc tupdesc = tuptable->tupdesc;
+			int num_columns = tupdesc->natts;
+			uint64 num_rows = tuptable->numvals;
+
+			duckdb::vector<duckdb::LogicalType> types;
+			duckdb::vector<duckdb::string> names;
+
+			for (int i = 0; i < num_columns; i++) {
+				Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
+				D_ASSERT(!attr->attisdropped);
+				names.push_back(NameStr(attr->attname));
+				types.push_back(ConvertPostgresToDuckColumnType(attr));
+			}
+
+			duckdb::ClientProperties client_properties;
+			auto &allocator = duckdb::Allocator::DefaultAllocator();
+			auto collection_p = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator, types);
+
+			for (idx_t row_idx = 0; row_idx < num_rows; row_idx += STANDARD_VECTOR_SIZE) {
+				idx_t chunk_size = duckdb::MinValue<int>(STANDARD_VECTOR_SIZE, num_rows - row_idx);
+				auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
+				chunk->Initialize(allocator, types, chunk_size);
+				InsertSPITupleTableIntoChunk(*chunk, tuptable, row_idx, chunk_size);
+				chunk->SetCardinality(chunk_size);
+				collection_p->Append(*chunk);
+			}
+
+			duckdb::StatementProperties properties;
+			result = duckdb::make_uniq<duckdb::MaterializedQueryResult>(duckdb::StatementType::SELECT_STATEMENT,
+			                                                            properties, names, std::move(collection_p),
+			                                                            client_properties);
+		}
+
+		/* Release subtransaction, then clean up SPI */
+		ReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(oldcontext);
+		CurrentResourceOwner = oldowner;
+		SetAllowSubtransaction(false);
 	}
+	PG_CATCH();
+	{
+		/* Switch to a safe memory context for error handling */
+		MemoryContextSwitchTo(oldcontext);
+		ErrorData *edata = CopyErrorData();
+		FlushErrorState();
 
-	// Get the result table
-	SPITupleTable *tuptable = SPI_tuptable;
-	if (!tuptable) {
+		/*
+		 * Roll back the subtransaction. This undoes all partial writes from
+		 * SPI_execute (e.g., some INSERTs in a batch succeeded but a later
+		 * PK violation on ducklake_snapshot needs all of them rolled back).
+		 * AtEOSubXact_SPI handles SPI state cleanup for connections opened
+		 * within the subtransaction, but since we opened SPI before the
+		 * subtransaction, it remains valid after rollback.
+		 */
+		RollbackAndReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(oldcontext);
+		CurrentResourceOwner = oldowner;
+		SetAllowSubtransaction(false);
+
+		/* Clean up SPI and snapshot normally */
 		AtEOXact_GUC(false, save_nestlevel);
 		PopActiveSnapshot();
 		SPI_finish();
-		IncrementDuckLakeCommandId(pg::GetCurrentCommandId() - cid_before_commit);
 
-		// Return an empty result
-		duckdb::vector<duckdb::string> names;
-		duckdb::StatementProperties properties;
-		duckdb::ClientProperties client_properties;
-
-		// Create an empty ColumnDataCollection instead of passing nullptr
-		auto &allocator = duckdb::Allocator::DefaultAllocator();
-		auto empty_collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator);
-
-		return duckdb::make_uniq<duckdb::MaterializedQueryResult>(ConvertSPIResultToDuckStatementType(ret), properties,
-		                                                          names, std::move(empty_collection),
-		                                                          client_properties);
+		/* Convert PG error to C++ exception for FlushChanges retry */
+		duckdb::string error_message = duckdb::string(edata->message ? edata->message : "Unknown SPI error");
+		FreeErrorData(edata);
+		throw duckdb::IOException("SPI error: %s", error_message);
 	}
+	PG_END_TRY();
 
-	TupleDesc tupdesc = tuptable->tupdesc;
-	int num_columns = tupdesc->natts;
-	uint64 num_rows = tuptable->numvals;
-
-	// Convert column types and names
-	duckdb::vector<duckdb::LogicalType> types;
-	duckdb::vector<duckdb::string> names;
-
-	for (int i = 0; i < num_columns; i++) {
-		Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
-
-		D_ASSERT(!attr->attisdropped);
-
-		// Get column name
-		names.push_back(NameStr(attr->attname));
-
-		// Convert Postgres type to DuckDB type
-		types.push_back(ConvertPostgresToDuckColumnType(attr));
-	}
-
-	// Create a ColumnDataCollection to store the results
-	duckdb::ClientProperties client_properties;
-	auto &allocator = duckdb::Allocator::DefaultAllocator();
-	auto collection_p = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator, types);
-
-	// Convert SPI rows to DuckDB DataChunks and append them
-	for (idx_t row_idx = 0; row_idx < num_rows; row_idx += STANDARD_VECTOR_SIZE) {
-		idx_t chunk_size = duckdb::MinValue<int>(STANDARD_VECTOR_SIZE, num_rows - row_idx);
-		auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
-		chunk->Initialize(allocator, types, chunk_size);
-		InsertSPITupleTableIntoChunk(*chunk, tuptable, row_idx, chunk_size);
-
-		chunk->SetCardinality(chunk_size);
-		collection_p->Append(*chunk);
-	}
-
+	/* Clean up SPI and snapshot on success */
 	AtEOXact_GUC(false, save_nestlevel);
 	PopActiveSnapshot();
 	SPI_finish();
-	IncrementDuckLakeCommandId(pg::GetCurrentCommandId() - cid_before_commit);
 
-	// Create and return the MaterializedQueryResult
-	duckdb::StatementProperties properties;
-	return duckdb::make_uniq<duckdb::MaterializedQueryResult>(duckdb::StatementType::SELECT_STATEMENT, properties,
-	                                                          names, std::move(collection_p), client_properties);
+	IncrementDuckLakeCommandId(pg::GetCurrentCommandId() - cid_before_commit);
+	return result;
 }
 
 PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction_)
     : DuckLakeMetadataManager(transaction_) {
+	// Eagerly initialize the DuckDB connection.  PgDuckLakeMetadataManager
+	// uses SPI for all metadata I/O, so the connection is never used for
+	// queries.  However, the retry path in FlushChanges() unconditionally
+	// dereferences `connection` for rollback/begin-transaction.  Calling
+	// GetConnection() here ensures it is non-NULL when that path runs.
+	transaction_.GetConnection();
 }
 
 PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {

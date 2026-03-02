@@ -19,6 +19,8 @@ void RegisterDuckdbTempTable(Oid relid);
 void UnregisterDuckdbTempTable(Oid relid);
 bool IsDuckdbTempTable(Oid relid);
 void RegisterDuckdbXactCallback();
+void SetAllowSubtransaction(bool allow);
+void PreCommitDuckDB();
 void AutocommitSingleStatementQueries();
 void MarkStatementNotTopLevel();
 void SetStatementTopLevel(bool top_level);
