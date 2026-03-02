@@ -1,0 +1,10 @@
+CREATE TABLE tx_commit_t (id int, v text) USING ducklake;
+
+BEGIN;
+INSERT INTO tx_commit_t VALUES (1, 'a');
+INSERT INTO tx_commit_t VALUES (2, 'b');
+COMMIT;
+
+SELECT * FROM tx_commit_t ORDER BY id;
+
+DROP TABLE tx_commit_t;

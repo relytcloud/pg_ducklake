@@ -27,8 +27,6 @@ extern "C" {
 #include "nodes/plannodes.h"
 
 #include "optimizer/planner.h"
-
-extern planner_hook_type prev_planner_hook;
 }
 
 namespace pgducklake {
@@ -54,9 +52,7 @@ struct DirectInsertContext {
 
 void RegisterDirectInsertNode();
 
-PlannedStmt *DucklakeDirectInsertPlannerHook(Query *parse,
-                                             const char *query_string,
-                                             int cursor_options,
-                                             ParamListInfo bound_params);
+PlannedStmt *TryCreateDirectInsertPlan(Query *parse,
+                                       ParamListInfo bound_params);
 
 } // namespace pgducklake

@@ -1,4 +1,5 @@
 .PHONY: clean-all \
+	check-isolation clean-isolation \
 	ducklake clean-ducklake \
 	pg_duckdb install-pg_duckdb clean-pg_duckdb
 
@@ -74,13 +75,19 @@ endif
 include Makefile.global
 
 installcheck: all install
-	$(MAKE) check-regression
+	$(MAKE) check-regression check-isolation
 
 check-regression:
 	$(MAKE) -C test/regression check-regression
 
 clean-regression:
 	$(MAKE) -C test/regression clean-regression
+
+check-isolation:
+	$(MAKE) -C test/isolation check-isolation
+
+clean-isolation:
+	$(MAKE) -C test/isolation clean-isolation
 
 # ---------------------------------------------------------------------------
 # Submodules
@@ -146,4 +153,4 @@ COMPILE.cxx.bc += $(PG_CXXFLAGS)
 # Shared library depends on ducklake static lib
 $(shlib): $(DUCKLAKE_STATIC_LIB)
 
-clean-all: clean clean-regression clean-pg_duckdb clean-ducklake
+clean-all: clean clean-regression clean-isolation clean-pg_duckdb clean-ducklake

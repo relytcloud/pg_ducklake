@@ -119,19 +119,8 @@ void RegisterDirectInsertNode() {
   RegisterCustomScanMethods(&direct_insert_scan_methods);
 }
 
-PlannedStmt *DucklakeDirectInsertPlannerHook(Query *parse,
-                                             const char *query_string,
-                                             int cursor_options,
-                                             ParamListInfo bound_params) {
-  // Check if optimization is enabled
-  if (!enable_direct_insert) {
-    if (prev_planner_hook)
-      return prev_planner_hook(parse, query_string, cursor_options,
-                               bound_params);
-    return standard_planner(parse, query_string, cursor_options, bound_params);
-  }
-
-  // Try to detect the pattern
+PlannedStmt *TryCreateDirectInsertPlan(Query *parse,
+                                       ParamListInfo bound_params) {
   DirectInsertContext context = {};
   if (TryDetectDirectInsertPattern(parse, bound_params, &context)) {
     ereport(DEBUG1, (errmsg("DuckLake direct insert: optimization enabled for "
@@ -141,11 +130,7 @@ PlannedStmt *DucklakeDirectInsertPlannerHook(Query *parse,
                             context.expected_row_count)));
     return CreateDirectInsertPlan(parse, &context);
   }
-
-  // Fall back to standard planner
-  if (prev_planner_hook)
-    return prev_planner_hook(parse, query_string, cursor_options, bound_params);
-  return standard_planner(parse, query_string, cursor_options, bound_params);
+  return nullptr;
 }
 
 static bool TryDetectDirectInsertPattern(Query *parse,

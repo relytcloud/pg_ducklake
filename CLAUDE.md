@@ -12,6 +12,7 @@ Its C++ code should use `namespace pgducklake`.
   - `src/pgducklake_duckdb.cpp`: DuckDB bridge, static extension load
   - `src/pgducklake_metadata_manager.cpp`: custom DuckLake metadata manager
 - regression tests in `test/regression/`
+- isolation tests in `test/isolation/`
 
 ## Build and Test Commands
 
@@ -25,11 +26,14 @@ PG_CONFIG=<pg_config> make installcheck
 
 # Run single test
 PG_CONFIG=<pg_config> make installcheck TEST=basic
+
+# Run only isolation tests
+PG_CONFIG=<pg_config> make check-isolation
 ```
 
 **IMPORTANT: Re-install `pg_duckdb` after modifying `third_party/pg_duckdb`.**
 
-Use regression tests to verify functionality as possible.
+Use regression and isolation tests to verify functionality as possible.
 
 ## Code Style
 

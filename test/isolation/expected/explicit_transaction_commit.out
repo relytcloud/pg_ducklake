@@ -1,0 +1,18 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_insert s2_before s1_commit s2_after
+step s1_begin: BEGIN;
+step s1_insert: INSERT INTO iso_tx_commit_t VALUES (1);
+step s2_before: SELECT count(*) FROM iso_tx_commit_t;
+count
+-----
+    0
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_after: SELECT count(*) FROM iso_tx_commit_t;
+count
+-----
+    1
+(1 row)
+
