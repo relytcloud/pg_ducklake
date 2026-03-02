@@ -31,7 +31,7 @@ extern "C" {
 extern planner_hook_type prev_planner_hook;
 }
 
-namespace pg_ducklake {
+namespace pgducklake {
 
 struct ParamInfo {
   int param_id;
@@ -59,4 +59,4 @@ PlannedStmt *DucklakeDirectInsertPlannerHook(Query *parse,
                                              int cursor_options,
                                              ParamListInfo bound_params);
 
-} // namespace pg_ducklake
+} // namespace pgducklake

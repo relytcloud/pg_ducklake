@@ -8,7 +8,6 @@
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
-#include "pgducklake/pgducklake_direct_insert.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -35,12 +34,12 @@ void _PG_init(void) {
   // Register callback for deferred static extension loading
   RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register DuckLake GUCs
-  pg_ducklake::RegisterGUCs();
+  pgducklake::RegisterGUCs();
   // Register custom scan node methods
-  pg_ducklake::RegisterDirectInsertNode();
+  pgducklake::RegisterDirectInsertNode();
   // Install planner hook after pg_duckdb (runs first due to LIFO order)
   prev_planner_hook = planner_hook;
-  planner_hook = pg_ducklake::DucklakeDirectInsertPlannerHook;
+  planner_hook = pgducklake::DucklakeDirectInsertPlannerHook;
 }
 
 } // extern "C"

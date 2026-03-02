@@ -9,7 +9,6 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
-#include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
 #include <duckdb/common/string_util.hpp>
@@ -200,7 +199,8 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 
   // Execute CREATE TABLE in DuckDB via raw_query
   const char *error_msg = nullptr;
-  int result = pgducklake::ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
+  int result =
+      pgducklake::ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to create DuckLake table: %s",
@@ -208,7 +208,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   }
 
   // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
-  if (IsA(parsetree, CreateTableAsStmt) && !pg_ducklake::ctas_skip_data) {
+  if (IsA(parsetree, CreateTableAsStmt) && !pgducklake::ctas_skip_data) {
     auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
     auto ctas_query = (Query *)ctas_stmt->query;
     const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
@@ -219,8 +219,8 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
     elog(DEBUG1, "CTAS data population: %s", insert_string.c_str());
 
     const char *insert_error_msg = nullptr;
-    int insert_result =
-        pgducklake::ExecuteDuckDBQuery(insert_string.c_str(), &insert_error_msg);
+    int insert_result = pgducklake::ExecuteDuckDBQuery(insert_string.c_str(),
+                                                       &insert_error_msg);
     if (insert_result != 0) {
       ereport(ERROR,
               (errcode(ERRCODE_INTERNAL_ERROR),

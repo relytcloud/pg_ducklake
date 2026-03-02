@@ -1,7 +1,8 @@
 /*
  * pgducklake_guc.cpp — DuckLake GUC definitions and registration.
  *
- * Defines extension-level configuration variables and registers them in _PG_init().
+ * Defines extension-level configuration variables and registers them in
+ * _PG_init().
  */
 
 #include "pgducklake/pgducklake_guc.hpp"
@@ -12,7 +13,7 @@ extern "C" {
 #include "utils/guc.h"
 }
 
-namespace pg_ducklake {
+namespace pgducklake {
 
 char *default_table_path = strdup("");
 double vacuum_delete_threshold = 0.1;
@@ -31,8 +32,8 @@ void RegisterGUCs() {
       "ducklake.vacuum_delete_threshold",
       "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a "
       "data file.",
-      NULL, &vacuum_delete_threshold, 0.1, 0.0, 1.0, PGC_USERSET, 0, NULL,
-      NULL, NULL);
+      NULL, &vacuum_delete_threshold, 0.1, 0.0, 1.0, PGC_USERSET, 0, NULL, NULL,
+      NULL);
 
   DefineCustomStringVariable(
       "ducklake.as_of_timestamp",
@@ -40,10 +41,11 @@ void RegisterGUCs() {
       "DuckLake table queries use AT (TIMESTAMP => 'value').",
       NULL, &as_of_timestamp, "", PGC_USERSET, 0, NULL, NULL, NULL);
 
-  DefineCustomBoolVariable(
-      "ducklake.enable_direct_insert",
-      "Enable direct insert optimization for INSERT ... SELECT UNNEST($n) statements.",
-      NULL, &enable_direct_insert, true, PGC_USERSET, 0, NULL, NULL, NULL);
+  DefineCustomBoolVariable("ducklake.enable_direct_insert",
+                           "Enable direct insert optimization for INSERT ... "
+                           "SELECT UNNEST($n) statements.",
+                           NULL, &enable_direct_insert, true, PGC_USERSET, 0,
+                           NULL, NULL, NULL);
 }
 
-} // namespace pg_ducklake
+} // namespace pgducklake

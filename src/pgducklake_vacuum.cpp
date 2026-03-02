@@ -52,7 +52,7 @@ extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
       duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
       "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
       ", delete_threshold => " +
-      std::to_string(pg_ducklake::vacuum_delete_threshold) + ")";
+      std::to_string(pgducklake::vacuum_delete_threshold) + ")";
 
   const char *error_msg = nullptr;
   int result =

@@ -4,6 +4,7 @@ This file provides guidance to AI coding assistants when working with code in th
 
 `pg_ducklake` is a PostgreSQL extension that extends `pg_duckdb` to support DuckLake, an open lakehouse format. This extension static-links `ducklake`, the official DuckDB extension, and loads it
 via DuckDB's `LoadStaticExtension<T>()`.
+Its C++ code should use `namespace pgducklake`.
 
 - header files in `include/`
 - implement files in `src/`
@@ -42,6 +43,8 @@ Use regression tests to verify functionality as possible.
 
 - Avoid using `extern "C"` to reference symbols from the same library. Instead, place it at the header file.
 - Use `extern "C"` only when necessary, such as when interfacing with third-party libraries.
+- Use `namespace pgducklake` for C++ extension code (do not use `namespace pg_ducklake`).
+- Use `pgducklake::` when qualifying symbols outside the namespace block.
 
 ### Imports
 
