@@ -1,15 +1,13 @@
 #pragma once
 
+#include "pgduckdb/pg/declarations.hpp"
+
 #include <common/ducklake_options.hpp>
 #include <common/ducklake_snapshot.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <storage/ducklake_metadata_info.hpp>
 #include <storage/ducklake_metadata_manager.hpp>
 #include <storage/ducklake_transaction.hpp>
-
-extern "C" {
-#include <postgres.h>
-}
 
 namespace pgducklake {
 

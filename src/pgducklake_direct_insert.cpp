@@ -32,6 +32,10 @@ extern "C" {
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
+#include "commands/explain.h"
+#if PG_VERSION_NUM >= 180000
+#include "commands/explain_format.h"
+#endif
 #include "executor/executor.h"
 #include "executor/spi.h"
 #include "nodes/extensible.h"
@@ -394,7 +398,9 @@ static PlannedStmt *CreateDirectInsertPlan(Query *parse,
   pstmt->parallelModeNeeded = false;
   pstmt->resultRelations = list_make1_int(parse->resultRelation);
   pstmt->rtable = parse->rtable;
+#if PG_VERSION_NUM >= 160000
   pstmt->permInfos = parse->rteperminfos;
+#endif
 
   // Create custom scan node
   CustomScan *cscan = makeNode(CustomScan);
