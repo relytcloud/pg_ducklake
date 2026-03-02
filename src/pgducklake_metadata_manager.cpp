@@ -1,8 +1,9 @@
 /*
- * pgducklake_metadata_manager.cpp — PostgreSQL-backed DuckLake metadata manager.
+ * pgducklake_metadata_manager.cpp — PostgreSQL-backed DuckLake metadata
+ * manager.
  *
- * Implements DuckLake metadata operations by translating DuckDB requests into SQL
- * against the ducklake_* metadata tables in PostgreSQL.
+ * Implements DuckLake metadata operations by translating DuckDB requests into
+ * SQL against the ducklake_* metadata tables in PostgreSQL.
  */
 
 #include "pgducklake/pgducklake_metadata_manager.hpp"
@@ -213,10 +214,27 @@ PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {}
 
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Query(duckdb::string query) {
-  DuckLakeMetadataManager::FillCatalogArgs(query, transaction.GetCatalog());
-  DuckLakeMetadataManager::FillSnapshotCommitArgs(query,
-                                                  transaction.GetCommitInfo());
-  // Execute the query using SPI and wrap the result
+  // DuckLakeMetadataManager::FillCatalogArgs(query, transaction.GetCatalog());
+  // DuckLakeMetadataManager::FillSnapshotCommitArgs(query,
+  //                                                 transaction.GetCommitInfo());
+
+  // Substitute catalog placeholders using our known constants directly.
+  // Avoid calling transaction.GetCatalog() here: during DuckLake
+  // initialization (FinalizeLoad → InitializeDuckLake → Execute), DuckDB has
+  // not yet made the AttachedDatabase reachable via the db_manager, so the
+  // catalog reference stored in DuckLakeTransaction is not yet safe to
+  // dereference through the normal DuckDB lookup path.
+  query = duckdb::StringUtil::Replace(query, "{METADATA_CATALOG}",
+                                      "\"" PGDUCKLAKE_PG_SCHEMA "\"");
+  query =
+      duckdb::StringUtil::Replace(query, "{METADATA_CATALOG_NAME_IDENTIFIER}",
+                                  "\"" PGDUCKLAKE_DUCKDB_CATALOG "\"");
+  query = duckdb::StringUtil::Replace(query, "{METADATA_CATALOG_NAME_LITERAL}",
+                                      "'" PGDUCKLAKE_DUCKDB_CATALOG "'");
+  query = duckdb::StringUtil::Replace(query, "{METADATA_SCHEMA_NAME_LITERAL}",
+                                      "'" PGDUCKLAKE_PG_SCHEMA "'");
+  query = duckdb::StringUtil::Replace(query, "{METADATA_SCHEMA_ESCAPED}",
+                                      "\"" PGDUCKLAKE_PG_SCHEMA "\"");
   return CreateSPIResult(query);
 }
 
@@ -581,6 +599,222 @@ duckdb::string PgDuckLakeMetadataManager::WrapWithListAggregation(
     fields_part += "'" + entry.first + "', " + entry.second;
   }
   return "json_agg(json_build_object(" + fields_part + "))";
+}
+
+// Helper functions for direct insert optimization
+bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out,
+                          uint64_t *schema_version_out) {
+  int ret;
+  bool result = false;
+
+  if ((ret = SPI_connect()) < 0) {
+    elog(ERROR, "SPI_connect failed: %d", ret);
+    return false;
+  }
+
+  HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(table_oid));
+  if (!HeapTupleIsValid(tp)) {
+    SPI_finish();
+    return false;
+  }
+
+  Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+  char *table_name = NameStr(reltup->relname);
+  Oid schema_oid = reltup->relnamespace;
+  ReleaseSysCache(tp);
+
+  HeapTuple ntp = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(schema_oid));
+  if (!HeapTupleIsValid(ntp)) {
+    SPI_finish();
+    return false;
+  }
+
+  Form_pg_namespace nstup = (Form_pg_namespace)GETSTRUCT(ntp);
+  char *schema_name = NameStr(nstup->nspname);
+  ReleaseSysCache(ntp);
+
+  StringInfoData query;
+  initStringInfo(&query);
+  appendStringInfo(
+      &query,
+      "SELECT dt.table_id, idt.schema_version "
+      "FROM ducklake.ducklake_table dt "
+      "JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id "
+      "LEFT JOIN ducklake.ducklake_inlined_data_tables idt ON idt.table_id = "
+      "dt.table_id "
+      "WHERE dt.table_name = '%s' "
+      "AND ds.schema_name = '%s' "
+      "AND dt.end_snapshot IS NULL "
+      "AND ds.end_snapshot IS NULL "
+      "LIMIT 1",
+      table_name, schema_name);
+
+  ret = SPI_execute(query.data, true, 1);
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    HeapTuple tuple = SPI_tuptable->vals[0];
+    bool isnull;
+
+    Datum table_id_datum =
+        SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+    if (!isnull) {
+      uint64_t table_id = DatumGetInt64(table_id_datum);
+
+      Datum schema_version_datum =
+          SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
+      if (!isnull) {
+        uint64_t schema_version = DatumGetInt64(schema_version_datum);
+        *table_id_out = table_id;
+        *schema_version_out = schema_version;
+        result = true;
+      }
+    }
+  }
+
+  SPI_finish();
+  return result;
+}
+
+uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
+  int ret;
+  uint64_t next_row_id = 0;
+
+  if ((ret = SPI_connect()) < 0) {
+    elog(ERROR, "SPI_connect failed: %d", ret);
+    return 0;
+  }
+
+  StringInfoData query;
+  initStringInfo(&query);
+  appendStringInfo(&query,
+                   "SELECT COALESCE(MAX(row_id), -1) + 1 "
+                   "FROM ducklake.ducklake_inlined_data_%llu_%llu",
+                   (unsigned long long)table_id,
+                   (unsigned long long)schema_version);
+
+  ret = SPI_execute(query.data, true, 1);
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    HeapTuple tuple = SPI_tuptable->vals[0];
+    bool isnull;
+    Datum row_id_datum =
+        SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+    if (!isnull) {
+      next_row_id = DatumGetInt64(row_id_datum);
+    }
+  }
+
+  SPI_finish();
+  return next_row_id;
+}
+
+uint64_t GetNextSnapshotId() {
+  int ret;
+  uint64_t next_snapshot_id = 1; // Default to 1 if no snapshots exist yet
+
+  if ((ret = SPI_connect()) < 0) {
+    elog(ERROR, "SPI_connect failed: %d", ret);
+    return next_snapshot_id;
+  }
+
+  const char *query = "SELECT COALESCE(MAX(snapshot_id), 0) + 1 FROM "
+                      "ducklake.ducklake_snapshot";
+
+  ret = SPI_execute(query, true, 1);
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    HeapTuple tuple = SPI_tuptable->vals[0];
+    bool isnull;
+    Datum snapshot_id_datum =
+        SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+    if (!isnull) {
+      next_snapshot_id = DatumGetInt64(snapshot_id_datum);
+    }
+  }
+
+  SPI_finish();
+  return next_snapshot_id;
+}
+
+void CreateSnapshotForDirectInsert(uint64_t snapshot_id,
+                                   uint64_t schema_version) {
+  int ret;
+
+  elog(DEBUG1,
+       "CreateSnapshotForDirectInsert: creating snapshot %llu with "
+       "schema_version %llu",
+       (unsigned long long)snapshot_id, (unsigned long long)schema_version);
+
+  if ((ret = SPI_connect()) < 0) {
+    elog(ERROR, "CreateSnapshotForDirectInsert: SPI_connect failed: %d", ret);
+    return;
+  }
+
+  const char *query_state =
+      "SELECT COALESCE(MAX(next_catalog_id), 1) AS next_catalog_id, "
+      "COALESCE(MAX(next_file_id), 0) AS next_file_id "
+      "FROM ducklake.ducklake_snapshot";
+
+  uint64_t next_catalog_id = 1;
+  uint64_t next_file_id = 0;
+
+  ret = SPI_execute(query_state, true, 1);
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    HeapTuple tuple = SPI_tuptable->vals[0];
+    TupleDesc tupdesc = SPI_tuptable->tupdesc;
+    bool isnull;
+
+    Datum catalog_id_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
+    if (!isnull) {
+      next_catalog_id = DatumGetInt64(catalog_id_datum);
+    }
+
+    Datum file_id_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+    if (!isnull) {
+      next_file_id = DatumGetInt64(file_id_datum);
+    }
+  }
+
+  StringInfoData snapshot_insert;
+  initStringInfo(&snapshot_insert);
+  appendStringInfo(
+      &snapshot_insert,
+      "INSERT INTO ducklake.ducklake_snapshot "
+      "(snapshot_id, snapshot_time, schema_version, next_catalog_id, "
+      "next_file_id) "
+      "VALUES (%llu, NOW(), %llu, %llu, %llu)",
+      (unsigned long long)snapshot_id, (unsigned long long)schema_version,
+      (unsigned long long)next_catalog_id, (unsigned long long)next_file_id);
+
+  elog(DEBUG1, "CreateSnapshotForDirectInsert: executing %s",
+       snapshot_insert.data);
+  ret = SPI_execute(snapshot_insert.data, false, 0);
+  if (ret != SPI_OK_INSERT) {
+    elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot: %d",
+         ret);
+  }
+
+  // Build INSERT for ducklake_snapshot_changes
+  // Use a simple description for the changes_made field
+  StringInfoData changes_insert;
+  initStringInfo(&changes_insert);
+  appendStringInfo(
+      &changes_insert,
+      "INSERT INTO ducklake.ducklake_snapshot_changes "
+      "(snapshot_id, changes_made, author, commit_message, commit_extra_info) "
+      "VALUES (%llu, 'inlined_data_insert', NULL, NULL, NULL)",
+      (unsigned long long)snapshot_id);
+
+  elog(DEBUG1, "CreateSnapshotForDirectInsert: executing %s",
+       changes_insert.data);
+  ret = SPI_execute(changes_insert.data, false, 0);
+  if (ret != SPI_OK_INSERT) {
+    elog(ERROR,
+         "CreateSnapshotForDirectInsert: failed to insert snapshot changes: %d",
+         ret);
+  }
+
+  SPI_finish();
+  elog(DEBUG1,
+       "CreateSnapshotForDirectInsert: successfully created snapshot %llu",
+       (unsigned long long)snapshot_id);
 }
 
 } // namespace pgducklake

@@ -17,7 +17,7 @@ namespace pg_ducklake {
 char *default_table_path = strdup("");
 double vacuum_delete_threshold = 0.1;
 char *as_of_timestamp = strdup("");
-bool enable_inline_bypass = true;
+bool enable_direct_insert = true;
 bool ctas_skip_data = false;
 
 void RegisterGUCs() {
@@ -41,10 +41,9 @@ void RegisterGUCs() {
       NULL, &as_of_timestamp, "", PGC_USERSET, 0, NULL, NULL, NULL);
 
   DefineCustomBoolVariable(
-      "ducklake.enable_inline_bypass",
-      "Enable the DuckLake inline bypass optimization for INSERT ... SELECT "
-      "UNNEST($n) statements.",
-      NULL, &enable_inline_bypass, true, PGC_USERSET, 0, NULL, NULL, NULL);
+      "ducklake.enable_direct_insert",
+      "Enable direct insert optimization for INSERT ... SELECT UNNEST($n) statements.",
+      NULL, &enable_direct_insert, true, PGC_USERSET, 0, NULL, NULL, NULL);
 }
 
 } // namespace pg_ducklake

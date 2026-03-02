@@ -7,6 +7,10 @@
 #include <storage/ducklake_metadata_manager.hpp>
 #include <storage/ducklake_transaction.hpp>
 
+extern "C" {
+#include <postgres.h>
+}
+
 namespace pgducklake {
 
 class PgDuckLakeMetadataManager : public duckdb::DuckLakeMetadataManager {
@@ -33,7 +37,7 @@ public:
     return IsInitialized();
   }
 
-  // Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewite
+  // Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewrite
   // them in PGSQL.
   duckdb::string CastStatsToTarget(const duckdb::string &stats,
                                    const duckdb::LogicalType &type) override;
@@ -50,5 +54,13 @@ protected:
       const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields)
       const override;
 };
+
+// Helper functions for direct insert optimization
+bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out,
+                          uint64_t *schema_version_out);
+uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version);
+uint64_t GetNextSnapshotId();
+void CreateSnapshotForDirectInsert(uint64_t snapshot_id,
+                                   uint64_t schema_version);
 
 } // namespace pgducklake

@@ -6,8 +6,10 @@
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
+#include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
 #include <duckdb/common/string_util.hpp>
@@ -31,9 +33,8 @@ extern "C" {
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
 
-/*
- * Look up the OID of duckdb.raw_query(text), cached per backend.
- */
+namespace pgducklake {
+
 static Oid GetRawQueryFuncOid() {
   static Oid cached = InvalidOid;
   if (!OidIsValid(cached)) {
@@ -46,10 +47,7 @@ static Oid GetRawQueryFuncOid() {
   return cached;
 }
 
-/*
- * Call duckdb.raw_query()
- */
-static inline void DuckdbRawQuery(const char *query) {
+static void DuckdbRawQuery(const char *query) {
   OidFunctionCall1(GetRawQueryFuncOid(), CStringGetTextDatum(query));
 }
 
@@ -60,7 +58,7 @@ static inline void DuckdbRawQuery(const char *query) {
  * Returns 0 on success, 1 on error.
  * On error, sets *errmsg_out to the error message (if non-null).
  */
-extern "C" int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
+int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   static thread_local std::string last_error;
 
   // Volatile to survive PG_CATCH longjmp
@@ -98,6 +96,8 @@ extern "C" int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   return result;
 }
 
+} // namespace pgducklake
+
 extern "C" {
 
 DECLARE_PG_FUNCTION(ducklake_initialize) {
@@ -116,7 +116,7 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
          errmsg("DuckLake reserved schema \"ducklake\" is already in use")));
   }
   // force creating DuckDB instance
-  ExecuteDuckDBQuery("SELECT 1", NULL);
+  pgducklake::ExecuteDuckDBQuery("SELECT 1", NULL);
 
   PG_RETURN_VOID();
 }
@@ -200,7 +200,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 
   // Execute CREATE TABLE in DuckDB via raw_query
   const char *error_msg = nullptr;
-  int result = ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to create DuckLake table: %s",
@@ -220,7 +220,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 
     const char *insert_error_msg = nullptr;
     int insert_result =
-        ExecuteDuckDBQuery(insert_string.c_str(), &insert_error_msg);
+        pgducklake::ExecuteDuckDBQuery(insert_string.c_str(), &insert_error_msg);
     if (insert_result != 0) {
       ereport(ERROR,
               (errcode(ERRCODE_INTERNAL_ERROR),
@@ -296,7 +296,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
     elog(DEBUG1, "Dropping DuckLake table: %s", drop_ddl.c_str());
 
     const char *error_msg = nullptr;
-    int result = ExecuteDuckDBQuery(drop_ddl.c_str(), &error_msg);
+    int result = pgducklake::ExecuteDuckDBQuery(drop_ddl.c_str(), &error_msg);
     if (result != 0) {
       // Log warning but don't fail - table might already be gone
       elog(WARNING, "failed to drop DuckLake table %s.%s: %s", schema_name,
@@ -339,7 +339,7 @@ DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
   }
 
   const char *error_msg = nullptr;
-  int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to clean up old files: %s",
@@ -378,7 +378,7 @@ DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
   query += ")";
 
   const char *error_msg = nullptr;
-  int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to flush inlined data: %s",
@@ -475,7 +475,7 @@ DECLARE_PG_FUNCTION(ducklake_set_option) {
   elog(DEBUG2, "[PGDuckDB] Executing set_option: %s", query.c_str());
 
   const char *error_msg = nullptr;
-  int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to set DuckLake option: %s",
@@ -544,7 +544,7 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
   elog(DEBUG1, "ALTER TABLE DDL for DuckLake: %s", ddl_str);
 
   const char *error_msg = nullptr;
-  int result = ExecuteDuckDBQuery(ddl_str, &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(ddl_str, &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to alter DuckLake table: %s",

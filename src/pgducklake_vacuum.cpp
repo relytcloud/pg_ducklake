@@ -6,6 +6,7 @@
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 
 #include <duckdb/parser/keyword_helper.hpp>
@@ -17,9 +18,6 @@ extern "C" {
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 }
-
-/* Defined in pgducklake_ddl.cpp */
-extern "C" int ExecuteDuckDBQuery(const char *query, const char **errmsg_out);
 
 extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
                                    BufferAccessStrategy bstrategy) {
@@ -35,9 +33,8 @@ extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
   bool verbose = params->options & VACOPT_VERBOSE;
 
   if (verbose) {
-    ereport(INFO,
-            (errmsg("vacuuming ducklake table \"%s.%s\"", schema_name,
-                    relname)));
+    ereport(INFO, (errmsg("vacuuming ducklake table \"%s.%s\"", schema_name,
+                          relname)));
   }
 
   std::string db_name(PGDUCKLAKE_DUCKDB_CATALOG);
@@ -53,13 +50,13 @@ extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
       "SELECT * FROM ducklake_rewrite_data_files(" +
       duckdb::KeywordHelper::WriteQuoted(db_name, '\'') + ", " +
       duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
-      "schema=" +
-      duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
+      "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
       ", delete_threshold => " +
       std::to_string(pg_ducklake::vacuum_delete_threshold) + ")";
 
   const char *error_msg = nullptr;
-  int result = ExecuteDuckDBQuery(rewrite_query.c_str(), &error_msg);
+  int result =
+      pgducklake::ExecuteDuckDBQuery(rewrite_query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to rewrite data files: %s",
@@ -75,10 +72,10 @@ extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
       "SELECT * FROM ducklake_merge_adjacent_files(" +
       duckdb::KeywordHelper::WriteQuoted(db_name, '\'') + ", " +
       duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
-      "schema=" +
-      duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') + ")";
+      "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
+      ")";
 
-  result = ExecuteDuckDBQuery(merge_query.c_str(), &error_msg);
+  result = pgducklake::ExecuteDuckDBQuery(merge_query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to merge adjacent files: %s",

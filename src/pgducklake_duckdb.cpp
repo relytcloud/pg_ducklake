@@ -9,12 +9,13 @@
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
-#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "ducklake_extension.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
+
 #include <filesystem>
 
 extern "C" {
@@ -28,8 +29,6 @@ extern "C" {
 void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
   db->LoadStaticExtension<duckdb::DucklakeExtension>();
-
-  auto context = static_cast<duckdb::ClientContext *>(context_ptr);
 
   duckdb::DuckLakeMetadataManager::Register(
       PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
@@ -53,9 +52,10 @@ void ducklake_load_extension(void *db_ptr, void *context_ptr) {
 
   elog(DEBUG1, "Executing query: %s", query.c_str());
 
-  auto res = context->Query(query, false);
-  if (res->HasError()) {
-    elog(ERROR, "Failed to execute query, error: %s", res->GetError().c_str());
-    res->ThrowError();
+  const char *errmsg;
+  int ret = pgducklake::ExecuteDuckDBQuery(query.c_str(), &errmsg);
+
+  if (ret != 0) {
+    elog(ERROR, "Failed to execute query, error: %s", errmsg);
   }
 }
