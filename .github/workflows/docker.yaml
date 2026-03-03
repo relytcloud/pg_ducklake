@@ -199,7 +199,6 @@ jobs:
       - name: Run README scenarios
         run: |
           docker run -d --name pgducklake \
-            -p 5432:5432 \
             -e POSTGRES_PASSWORD=duckdb \
             pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
           until docker exec pgducklake pg_isready -U postgres; do sleep 1; done
