@@ -14,6 +14,7 @@
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
+#include "pgduckdb/pgduckdb_contracts.h"
 
 extern "C" {
 #include "postgres.h"
@@ -66,7 +67,7 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
                          ParamListInfo params,
                          struct QueryEnvironment *query_env, DestReceiver *dest,
                          QueryCompletion *qc) {
-  if (IsCommitUtilityStmt(pstmt)) {
+  if (IsCommitUtilityStmt(pstmt) && DuckdbIsInitialized()) {
     elog(DEBUG1, "pg_ducklake utility hook caught COMMIT");
     ForceDuckDBCommitOnExplicitCommit();
   }
