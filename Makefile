@@ -1,4 +1,4 @@
-.PHONY: clean-all \
+.PHONY: FORCE clean-all \
 	check-isolation clean-isolation \
 	ducklake clean-ducklake \
 	pg_duckdb install-pg_duckdb clean-pg_duckdb
@@ -74,6 +74,8 @@ endif
 # ---------------------------------------------------------------------------
 include Makefile.global
 
+install: install-pg_duckdb
+
 installcheck: all install
 	$(MAKE) check-regression check-isolation
 
@@ -112,7 +114,7 @@ PG_DUCKDB_TARGET = $(PG_DUCKDB_DIR)/pg_duckdb$(DLSUFFIX)
 
 pg_duckdb: $(PG_DUCKDB_TARGET)
 
-$(PG_DUCKDB_TARGET): $(PG_DUCKDB_HEAD)
+$(PG_DUCKDB_TARGET): $(PG_DUCKDB_HEAD) FORCE
 	DUCKDB_BUILD_TYPE=$(DUCKDB_BUILD_TYPE) \
 	$(MAKE) -C $(PG_DUCKDB_DIR)
 
@@ -127,7 +129,7 @@ clean-pg_duckdb:
 # ---------------------------------------------------------------------------
 ducklake: $(DUCKLAKE_STATIC_LIB)
 
-$(DUCKLAKE_STATIC_LIB): $(DUCKLAKE_HEAD) $(DUCKDB_HEAD)
+$(DUCKLAKE_STATIC_LIB): $(DUCKLAKE_HEAD) $(DUCKDB_HEAD) FORCE
 	DUCKDB_SRCDIR=$(DUCKDB_SRC_DIR) \
 	CMAKE_VARS="-DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0" \
 	DISABLE_SANITIZER=1 \
