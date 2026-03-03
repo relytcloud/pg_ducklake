@@ -1,0 +1,14 @@
+-- Regression: hybrid query combining a heap scan and a DuckLake scan must not
+-- hang or error.  Previously, count_tuples_only launched parallel workers whose
+-- EnterParallelMode() blocked DuckLake metadata reads.
+CREATE TABLE repro_heap(id int PRIMARY KEY, val text);
+INSERT INTO repro_heap VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+CREATE TABLE repro_lake(id int, val text) USING ducklake;
+INSERT INTO repro_lake VALUES (1, 'x'), (2, 'y');
+
+SELECT (SELECT count(*) FROM repro_heap) AS heap_count,
+       (SELECT count(*) FROM repro_lake) AS lake_count;
+
+DROP TABLE repro_lake;
+DROP TABLE repro_heap;
