@@ -38,7 +38,6 @@ extern "C" {
 #include "executor/spi.h"
 #include "utils/elog.h"
 #include "utils/fmgroids.h"
-#include "utils/guc.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 }
@@ -115,21 +114,31 @@ static void InsertSPITupleTableIntoChunk(duckdb::DataChunk &output,
 }
 
 
+/*
+ * RAII guard for pg_duckdb's GlobalProcessLock.  DuckLake metadata reads run
+ * on a DuckDB worker thread that shares the PG backend with other DuckDB
+ * threads.  We must hold this lock while calling any PG API (SPI, snapshots,
+ * etc.) to prevent concurrent access from other DuckDB threads.
+ */
+class GlobalProcessLockGuard {
+public:
+  GlobalProcessLockGuard() { DuckdbLockGlobalProcess(); }
+  ~GlobalProcessLockGuard() { DuckdbUnlockGlobalProcess(); }
+  GlobalProcessLockGuard(const GlobalProcessLockGuard &) = delete;
+  GlobalProcessLockGuard &operator=(const GlobalProcessLockGuard &) = delete;
+};
+
 static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIResult(const duckdb::string &query) {
   elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
 
+  GlobalProcessLockGuard global_lock;
   PostgresScopedStackReset scoped_stack_reset;
   UnsafeCommandIdGuard command_id_guard;
 
   SPI_connect();
   PushActiveSnapshot(GetTransactionSnapshot());
 
-  auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
-                  PGC_S_SESSION);
-
-  // Execute the query in read-only mode
   int ret = SPI_execute(query.c_str(), false, 0);
 
   if (ret < 0) {
@@ -139,7 +148,6 @@ CreateSPIResult(const duckdb::string &query) {
   // Get the result table
   SPITupleTable *tuptable = SPI_tuptable;
   if (!tuptable) {
-    AtEOXact_GUC(false, save_nestlevel);
     PopActiveSnapshot();
     SPI_finish();
 
@@ -196,7 +204,6 @@ CreateSPIResult(const duckdb::string &query) {
     collection_p->Append(*chunk);
   }
 
-  AtEOXact_GUC(false, save_nestlevel);
   PopActiveSnapshot();
   SPI_finish();
 
@@ -238,14 +245,12 @@ static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
   elog(DEBUG1, "CreateSPIExecuteInSubtransaction: %s", query.c_str());
 
+  GlobalProcessLockGuard global_lock;
   PostgresScopedStackReset scoped_stack_reset;
   UnsafeCommandIdGuard command_id_guard;
 
   SPI_connect();
   PushActiveSnapshot(GetTransactionSnapshot());
-  auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
-                  PGC_S_SESSION);
 
   MemoryContext old_context = CurrentMemoryContext;
   duckdb::string error_message;
@@ -282,7 +287,6 @@ CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
     }
   }
 
-  AtEOXact_GUC(false, save_nestlevel);
   PopActiveSnapshot();
   SPI_finish();
 

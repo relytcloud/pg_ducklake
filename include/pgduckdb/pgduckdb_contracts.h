@@ -19,6 +19,8 @@ void DuckdbUnsafeSetNextExpectedCommandId(uint32_t command_id);
 // pg_ducklake uses this to wrap metadata commit writes so DuckLake's retry loop
 // can catch and recover from constraint conflicts without crashing the backend.
 void DuckdbAllowSubtransaction(bool allow);
+void DuckdbLockGlobalProcess(void);
+void DuckdbUnlockGlobalProcess(void);
 
 #ifdef __cplusplus
 } // extern "C"
