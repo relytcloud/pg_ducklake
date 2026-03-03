@@ -21,10 +21,12 @@ public:
     return duckdb::make_uniq<PgDuckLakeMetadataManager>(transaction);
   }
 
-  virtual duckdb::unique_ptr<duckdb::QueryResult>
-  Execute(duckdb::string query) override;
-  virtual duckdb::unique_ptr<duckdb::QueryResult>
+  duckdb::unique_ptr<duckdb::QueryResult> Execute(duckdb::string query) override;
+  duckdb::unique_ptr<duckdb::QueryResult>
   Execute(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
+  duckdb::unique_ptr<duckdb::QueryResult>
+  ExecuteCommit(duckdb::DuckLakeSnapshot snapshot,
+                duckdb::string query) override;
 
   duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::string query) override;
   duckdb::unique_ptr<duckdb::QueryResult>

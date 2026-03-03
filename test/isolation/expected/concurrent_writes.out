@@ -1,0 +1,43 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_insert s1_commit s2_begin s2_insert s2_count s2_commit
+step s1_begin: BEGIN;
+step s1_insert: INSERT INTO iso_conc_write_t VALUES (1);
+step s1_commit: COMMIT;
+step s2_begin: BEGIN;
+step s2_insert: INSERT INTO iso_conc_write_t VALUES (2);
+step s2_count: SELECT count(*) FROM iso_conc_write_t;
+count
+-----
+    2
+(1 row)
+
+step s2_commit: COMMIT;
+
+starting permutation: s1_begin s2_begin s1_insert s2_insert s1_commit s2_count s2_commit
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_insert: INSERT INTO iso_conc_write_t VALUES (1);
+step s2_insert: INSERT INTO iso_conc_write_t VALUES (2);
+step s1_commit: COMMIT;
+step s2_count: SELECT count(*) FROM iso_conc_write_t;
+count
+-----
+    1
+(1 row)
+
+step s2_commit: COMMIT;
+
+starting permutation: s1_begin s2_begin s1_insert s2_insert s2_commit s1_count s1_commit
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_insert: INSERT INTO iso_conc_write_t VALUES (1);
+step s2_insert: INSERT INTO iso_conc_write_t VALUES (2);
+step s2_commit: COMMIT;
+step s1_count: SELECT count(*) FROM iso_conc_write_t;
+count
+-----
+    1
+(1 row)
+
+step s1_commit: COMMIT;

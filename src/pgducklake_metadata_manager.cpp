@@ -114,6 +114,7 @@ static void InsertSPITupleTableIntoChunk(duckdb::DataChunk &output,
   }
 }
 
+
 static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIResult(const duckdb::string &query) {
   elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
@@ -206,24 +207,13 @@ CreateSPIResult(const duckdb::string &query) {
       std::move(collection_p), client_properties);
 }
 
-PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(
-    duckdb::DuckLakeTransaction &transaction_)
-    : DuckLakeMetadataManager(transaction_) {}
-
-PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {}
-
-duckdb::unique_ptr<duckdb::QueryResult>
-PgDuckLakeMetadataManager::Query(duckdb::string query) {
-  // DuckLakeMetadataManager::FillCatalogArgs(query, transaction.GetCatalog());
-  // DuckLakeMetadataManager::FillSnapshotCommitArgs(query,
-  //                                                 transaction.GetCommitInfo());
-
-  // Substitute catalog placeholders using our known constants directly.
-  // Avoid calling transaction.GetCatalog() here: during DuckLake
-  // initialization (FinalizeLoad → InitializeDuckLake → Execute), DuckDB has
-  // not yet made the AttachedDatabase reachable via the db_manager, so the
-  // catalog reference stored in DuckLakeTransaction is not yet safe to
-  // dereference through the normal DuckDB lookup path.
+/*
+ * Substitute DuckLake catalog/schema placeholders with the PostgreSQL schema
+ * constants. We avoid calling transaction.GetCatalog() here because during
+ * DuckLake initialization (FinalizeLoad → InitializeDuckLake → Execute), the
+ * AttachedDatabase is not yet reachable via the db_manager.
+ */
+static void SubstituteCatalogPlaceholders(duckdb::string &query) {
   query = duckdb::StringUtil::Replace(query, "{METADATA_CATALOG}",
                                       "\"" PGDUCKLAKE_PG_SCHEMA "\"");
   query =
@@ -235,28 +225,120 @@ PgDuckLakeMetadataManager::Query(duckdb::string query) {
                                       "'" PGDUCKLAKE_PG_SCHEMA "'");
   query = duckdb::StringUtil::Replace(query, "{METADATA_SCHEMA_ESCAPED}",
                                       "\"" PGDUCKLAKE_PG_SCHEMA "\"");
+}
+
+/*
+ * Execute a write query in a subtransaction and convert any PostgreSQL ERROR
+ * into a duckdb::TransactionException. This allows DuckLake's FlushChanges()
+ * retry loop to intercept duplicate-key / unique-constraint failures that
+ * arise from concurrent commits, rather than having a PostgreSQL longjmp
+ * bypass the C++ catch block and crash the backend.
+ */
+static duckdb::unique_ptr<duckdb::QueryResult>
+CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
+  elog(DEBUG1, "CreateSPIExecuteInSubtransaction: %s", query.c_str());
+
+  PostgresScopedStackReset scoped_stack_reset;
+  UnsafeCommandIdGuard command_id_guard;
+
+  SPI_connect();
+  PushActiveSnapshot(GetTransactionSnapshot());
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
+                  PGC_S_SESSION);
+
+  MemoryContext old_context = CurrentMemoryContext;
+  duckdb::string error_message;
+  bool had_error = false;
+  int ret = -1;
+
+  DuckdbAllowSubtransaction(true);
+  BeginInternalSubTransaction(NULL);
+  DuckdbAllowSubtransaction(false);
+  PG_TRY();
+  {
+    ret = SPI_execute(query.c_str(), false, 0);
+  }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(old_context);
+    ErrorData *edata = CopyErrorData();
+    error_message = edata->message;
+    FreeErrorData(edata);
+    FlushErrorState();
+    had_error = true;
+    RollbackAndReleaseCurrentSubTransaction();
+  }
+  PG_END_TRY();
+
+  if (!had_error) {
+    if (ret < 0) {
+      error_message =
+          duckdb::string("SPI execute failed: ") + SPI_result_code_string(ret);
+      had_error = true;
+      RollbackAndReleaseCurrentSubTransaction();
+    } else {
+      ReleaseCurrentSubTransaction();
+    }
+  }
+
+  AtEOXact_GUC(false, save_nestlevel);
+  PopActiveSnapshot();
+  SPI_finish();
+
+  if (had_error) {
+    throw duckdb::TransactionException("%s", error_message.c_str());
+  }
+
+  duckdb::vector<duckdb::string> names;
+  duckdb::StatementProperties properties;
+  duckdb::ClientProperties client_properties;
+  auto &allocator = duckdb::Allocator::DefaultAllocator();
+  auto empty_collection =
+      duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator);
+  return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+      duckdb::StatementType::EXECUTE_STATEMENT, properties, names,
+      std::move(empty_collection), client_properties);
+}
+
+PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(
+    duckdb::DuckLakeTransaction &transaction_)
+    : DuckLakeMetadataManager(transaction_) {}
+
+PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {}
+
+duckdb::unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::Query(duckdb::string query) {
+  SubstituteCatalogPlaceholders(query);
   return CreateSPIResult(query);
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot,
                                  duckdb::string query) {
-  // Fill snapshot args into the query
   DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
   return Query(query);
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Execute(duckdb::string query) {
-  return Query(query);
+  SubstituteCatalogPlaceholders(query);
+  return CreateSPIResult(query);
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Execute(duckdb::DuckLakeSnapshot snapshot,
                                    duckdb::string query) {
-  // Fill snapshot args into the query
   DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
-  return Query(query);
+  return Execute(query);
+}
+
+duckdb::unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::ExecuteCommit(duckdb::DuckLakeSnapshot snapshot,
+                                         duckdb::string query) {
+  DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
+  SubstituteCatalogPlaceholders(query);
+  return CreateSPIExecuteInSubtransaction(query);
 }
 
 bool PgDuckLakeMetadataManager::IsInitialized() {
