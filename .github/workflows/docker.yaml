@@ -98,50 +98,17 @@ jobs:
             postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
             postgres.tags=${{ steps.params.outputs.latest_image }}
 
-  docker_merge:
-    name: Merge Docker image for Postgres ${{ matrix.postgres }}
+  clickbench_test:
+    name: ClickBench for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       matrix:
         postgres: ["14", "15", "16", "17", "18"]
-
-    runs-on: ubuntu-24.04
-    needs: docker_build
-    steps:
-      - name: Login to Docker Hub
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: docker/login-action@v3
-        with:
-          username: pgducklake
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Merge images
-        run: |
-          docker pull --platform linux/amd64 pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}
-          docker pull --platform linux/arm64 pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}
-
-          BRANCH="${{ needs.docker_build.outputs.branch_tag }}"
-
-          echo "Merging multi-arch image to ci-builds."
-          docker buildx imagetools create \
-            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${BRANCH}         \
-            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }} \
-            pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }} \
-            pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}
-
-          docker buildx imagetools inspect pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}
-
-  clickbench_test:
-    name: ClickBench for Postgres ${{ matrix.postgres }} on ${{ matrix.platform }}
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    strategy:
-      matrix:
-        postgres: ["14", "15", "16", "17", "18"]
-        platform: ["amd64", "arm64"]
+        runner: ["ubuntu-24.04", "ubuntu-24.04-arm"]
       fail-fast: false
 
-    runs-on: ${{ matrix.platform == 'amd64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
-    needs: docker_merge
+    runs-on: ${{ matrix.runner }}
+    needs: docker_build
 
     steps:
       - name: Login to Docker Hub
@@ -149,6 +116,16 @@ jobs:
         with:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute job parameters
+        id: params
+        run: |
+          if [ "${{ matrix.runner }}" = "ubuntu-24.04" ]; then
+            PLATFORM=amd64
+          else
+            PLATFORM=arm64
+          fi
+          echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
 
       - name: Checkout ClickBench repository
         uses: actions/checkout@v4
@@ -158,38 +135,45 @@ jobs:
 
       - name: Pull test image
         run: |
-          docker pull pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}
+          docker pull pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
 
       - name: Run ClickBench
         working-directory: clickbench/pg_ducklake
         run: |
           # Replace docker image in benchmark.sh with our test image
-          sed -i "s|pgducklake/pgducklake:18-main|pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}|g" benchmark.sh
+          sed -i "s|pgducklake/pgducklake:18-main|pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}|g" benchmark.sh
           # Docker is pre-installed on GitHub Actions runners (via containerd.io);
           # docker.io conflicts with it, so remove it from the install line.
           sed -i 's/docker\.io //' benchmark.sh
 
           chmod +x benchmark.sh
           ./benchmark.sh 2>&1 | tee benchmark.log
+          # benchmark.sh runs `./run.sh 2>&1 | tee log.txt` without pipefail,
+          # so query failures are masked. Fail explicitly if any query errored.
+          if grep -q 'psql: error' log.txt 2>/dev/null; then
+            echo "ClickBench queries failed"; exit 1
+          fi
 
       - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clickbench-results-pg${{ matrix.postgres }}-${{ matrix.platform }}
+          name: clickbench-results-pg${{ matrix.postgres }}-${{ matrix.runner }}
           path: |
             clickbench/pg_ducklake/benchmark.log
             clickbench/pg_ducklake/log.txt
 
-  docker_promote:
-    name: Promote Docker image for Postgres ${{ matrix.postgres }}
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+  readme_test:
+    name: README test for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       matrix:
         postgres: ["14", "15", "16", "17", "18"]
+        runner: ["ubuntu-24.04", "ubuntu-24.04-arm"]
+      fail-fast: false
 
-    runs-on: ubuntu-24.04
-    needs: clickbench_test
+    runs-on: ${{ matrix.runner }}
+    needs: docker_build
 
     steps:
       - name: Login to Docker Hub
@@ -198,34 +182,86 @@ jobs:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Determine target repository
-        id: target
+      - name: Compute job parameters
+        id: params
         run: |
-          # If main or tag, promote to pgducklake/pgducklake
-          git init
-          git remote add origin https://github.com/${{ github.repository }}
-          git fetch --tags --no-recurse-submodules origin ${{ github.ref }}
+          if [ "${{ matrix.runner }}" = "ubuntu-24.04" ]; then
+            PLATFORM=amd64
+          else
+            PLATFORM=arm64
+          fi
+          echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
 
+      - name: Pull test image
+        run: |
+          docker pull pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+
+      - name: Run README scenarios
+        run: |
+          docker run -d --name pgducklake \
+            -p 5432:5432 \
+            -e POSTGRES_PASSWORD=duckdb \
+            pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+          until docker exec pgducklake pg_isready -U postgres; do sleep 1; done
+
+          run_sql() { echo "$1" | docker exec -i pgducklake psql -U postgres -v ON_ERROR_STOP=1; }
+
+          # Scenario 1: basic DuckLake table (README "Your first Data Lake")
+          run_sql "
+            CREATE TABLE my_table (id INT, name TEXT, age INT) USING ducklake;
+            INSERT INTO my_table VALUES (1, 'Alice', 25), (2, 'Bob', 30);
+            SELECT * FROM my_table;
+          "
+
+          # Scenario 2: heap → DuckLake ETL (README "Convert a PostgreSQL heap table")
+          run_sql "
+            CREATE TABLE row_store_table AS
+              SELECT i AS id, 'hello pg_ducklake' AS msg FROM generate_series(1, 10000) AS i;
+            CREATE TABLE col_store_table USING ducklake AS SELECT * FROM row_store_table;
+            SELECT max(id) FROM col_store_table;
+          "
+
+          # Scenario 3: external dataset (README "Load an external dataset")
+          run_sql "
+            CREATE TABLE titanic USING ducklake AS
+              SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
+            SELECT \"Pclass\", \"Sex\", COUNT(*), AVG(\"Survived\") AS survival_rate
+            FROM titanic GROUP BY \"Pclass\", \"Sex\";
+          "
+
+  docker_merge:
+    name: Merge Docker image for Postgres ${{ matrix.postgres }}
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        postgres: ["14", "15", "16", "17", "18"]
+
+    runs-on: ubuntu-24.04
+    needs: [clickbench_test, readme_test]
+
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: pgducklake
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Merge multi-arch image
+        run: |
           BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9\-\.]/-/g' | tr '[:upper:]' '[:lower:]')
-
-          if [ "${{ github.ref }}" = "refs/heads/main" ] || git rev-parse --verify ${BRANCH}^{tag} > /dev/null 2>&1; then
+          if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == refs/tags/* ]]; then
             TARGET_REPO='pgducklake/pgducklake'
           else
             TARGET_REPO='pgducklake/ci-builds'
           fi
 
-          echo "target_repo=$TARGET_REPO" >> "$GITHUB_OUTPUT"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-
-      - name: Promote multi-arch image
-        run: |
-          TARGET_REPO="${{ steps.target.outputs.target_repo }}"
-          BRANCH="${{ steps.target.outputs.branch }}"
-
-          echo "Promoting image to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
+          echo "Promoting to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
 
           docker buildx imagetools create \
-            --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH} \
-            pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}
+            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${BRANCH}         \
+            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }} \
+            --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}               \
+            pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }} \
+            pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}
 
           docker buildx imagetools inspect ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}
