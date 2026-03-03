@@ -165,6 +165,9 @@ jobs:
         run: |
           # Replace docker image in benchmark.sh with our test image
           sed -i "s|pgducklake/pgducklake:18-main|pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }}|g" benchmark.sh
+          # Docker is pre-installed on GitHub Actions runners (via containerd.io);
+          # docker.io conflicts with it, so remove it from the install line.
+          sed -i 's/docker\.io //' benchmark.sh
 
           chmod +x benchmark.sh
           ./benchmark.sh 2>&1 | tee benchmark.log
