@@ -11,6 +11,7 @@
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
+#include "pgducklake/pgducklake_time_travel.hpp"
 
 #include "duckdb/main/database.hpp"
 #include "ducklake_extension.hpp"
@@ -29,6 +30,7 @@ extern "C" {
 void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
   db->LoadStaticExtension<duckdb::DucklakeExtension>();
+  pgducklake::RegisterTimeTravelFunction(*db->instance);
 
   duckdb::DuckLakeMetadataManager::Register(
       PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);

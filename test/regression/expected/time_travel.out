@@ -1,0 +1,103 @@
+-- Setup: create table and make multiple versions
+CREATE TABLE tt (id int, name text) USING ducklake;
+SELECT max(snapshot_id) AS v0 FROM ducklake.ducklake_snapshot \gset
+INSERT INTO tt VALUES (1, 'Alice');
+INSERT INTO tt VALUES (2, 'Bob');
+-- 1. Basic version query (v0 = CREATE, v0+1 = INSERT Alice, v0+2 = INSERT Bob)
+SELECT * FROM ducklake.time_travel('tt', :v0);
+ id | name 
+----+------
+(0 rows)
+
+SELECT * FROM ducklake.time_travel('tt', :v0 + 1);
+ id | name  
+----+-------
+  1 | Alice
+(1 row)
+
+SELECT * FROM ducklake.time_travel('tt', :v0 + 2);
+ id | name  
+----+-------
+  1 | Alice
+  2 | Bob
+(2 rows)
+
+-- 2. Schema evolution: add column, query old version (still 2 columns)
+ALTER TABLE tt ADD COLUMN age int;
+INSERT INTO tt VALUES (3, 'Carol', 25);
+SELECT * FROM ducklake.time_travel('tt', :v0 + 2);
+ id | name  
+----+-------
+  1 | Alice
+  2 | Bob
+(2 rows)
+
+-- Latest version has 3 columns; use count to avoid row-order sensitivity
+SELECT max(snapshot_id) AS v_latest FROM ducklake.ducklake_snapshot \gset
+SELECT count(*) FROM ducklake.time_travel('tt', :v_latest);
+ count 
+-------
+     3
+(1 row)
+
+-- 3. Views over historical snapshots: verify schema via pg_catalog
+CREATE VIEW tt_v1 AS SELECT * FROM ducklake.time_travel('tt', :v0 + 1);
+CREATE VIEW tt_v2 AS SELECT * FROM ducklake.time_travel('tt', :v0 + 2);
+CREATE VIEW tt_v_latest AS SELECT * FROM ducklake.time_travel('tt', :v_latest);
+SELECT attname, format_type(atttypid, atttypmod)
+FROM pg_attribute WHERE attrelid = 'tt_v1'::regclass AND attnum > 0
+ORDER BY attnum;
+ attname | format_type 
+---------+-------------
+ id      | integer
+ name    | text
+(2 rows)
+
+SELECT attname, format_type(atttypid, atttypmod)
+FROM pg_attribute WHERE attrelid = 'tt_v_latest'::regclass AND attnum > 0
+ORDER BY attnum;
+ attname | format_type 
+---------+-------------
+ id      | integer
+ name    | text
+ age     | integer
+(3 rows)
+
+SELECT * FROM tt_v1;
+ id | name  
+----+-------
+  1 | Alice
+(1 row)
+
+SELECT * FROM tt_v2;
+ id | name  
+----+-------
+  1 | Alice
+  2 | Bob
+(2 rows)
+
+-- 4. Timestamp-based query (use count to avoid row-order sensitivity)
+SELECT count(*) FROM ducklake.time_travel('tt', now());
+ count 
+-------
+     3
+(1 row)
+
+-- 5. Error: invalid version (direct query and via view)
+SELECT * FROM ducklake.time_travel('tt', 999999);
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Invalid Input Error: No snapshot found at version 999999
+
+LINE 1: SELECT time_travel.* FROM system.main.time_travel('tt'::text, (999999)::bigint) time_...
+                                  ^
+CREATE VIEW tt_v_bad AS SELECT * FROM ducklake.time_travel('tt', 999999);
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Invalid Input Error: No snapshot found at version 999999
+
+LINE 1: SELECT time_travel.* FROM system.main.time_travel('tt'::text, (999999)::bigint) time_...
+                                  ^
+SELECT * FROM tt_v_bad;
+ERROR:  relation "tt_v_bad" does not exist
+LINE 1: SELECT * FROM tt_v_bad;
+                      ^
+-- Cleanup
+DROP VIEW tt_v1, tt_v2, tt_v_latest;
+DROP TABLE tt;

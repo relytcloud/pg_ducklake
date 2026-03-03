@@ -120,7 +120,7 @@ GROUP BY "Pclass", "Sex";
 - [x] CREATE / CREATE_TABLE_AS for DuckLake tables
 - [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
 - [x] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
-- [ ] Time-travel queries
+- [x] Time-travel queries
 - [ ] Partitioned tables
 - [ ] Read-only `pg_ducklake` tables referencing shared DuckLake datasets (e.g., frozen DuckLake)
 - [x] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]

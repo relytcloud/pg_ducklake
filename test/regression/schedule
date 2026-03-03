@@ -13,3 +13,4 @@ test: readme_examples
 test: ddl
 test: vacuum
 test: hybrid_scan
+test: time_travel
