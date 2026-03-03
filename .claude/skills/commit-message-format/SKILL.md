@@ -135,6 +135,26 @@ EOF
 )"
 ```
 
+## Submodule Changes
+
+When `third_party/pg_duckdb` (or any submodule) is modified, **commit
+the submodule pointer bump together with the pg_ducklake changes that
+depend on it**. This keeps the change atomic — the new export and its
+consumer land in one reviewable unit:
+
+```bash
+git add third_party/pg_duckdb <other dependent files>
+git commit -m "<type>: <description>"
+```
+
+If the submodule update is unrelated to any pg_ducklake change (e.g.,
+a pure upstream upgrade), commit it alone:
+
+```bash
+git add third_party/pg_duckdb
+git commit -m "chore: bump pg_duckdb to <version/reason>"
+```
+
 ## What NOT to Commit
 
 Before committing, ensure you're not including:
