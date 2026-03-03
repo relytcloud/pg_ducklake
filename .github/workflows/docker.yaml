@@ -154,15 +154,6 @@ jobs:
             echo "ClickBench queries failed"; exit 1
           fi
 
-      - name: Upload benchmark results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: clickbench-results-pg${{ matrix.postgres }}-${{ matrix.runner }}
-          path: |
-            clickbench/pg_ducklake/benchmark.log
-            clickbench/pg_ducklake/log.txt
-
   readme_test:
     name: README test for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -201,7 +192,14 @@ jobs:
           docker run -d --name pgducklake \
             -e POSTGRES_PASSWORD=duckdb \
             pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
-          until docker exec pgducklake pg_isready -U postgres; do sleep 1; done
+          # Wait for postgres to be ready, at most 60 seconds
+          sleep 10
+          for i in $(seq 50); do
+            docker exec pgducklake pg_isready -U postgres && break || sleep 1
+          done
+
+          dump_logs() { echo "=== container logs ==="; docker logs pgducklake; }
+          trap dump_logs ERR
 
           run_sql() { echo "$1" | docker exec -i pgducklake psql -U postgres -v ON_ERROR_STOP=1; }
 
