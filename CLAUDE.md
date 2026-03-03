@@ -20,18 +20,12 @@ Its C++ code should use `namespace pgducklake`.
 
 ```bash
 git submodule update --init --recursive
-PG_CONFIG=<pg_config> make install-pg_duckdb
 PG_CONFIG=<pg_config> make install
 PG_CONFIG=<pg_config> make installcheck
 
 # Run single test
 PG_CONFIG=<pg_config> make installcheck TEST=basic
-
-# Run only isolation tests
-PG_CONFIG=<pg_config> make check-isolation
 ```
-
-**IMPORTANT: Re-install `pg_duckdb` after modifying `third_party/pg_duckdb`.**
 
 Use regression and isolation tests to verify functionality as possible.
 
