@@ -86,6 +86,20 @@ CREATE PROCEDURE ducklake.flush_inlined_data(
 AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
 LANGUAGE C;
 
+-- time_travel by version (DuckDB-only — pg_duckdb routes the query to DuckDB)
+CREATE FUNCTION ducklake.time_travel(table_name text, version bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- time_travel by timestamp (DuckDB-only — pg_duckdb routes the query to DuckDB)
+CREATE FUNCTION ducklake.time_travel(table_name text, "timestamp" timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
 -- cleanup_old_files function
 CREATE FUNCTION ducklake.ducklake_cleanup_old_files(
     older_than interval DEFAULT NULL
