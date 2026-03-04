@@ -58,6 +58,35 @@ BEGIN
 END
 $$;
 
+-- Metadata sync trigger: DuckDB→PG catalog sync
+-- When an external DuckDB client creates/drops tables (writing directly to
+-- ducklake metadata tables), this trigger creates/drops corresponding
+-- pg_class entries so the tables become visible from PostgreSQL.
+--
+-- The trigger is created conditionally because the metadata tables are
+-- owned by DuckDB and may not exist yet (e.g., extension re-creation
+-- after DROP EXTENSION when the DuckDB instance was not re-initialized).
+CREATE FUNCTION ducklake._snapshot_trigger()
+    RETURNS trigger
+    SET search_path = pg_catalog, pg_temp
+    AS 'MODULE_PATHNAME', 'ducklake_snapshot_trigger'
+    LANGUAGE C;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = 'ducklake' AND c.relname = 'ducklake_snapshot'
+    ) THEN
+        EXECUTE 'CREATE TRIGGER ducklake_snapshot_sync_trigger
+            AFTER INSERT ON ducklake.ducklake_snapshot
+            FOR EACH ROW
+            EXECUTE FUNCTION ducklake._snapshot_trigger()';
+    END IF;
+END
+$$;
+
 -- set_option procedure
 CREATE PROCEDURE ducklake.set_option(
     option_name text,

@@ -14,3 +14,4 @@ test: ddl
 test: vacuum
 test: hybrid_scan
 test: time_travel
+test: metadata_sync
