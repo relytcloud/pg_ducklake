@@ -1,5 +1,5 @@
 /*
- * pgducklake_freeze.cpp — Export DuckLake metadata to a standalone .ducklake file.
+ * pgducklake_freeze.cpp -- Export DuckLake metadata to a standalone .ducklake file.
  *
  * Copies all 22 ducklake_* metadata tables from PostgreSQL into a new DuckDB
  * database file, producing a "frozen" snapshot that DuckDB clients can query
@@ -7,7 +7,6 @@
  *
  * Usage:
  *   CALL ducklake.freeze('/path/to/output.ducklake');
- *   CALL ducklake.freeze('/path/to/output.ducklake', 's3://bucket/data/');
  */
 
 #include <duckdb/common/string_util.hpp>
@@ -76,8 +75,6 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
     elog(ERROR, "output_path cannot be NULL");
 
   char *output_path = text_to_cstring(PG_GETARG_TEXT_PP(0));
-  bool has_data_path = PG_NARGS() > 1 && !PG_ARGISNULL(1);
-  char *data_path = has_data_path ? text_to_cstring(PG_GETARG_TEXT_PP(1)) : nullptr;
 
   const char *error_msg = nullptr;
 
@@ -98,13 +95,6 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
         "CREATE TABLE %s.main.%s AS SELECT * FROM pgduckdb." PGDUCKLAKE_PG_SCHEMA ".%s%s;\n",
         pgducklake::FROZEN_DB, table, table,
         empty ? " WHERE false" : "");
-  }
-
-  if (has_data_path) {
-    batch += duckdb::StringUtil::Format(
-        "UPDATE %s.main.ducklake_metadata SET value = %s WHERE key = 'data_path';\n",
-        pgducklake::FROZEN_DB,
-        duckdb::KeywordHelper::WriteQuoted(data_path).c_str());
   }
 
   if (pgducklake::ExecuteDuckDBQuery(batch.c_str(), &error_msg) != 0)

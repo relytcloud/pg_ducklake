@@ -118,8 +118,7 @@ LANGUAGE C;
 -- If data inlining is enabled, call ducklake.flush_inlined_data() before
 -- freezing to ensure all rows are materialized as Parquet files.
 CREATE PROCEDURE ducklake.freeze(
-    output_path text,
-    data_path text DEFAULT NULL
+    output_path text
 )
 AS 'MODULE_PATHNAME', 'ducklake_freeze'
 LANGUAGE C;
