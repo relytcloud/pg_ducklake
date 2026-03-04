@@ -43,6 +43,7 @@ Use regression and isolation tests to verify functionality as possible.
 - Use `extern "C"` only when necessary, such as when interfacing with third-party libraries.
 - Use `namespace pgducklake` for C++ extension code (do not use `namespace pg_ducklake`).
 - Use `pgducklake::` when qualifying symbols outside the namespace block.
+- Use C++ raw string literals (`R"(…)"`) for multiline SQL; never use adjacent-string concatenation for SQL queries.
 
 ### Imports
 

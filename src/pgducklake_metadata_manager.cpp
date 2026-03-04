@@ -38,6 +38,7 @@ extern "C" {
 #include "executor/spi.h"
 #include "utils/elog.h"
 #include "utils/fmgroids.h"
+#include "utils/guc.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 }
@@ -385,6 +386,70 @@ bool PgDuckLakeMetadataManager::IsInitialized() {
   table_close(rel, AccessShareLock);
 
   return found;
+}
+
+/*
+ * Ensure the snapshot sync trigger exists on ducklake.ducklake_snapshot.
+ * Called during metadata manager initialization (IsInitialized / InitializeDuckLake)
+ * so the trigger is created exactly once per backend.
+ *
+ * Uses the same SPI pattern as CreateSPIResult (lock, snapshot, force_execution
+ * GUC) since this runs inside DuckDB's ATTACH path where re-entering DuckDB
+ * would cause infinite recursion.
+ */
+void PgDuckLakeMetadataManager::EnsureSnapshotTrigger() {
+  GlobalProcessLockGuard global_lock;
+  PostgresScopedStackReset scoped_stack_reset;
+
+  SPI_connect();
+  PushActiveSnapshot(GetTransactionSnapshot());
+
+  auto save_nestlevel = NewGUCNestLevel();
+  ::SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
+                    PGC_S_SESSION);
+
+  int ret = SPI_exec(R"(
+		SELECT 1 FROM pg_trigger t
+		JOIN pg_class c ON t.tgrelid = c.oid
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE n.nspname = 'ducklake'
+		  AND c.relname = 'ducklake_snapshot'
+		  AND t.tgname = 'ducklake_snapshot_sync_trigger'
+		)",
+                     1);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  if (SPI_processed == 0) {
+    ret = SPI_exec(R"(
+		CREATE TRIGGER ducklake_snapshot_sync_trigger
+		AFTER INSERT ON ducklake.ducklake_snapshot
+		FOR EACH ROW
+		EXECUTE FUNCTION ducklake._snapshot_trigger()
+		)",
+                   0);
+    if (ret != SPI_OK_UTILITY)
+      elog(ERROR, "SPI_exec CREATE TRIGGER failed: %s",
+           SPI_result_code_string(ret));
+  }
+
+  AtEOXact_GUC(false, save_nestlevel);
+  PopActiveSnapshot();
+  SPI_finish();
+}
+
+bool PgDuckLakeMetadataManager::IsInitialized(
+    duckdb::DuckLakeOptions & /*options*/) {
+  bool initialized = IsInitialized();
+  if (initialized)
+    EnsureSnapshotTrigger();
+  return initialized;
+}
+
+void PgDuckLakeMetadataManager::InitializeDuckLake(
+    bool has_explicit_schema, duckdb::DuckLakeEncryption encryption) {
+  DuckLakeMetadataManager::InitializeDuckLake(has_explicit_schema, encryption);
+  EnsureSnapshotTrigger();
 }
 
 static bool AddChildColumn(duckdb::vector<duckdb::DuckLakeColumnInfo> &columns,
