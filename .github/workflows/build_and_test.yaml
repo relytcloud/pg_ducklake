@@ -1,9 +1,11 @@
 name: CI
 on:
   push:
-    branches: ["main", "alpha-1"]
+    branches: ["main"]
     tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**", ".claude/**", ".agents/**", "LICENSE"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", ".claude/**", ".agents/**", "LICENSE"]
 
 # Cancel in-progress jobs if a new commit is pushed to the same branch (except for main)
 concurrency:
@@ -17,16 +19,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - version: REL_14_STABLE
-            type: release
-          - version: REL_15_STABLE
-            type: release
-          - version: REL_16_STABLE
-            type: release
-          - version: REL_17_STABLE
-            type: release
-          - version: REL_18_STABLE
-            type: release
+          - { version: REL_14_STABLE, type: release }
+          - { version: REL_15_STABLE, type: release }
+          - { version: REL_16_STABLE, type: release }
+          - { version: REL_17_STABLE, type: release }
+          - { version: REL_18_STABLE, type: release }
 
     runs-on: ubuntu-24.04
 
