@@ -2,6 +2,7 @@
 
 #include "pgduckdb/pg/declarations.hpp"
 
+#include <common/ducklake_encryption.hpp>
 #include <common/ducklake_options.hpp>
 #include <common/ducklake_snapshot.hpp>
 #include <duckdb/common/unique_ptr.hpp>
@@ -33,9 +34,9 @@ public:
   Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
 
   static bool IsInitialized();
-  bool IsInitialized(duckdb::DuckLakeOptions & /*options*/) override {
-    return IsInitialized();
-  }
+  bool IsInitialized(duckdb::DuckLakeOptions & /*options*/) override;
+  void InitializeDuckLake(bool has_explicit_schema,
+                          duckdb::DuckLakeEncryption encryption) override;
 
   // Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewrite
   // them in PGSQL.
@@ -43,6 +44,9 @@ public:
                                    const duckdb::LogicalType &type) override;
   duckdb::DuckLakeCatalogInfo
   GetCatalogForSnapshot(duckdb::DuckLakeSnapshot snapshot) override;
+
+private:
+  static void EnsureSnapshotTrigger();
 
 protected:
   // Postgres-specific implementations for parsing query results

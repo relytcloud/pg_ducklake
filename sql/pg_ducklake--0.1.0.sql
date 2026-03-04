@@ -44,6 +44,17 @@ CREATE EVENT TRIGGER ducklake_alter_table_trigger ON ddl_command_end
     WHEN tag IN ('ALTER TABLE')
     EXECUTE FUNCTION ducklake._alter_table_trigger();
 
+-- Metadata sync trigger function: DuckDB→PG catalog sync.
+-- When an external DuckDB client creates/drops tables (writing directly to
+-- ducklake metadata tables), this trigger creates/drops corresponding
+-- pg_class entries so the tables become visible from PostgreSQL.
+-- The trigger itself is created by the metadata manager during initialization.
+CREATE FUNCTION ducklake._snapshot_trigger()
+    RETURNS trigger
+    SET search_path = pg_catalog, pg_temp
+    AS 'MODULE_PATHNAME', 'ducklake_snapshot_trigger'
+    LANGUAGE C;
+
 -- Initialization function
 CREATE FUNCTION ducklake._initialize()
     RETURNS void
@@ -51,7 +62,9 @@ CREATE FUNCTION ducklake._initialize()
     AS 'MODULE_PATHNAME', 'ducklake_initialize'
     LANGUAGE C;
 
--- Initialize DuckLake catalog when extension is created
+-- Initialize DuckLake catalog when extension is created.
+-- Must run after _snapshot_trigger is registered, since initialization
+-- creates the trigger on ducklake_snapshot.
 DO $$
 BEGIN
     PERFORM ducklake._initialize();
