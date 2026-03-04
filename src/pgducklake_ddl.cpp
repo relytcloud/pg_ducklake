@@ -46,40 +46,6 @@ extern "C" {
 /* Guard to prevent circular triggers during metadata→PG catalog sync */
 static bool syncing_from_metadata = false;
 
-/*
- * Ensure the snapshot sync trigger exists on ducklake.ducklake_snapshot.
- * Called after DuckLake table creation to handle the case where DROP/CREATE
- * EXTENSION left the trigger missing (metadata tables are recreated lazily
- * by DuckLake, so the conditional CREATE TRIGGER in the extension SQL may
- * have found no table).  Must be called inside an SPI-connected context.
- */
-static void EnsureSnapshotTriggerExists() {
-  int ret = SPI_exec(R"(
-		SELECT 1 FROM pg_trigger t
-		JOIN pg_class c ON t.tgrelid = c.oid
-		JOIN pg_namespace n ON c.relnamespace = n.oid
-		WHERE n.nspname = 'ducklake'
-		  AND c.relname = 'ducklake_snapshot'
-		  AND t.tgname = 'ducklake_snapshot_sync_trigger'
-		)",
-                     1);
-  if (ret != SPI_OK_SELECT)
-    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
-
-  if (SPI_processed == 0) {
-    ret = SPI_exec(R"(
-		CREATE TRIGGER ducklake_snapshot_sync_trigger
-		AFTER INSERT ON ducklake.ducklake_snapshot
-		FOR EACH ROW
-		EXECUTE FUNCTION ducklake._snapshot_trigger()
-		)",
-                   0);
-    if (ret != SPI_OK_UTILITY)
-      elog(ERROR, "SPI_exec CREATE TRIGGER failed: %s",
-           SPI_result_code_string(ret));
-  }
-}
-
 namespace pgducklake {
 
 static Oid GetRawQueryFuncOid() {
@@ -257,12 +223,6 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
                     errmsg("failed to create DuckLake table: %s",
                            error_msg ? error_msg : "unknown error")));
   }
-
-  /* Ensure the metadata sync trigger exists (may be missing after
-   * DROP/CREATE EXTENSION when metadata tables were recreated lazily). */
-  SPI_connect();
-  EnsureSnapshotTriggerExists();
-  SPI_finish();
 
   // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
   if (IsA(parsetree, CreateTableAsStmt) && !pgducklake::ctas_skip_data) {
