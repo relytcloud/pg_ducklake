@@ -36,6 +36,7 @@ Use regression and isolation tests to verify functionality as possible.
 - Write clean, minimal code; fewer lines is better
 - Prioritize simplicity for effective and maintainable software
 - Only include comments that are essential to understanding functionality or convey non-obvious information
+- **ASCII only** in all source files, SQL tests, and expected output — no emojis, no Unicode dashes/quotes (use `-`, `--`, `'`, `"`)
 
 ### C/C++
 

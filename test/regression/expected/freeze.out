@@ -11,7 +11,7 @@ SELECT * FROM freeze_test ORDER BY id;
   2 | Bob
 (2 rows)
 
--- Test 1: Basic freeze �� attach as a real DuckLake and query
+-- Test 1: Basic freeze - attach as a real DuckLake and query
 CALL ducklake.freeze('/tmp/test_freeze.ducklake');
 SET client_min_messages = warning;
 SELECT duckdb.raw_query($$ ATTACH 'ducklake:/tmp/test_freeze.ducklake' AS __frozen__ $$);

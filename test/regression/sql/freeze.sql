@@ -8,7 +8,7 @@ CREATE TABLE freeze_test (id int, name text) USING ducklake;
 INSERT INTO freeze_test VALUES (1, 'Alice'), (2, 'Bob');
 SELECT * FROM freeze_test ORDER BY id;
 
--- Test 1: Basic freeze �� attach as a real DuckLake and query
+-- Test 1: Basic freeze - attach as a real DuckLake and query
 CALL ducklake.freeze('/tmp/test_freeze.ducklake');
 
 SET client_min_messages = warning;
