@@ -68,8 +68,6 @@ FROM base AS output
 RUN apt-get update -qq && \
     apt-get install -y ca-certificates libcurl4
 
-# Automatically preload pg_duckdb,pg_ducklake
-RUN echo "shared_preload_libraries='pg_duckdb,pg_ducklake'" >> /usr/share/postgresql/postgresql.conf.sample
 COPY --chown=postgres:postgres docker/init.d/ /docker-entrypoint-initdb.d/
 
 COPY --from=builder /out /
