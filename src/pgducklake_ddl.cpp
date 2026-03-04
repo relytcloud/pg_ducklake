@@ -38,6 +38,7 @@ extern "C" {
 #include "utils/elog.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 #include "utils/timestamp.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
