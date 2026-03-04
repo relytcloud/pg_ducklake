@@ -113,6 +113,16 @@ SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
+-- freeze: export metadata to a standalone .ducklake file
+--
+-- If data inlining is enabled, call ducklake.flush_inlined_data() before
+-- freezing to ensure all rows are materialized as Parquet files.
+CREATE PROCEDURE ducklake.freeze(
+    output_path text
+)
+AS 'MODULE_PATHNAME', 'ducklake_freeze'
+LANGUAGE C;
+
 -- cleanup_old_files function
 CREATE FUNCTION ducklake.ducklake_cleanup_old_files(
     older_than interval DEFAULT NULL
