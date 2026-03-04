@@ -15,3 +15,5 @@ test: vacuum
 test: hybrid_scan
 test: time_travel
 test: metadata_sync
+test: fdw
+test: frozen_fdw

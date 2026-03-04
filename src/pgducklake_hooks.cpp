@@ -13,6 +13,7 @@
 #include "pgducklake/pgducklake_hooks.hpp"
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
+#include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgduckdb/pgduckdb_contracts.h"
 
@@ -38,6 +39,10 @@ PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
     if (direct_insert_plan)
       return direct_insert_plan;
   }
+
+  /* ATTACH databases for any ducklake FDW tables before pg_duckdb plans */
+  if (DuckdbIsInitialized())
+    pgducklake::RegisterForeignTablesInQuery(parse);
 
   return prev_planner_hook(parse, query_string, cursor_options, bound_params);
 }
