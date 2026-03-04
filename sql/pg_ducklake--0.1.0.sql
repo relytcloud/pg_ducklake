@@ -100,6 +100,14 @@ SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
+-- freeze: export metadata to a standalone .ducklake file
+CREATE PROCEDURE ducklake.freeze(
+    output_path text,
+    data_path text DEFAULT NULL
+)
+AS 'MODULE_PATHNAME', 'ducklake_freeze'
+LANGUAGE C;
+
 -- cleanup_old_files function
 CREATE FUNCTION ducklake.ducklake_cleanup_old_files(
     older_than interval DEFAULT NULL
