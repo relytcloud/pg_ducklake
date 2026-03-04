@@ -81,26 +81,16 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
 
   const char *error_msg = nullptr;
 
-  // 1. Flush inlined data so all rows are in Parquet files
-  if (pgducklake::ExecuteDuckDBQuery(
-          "CALL ducklake_flush_inlined_data(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED ")",
-          &error_msg) != 0)
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to flush inlined data: %s",
-                           error_msg ? error_msg : "unknown error")));
-
-  // 2. ATTACH output file
-  auto attach = duckdb::StringUtil::Format(
-      "ATTACH %s AS %s",
+  // If data inlining is enabled, the caller must flush inlined data before
+  // freezing (CALL ducklake.flush_inlined_data()). The flush must be a
+  // separate top-level PG statement so pg_duckdb's catalog cache refreshes
+  // before the copy reads from pgduckdb.ducklake.*.
+  std::string batch;
+  batch += duckdb::StringUtil::Format(
+      "ATTACH %s AS %s;\n",
       duckdb::KeywordHelper::WriteQuoted(output_path).c_str(),
       pgducklake::FROZEN_DB);
-  if (pgducklake::ExecuteDuckDBQuery(attach.c_str(), &error_msg) != 0)
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to attach output file: %s",
-                           error_msg ? error_msg : "unknown error")));
 
-  // 3. Copy metadata tables; use WHERE false for tables we want empty
-  std::string batch;
   for (auto &table : pgducklake::metadata_tables) {
     bool empty = (strcmp(table, "ducklake_files_scheduled_for_deletion") == 0 ||
                   strcmp(table, "ducklake_inlined_data_tables") == 0);
@@ -110,7 +100,6 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
         empty ? " WHERE false" : "");
   }
 
-  // 4. Optionally update data_path
   if (has_data_path) {
     batch += duckdb::StringUtil::Format(
         "UPDATE %s.main.ducklake_metadata SET value = %s WHERE key = 'data_path';\n",
@@ -121,7 +110,7 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
   if (pgducklake::ExecuteDuckDBQuery(batch.c_str(), &error_msg) != 0)
     pgducklake::FreezeFail("copy metadata", error_msg);
 
-  // 5. DETACH
+  // 3. DETACH
   pgducklake::DetachFrozenDB();
 
   PG_RETURN_VOID();
