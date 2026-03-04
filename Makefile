@@ -98,6 +98,10 @@ PG_DUCKDB_HEAD = .git/modules/third_party/pg_duckdb/HEAD
 DUCKDB_HEAD = .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD
 DUCKLAKE_HEAD = .git/modules/third_party/ducklake/HEAD
 
+# Force rebuild only when the submodule working tree is dirty
+PG_DUCKDB_DIRTY := $(shell git -C $(PG_DUCKDB_DIR) diff-index --quiet HEAD 2>/dev/null || echo FORCE)
+DUCKLAKE_DIRTY  := $(shell git -C $(DUCKLAKE_DIR) diff-index --quiet HEAD 2>/dev/null || echo FORCE)
+
 $(PG_DUCKDB_HEAD):
 	git submodule update --init --recursive third_party/pg_duckdb
 
@@ -114,7 +118,7 @@ PG_DUCKDB_TARGET = $(PG_DUCKDB_DIR)/pg_duckdb$(DLSUFFIX)
 
 pg_duckdb: $(PG_DUCKDB_TARGET)
 
-$(PG_DUCKDB_TARGET): $(PG_DUCKDB_HEAD) FORCE
+$(PG_DUCKDB_TARGET): $(PG_DUCKDB_HEAD) $(PG_DUCKDB_DIRTY)
 	DUCKDB_BUILD_TYPE=$(DUCKDB_BUILD_TYPE) \
 	$(MAKE) -C $(PG_DUCKDB_DIR)
 
@@ -129,7 +133,7 @@ clean-pg_duckdb:
 # ---------------------------------------------------------------------------
 ducklake: $(DUCKLAKE_STATIC_LIB)
 
-$(DUCKLAKE_STATIC_LIB): $(DUCKLAKE_HEAD) $(DUCKDB_HEAD) FORCE
+$(DUCKLAKE_STATIC_LIB): $(DUCKLAKE_HEAD) $(DUCKDB_HEAD) $(DUCKLAKE_DIRTY)
 	DUCKDB_SRCDIR=$(DUCKDB_SRC_DIR) \
 	CMAKE_VARS="-DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0" \
 	DISABLE_SANITIZER=1 \
