@@ -43,6 +43,7 @@ Use regression and isolation tests to verify functionality as possible.
 - Use `extern "C"` only when necessary, such as when interfacing with third-party libraries.
 - Use `namespace pgducklake` for C++ extension code (do not use `namespace pg_ducklake`).
 - Use `pgducklake::` when qualifying symbols outside the namespace block.
+- Use C++ raw string literals (`R"(…)"`) for multiline SQL; never use adjacent-string concatenation for SQL queries.
 
 ### Imports
 
@@ -79,3 +80,4 @@ Guidelines:
 ## Miscellaneous
 
 - When modifying multiple files, run file modification tasks in parallel whenever possible, instead of processing them sequentially
+- **Never `cd` into subdirectories** in Bash commands — it changes the working directory for subsequent calls. Use subshells (`(cd third_party/pg_duckdb && git ...)`) or `pushd`/`popd` (`pushd third_party/pg_duckdb; git ...; popd`) to keep the working directory at the project root.

@@ -54,26 +54,28 @@ static bool syncing_from_metadata = false;
  * have found no table).  Must be called inside an SPI-connected context.
  */
 static void EnsureSnapshotTriggerExists() {
-  int ret = SPI_exec(
-      "SELECT 1 FROM pg_trigger t"
-      " JOIN pg_class c ON t.tgrelid = c.oid"
-      " JOIN pg_namespace n ON c.relnamespace = n.oid"
-      " WHERE n.nspname = 'ducklake'"
-      " AND c.relname = 'ducklake_snapshot'"
-      " AND t.tgname = 'ducklake_snapshot_sync_trigger'",
-      1);
+  int ret = SPI_exec(R"(
+		SELECT 1 FROM pg_trigger t
+		JOIN pg_class c ON t.tgrelid = c.oid
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE n.nspname = 'ducklake'
+		  AND c.relname = 'ducklake_snapshot'
+		  AND t.tgname = 'ducklake_snapshot_sync_trigger'
+		)",
+                     1);
   if (ret != SPI_OK_SELECT)
-    return;
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
 
   if (SPI_processed == 0) {
-    ret = SPI_exec(
-        "CREATE TRIGGER ducklake_snapshot_sync_trigger"
-        " AFTER INSERT ON ducklake.ducklake_snapshot"
-        " FOR EACH ROW"
-        " EXECUTE FUNCTION ducklake._snapshot_trigger()",
-        0);
+    ret = SPI_exec(R"(
+		CREATE TRIGGER ducklake_snapshot_sync_trigger
+		AFTER INSERT ON ducklake.ducklake_snapshot
+		FOR EACH ROW
+		EXECUTE FUNCTION ducklake._snapshot_trigger()
+		)",
+                   0);
     if (ret != SPI_OK_UTILITY)
-      elog(WARNING, "failed to create snapshot sync trigger: %s",
+      elog(ERROR, "SPI_exec CREATE TRIGGER failed: %s",
            SPI_result_code_string(ret));
   }
 }
@@ -735,18 +737,19 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
     std::string sid = std::to_string(snapshot_id);
 
     /* ---- Find newly created tables ---- */
-    std::string query =
-        "SELECT s.schema_name, t.table_name,"
-        " c.column_name, c.column_type, c.nulls_allowed"
-        " FROM ducklake.ducklake_table t"
-        " JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id"
-        " LEFT JOIN ducklake.ducklake_column c ON t.table_id = c.table_id"
-        " AND c.parent_column IS NULL"
-        " AND c.end_snapshot IS NULL"
-        " WHERE t.begin_snapshot = " +
-        sid +
-        " AND s.end_snapshot IS NULL"
-        " ORDER BY t.table_id, c.column_order";
+    std::string query = duckdb::StringUtil::Format(R"(
+		SELECT s.schema_name, t.table_name,
+		       c.column_name, c.column_type, c.nulls_allowed
+		FROM ducklake.ducklake_table t
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		LEFT JOIN ducklake.ducklake_column c ON t.table_id = c.table_id
+		  AND c.parent_column IS NULL
+		  AND c.end_snapshot IS NULL
+		WHERE t.begin_snapshot = %s
+		  AND s.end_snapshot IS NULL
+		ORDER BY t.table_id, c.column_order
+		)",
+                                                   sid.c_str());
 
     int ret = SPI_exec(query.c_str(), 0);
     if (ret != SPI_OK_SELECT)
@@ -845,11 +848,13 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
     emit_ddl();
 
     /* ---- Find dropped tables ---- */
-    query = "SELECT s.schema_name, t.table_name"
-            " FROM ducklake.ducklake_table t"
-            " JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id"
-            " WHERE t.end_snapshot = " +
-            sid;
+    query = duckdb::StringUtil::Format(R"(
+		SELECT s.schema_name, t.table_name
+		FROM ducklake.ducklake_table t
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		WHERE t.end_snapshot = %s
+		)",
+                                       sid.c_str());
 
     ret = SPI_exec(query.c_str(), 0);
     if (ret != SPI_OK_SELECT)
@@ -885,7 +890,7 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
       elog(DEBUG1, "Metadata sync: %s", drop_ddl.c_str());
       ret = SPI_exec(drop_ddl.c_str(), 0);
       if (ret != SPI_OK_UTILITY)
-        elog(WARNING, "SPI_exec DROP TABLE failed: %s",
+        elog(ERROR, "SPI_exec DROP TABLE failed: %s",
              SPI_result_code_string(ret));
     }
 
