@@ -439,8 +439,16 @@ static void DucklakeGetForeignPaths(PlannerInfo *root,
                                     Oid foreigntableid) {
   add_path(baserel,
            (Path *)create_foreignscan_path(root, baserel, NULL,
-                                           baserel->rows, 10, 1000,
-                                           NIL, NULL, NULL, NIL, NIL));
+                                           baserel->rows,
+#if PG_VERSION_NUM >= 180000
+                                           0, /* disabled_nodes */
+#endif
+                                           10, 1000,
+                                           NIL, NULL, NULL,
+#if PG_VERSION_NUM >= 170000
+                                           NIL, /* fdw_restrictinfo */
+#endif
+                                           NIL));
 }
 
 static ForeignScan *DucklakeGetForeignPlan(PlannerInfo *root,
