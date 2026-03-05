@@ -137,9 +137,9 @@ GROUP BY "Pclass", "Sex";
 
 ### Docs
 
-- [ ] Access control behavior for DuckLake tables [^]
+- [x] Access control behavior for DuckLake tables [^]
 
-> [^]: DuckLake tables are exposed via PostgreSQL table access methods (AM), so PostgreSQL table/column privileges may already apply; the current behavior and gaps will be reviewed and documented. DuckLake itself relies on its metadata service for ACL management.
+> [^]: DDL ownership and VACUUM checks work via standard PostgreSQL mechanisms. DML-level permission checks (SELECT/INSERT/UPDATE/DELETE) are currently bypassed because pg_duckdb's planner sets `permInfos = NULL`. See [docs/access_control.md](docs/access_control.md) for details and known gaps.
 
 ## Contributing
 
