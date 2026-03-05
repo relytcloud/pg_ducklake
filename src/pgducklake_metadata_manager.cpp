@@ -123,8 +123,8 @@ static void InsertSPITupleTableIntoChunk(duckdb::DataChunk &output,
  */
 class GlobalProcessLockGuard {
 public:
-  GlobalProcessLockGuard() { DuckdbLockGlobalProcess(); }
-  ~GlobalProcessLockGuard() { DuckdbUnlockGlobalProcess(); }
+  GlobalProcessLockGuard() { pgduckdb::DuckdbLockGlobalProcess(); }
+  ~GlobalProcessLockGuard() { pgduckdb::DuckdbUnlockGlobalProcess(); }
   GlobalProcessLockGuard(const GlobalProcessLockGuard &) = delete;
   GlobalProcessLockGuard &operator=(const GlobalProcessLockGuard &) = delete;
 };
@@ -258,9 +258,9 @@ CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
   bool had_error = false;
   int ret = -1;
 
-  DuckdbAllowSubtransaction(true);
+  pgduckdb::DuckdbAllowSubtransaction(true);
   BeginInternalSubTransaction(NULL);
-  DuckdbAllowSubtransaction(false);
+  pgduckdb::DuckdbAllowSubtransaction(false);
   PG_TRY();
   {
     ret = SPI_execute(query.c_str(), false, 0);

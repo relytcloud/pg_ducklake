@@ -34,11 +34,10 @@ duckdb::DuckDB *ducklake_get_duckdb_database() {
   return ducklake_duckdb_instance;
 }
 
-void ducklake_load_extension(void *db_ptr, void *context_ptr) {
-  auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
-  ducklake_duckdb_instance = db;
-  db->LoadStaticExtension<duckdb::DucklakeExtension>();
-  pgducklake::RegisterTimeTravelFunction(*db->instance);
+void ducklake_load_extension(duckdb::DuckDB &db) {
+  ducklake_duckdb_instance = &db;
+  db.LoadStaticExtension<duckdb::DucklakeExtension>();
+  pgducklake::RegisterTimeTravelFunction(*db.instance);
 
   duckdb::DuckLakeMetadataManager::Register(
       PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);

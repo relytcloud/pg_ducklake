@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pgduckdb/pgduckdb_contracts.h"
+#include "pgduckdb/pgduckdb_contracts.hpp"
 
 extern "C" {
 #include "postgres.h"
@@ -31,7 +31,7 @@ public:
   UnsafeCommandIdGuard() {}
 
   ~UnsafeCommandIdGuard() {
-    DuckdbUnsafeSetNextExpectedCommandId(
+    pgduckdb::DuckdbUnsafeSetNextExpectedCommandId(
         static_cast<uint32_t>(GetCurrentCommandId(false)));
   }
 

@@ -62,6 +62,9 @@ Treat `third_party/pg_duckdb` as upstream:
 - Prefer additive hooks, avoid invasive edits.
 - Keep diffs minimal and upstream-friendly.
 - Ensure zero behavior change when hooks are unused.
+- **Never change the linkage or signature of upstream functions** (e.g., do not remove `extern "C"` from functions that already exist in `duckdb/main`). Only our own additions may use C++ linkage.
+- **Call pg_duckdb hooks via `pgduckdb::` from `pgduckdb/pgduckdb_contracts.hpp`** (our contract header). Upstream C-linkage functions (e.g., `RegisterDuckdbTableAm`) keep `extern "C"` and are called unqualified.
+- **Our exported C++ symbols in pg_duckdb must be in `namespace pgduckdb`** to avoid name conflicts. Declare them in `include/pgduckdb/pgduckdb_contracts.hpp` under `namespace pgduckdb`.
 
 ## Docs Style
 

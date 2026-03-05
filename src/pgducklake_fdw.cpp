@@ -36,6 +36,7 @@ int32_t GetPostgresDuckDBTypemod(const duckdb::LogicalType &type);
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
+#include "pgduckdb/pgduckdb_contracts.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
 extern "C" {
@@ -64,8 +65,6 @@ extern "C" {
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-
-#include "pgduckdb/pgduckdb_contracts.h"
 }
 
 /* ----------------------------------------------------------------
@@ -306,7 +305,7 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
 
 static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
   /* Ensure DuckDB is initialized (triggers pg_duckdb startup via SPI) */
-  if (!DuckdbIsInitialized()) {
+  if (!pgduckdb::DuckdbIsInitialized()) {
     const char *errmsg;
     pgducklake::ExecuteDuckDBQuery("SELECT 1", &errmsg);
   }
@@ -544,8 +543,8 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
 namespace pgducklake {
 
 void InitFDW() {
-  RegisterDuckdbExternalTableCheck(IsDucklakeForeignTable);
-  RegisterDuckdbRelationNameCallback(GetDucklakeForeignTableName);
+  pgduckdb::RegisterDuckdbExternalTableCheck(IsDucklakeForeignTable);
+  pgduckdb::RegisterDuckdbRelationNameCallback(GetDucklakeForeignTableName);
 
   prev_fdw_process_utility_hook =
       ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;

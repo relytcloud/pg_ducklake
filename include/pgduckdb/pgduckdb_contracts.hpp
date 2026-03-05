@@ -1,19 +1,26 @@
 #pragma once
 
-#ifdef __cplusplus
 extern "C" {
-#endif
-
 #include "postgres.h"
 
 #include "access/tableam.h"
+}
 
-typedef void (*DuckDBLoadExtension)(void *db, void *context);
+namespace duckdb {
+class DuckDB;
+}
+
+// Upstream function — keep extern "C" linkage
+extern "C" bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
+
+// Our C++ additions — all in namespace pgduckdb
+namespace pgduckdb {
+
+typedef void (*DuckDBLoadExtension)(duckdb::DuckDB &db);
 typedef bool (*DuckdbExternalTableCheck)(Oid relid);
 typedef char *(*DuckdbRelationNameCallback)(Oid relid);
 
 bool RegisterDuckdbLoadExtension(DuckDBLoadExtension extension);
-bool RegisterDuckdbTableAm(const char *name, const TableAmRoutine *am);
 bool RegisterDuckdbExternalTableCheck(DuckdbExternalTableCheck callback);
 void RegisterDuckdbRelationNameCallback(DuckdbRelationNameCallback callback);
 bool DuckdbIsAlterTableInProgress(void);
@@ -25,7 +32,7 @@ void DuckdbUnsafeSetNextExpectedCommandId(uint32_t command_id);
 void DuckdbAllowSubtransaction(bool allow);
 void DuckdbLockGlobalProcess(void);
 void DuckdbUnlockGlobalProcess(void);
+void RegisterDuckdbOnlyExtension(const char *extension_name);
+void RegisterDuckdbOnlyFunction(const char *function_name);
 
-#ifdef __cplusplus
-} // extern "C"
-#endif
+} // namespace pgduckdb
