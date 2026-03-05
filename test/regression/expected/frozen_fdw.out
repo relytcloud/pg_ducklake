@@ -1,0 +1,65 @@
+-- Regression tests for ducklake_fdw (frozen DuckLake mode)
+-- Validation: frozen_url + dbname -> error
+CREATE SERVER frozen_bad_1
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', dbname 'mydb');
+ERROR:  "frozen_url" and "dbname" are mutually exclusive
+-- Validation: frozen_url + metadata_schema -> error
+CREATE SERVER frozen_bad_2
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', metadata_schema 'myschema');
+ERROR:  "frozen_url" and "metadata_schema" are mutually exclusive
+-- Create frozen server
+CREATE SERVER frozen_space
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://raw.githubusercontent.com/marhar/frozen/fce88027556c98161ac3406c39e5a6d60561d34d/space.ducklake');
+-- Error: columns specified
+CREATE FOREIGN TABLE frozen_bad_cols (id int)
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'missions');
+ERROR:  ducklake_fdw foreign tables do not accept column definitions
+HINT:  Omit the column list; columns are automatically inferred from the remote DuckLake table.
+-- Create foreign table with auto-inferred columns
+CREATE FOREIGN TABLE frozen_missions ()
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'missions');
+-- SELECT + ORDER BY + LIMIT
+SELECT * FROM frozen_missions ORDER BY name LIMIT 5;
+ mission_id |   name    | launch_date |  end_date  | spacecraft_id | agency | mission_type  | success_status  | cost_millions_usd | duration_days 
+------------+-----------+-------------+------------+---------------+--------+---------------+-----------------+-------------------+---------------
+          1 | Apollo 11 | 07-16-1969  | 07-24-1969 |             1 | NASA   | Lunar Landing | Success         |          25400.00 |             8
+          2 | Apollo 12 | 11-14-1969  | 11-24-1969 |             1 | NASA   | Lunar Landing | Success         |          25400.00 |            10
+         11 | Apollo 13 | 04-11-1970  | 04-17-1970 |             1 | NASA   | Lunar Landing | Partial Failure |          25400.00 |             6
+         18 | Apollo 17 | 12-07-1972  | 12-19-1972 |             1 | NASA   | Lunar Landing | Success         |          25400.00 |            12
+         17 | Apollo 8  | 12-21-1968  | 12-25-1968 |             1 | NASA   | Lunar Orbit   | Success         |          25400.00 |             4
+(5 rows)
+
+-- Aggregation
+SELECT count(*) FROM frozen_missions;
+ count 
+-------
+    68
+(1 row)
+
+-- READ-ONLY enforcement
+INSERT INTO frozen_missions VALUES (1, 'test');
+ERROR:  ducklake_fdw tables are read-only
+HINT:  INSERT is not supported on foreign tables created with ducklake_fdw.
+UPDATE frozen_missions SET name = 'test' WHERE mission_id = 1;
+ERROR:  ducklake_fdw tables are read-only
+HINT:  UPDATE is not supported on foreign tables created with ducklake_fdw.
+DELETE FROM frozen_missions WHERE mission_id = 1;
+ERROR:  ducklake_fdw tables are read-only
+HINT:  DELETE is not supported on foreign tables created with ducklake_fdw.
+-- Error: non-existent table in frozen ducklake
+CREATE FOREIGN TABLE frozen_nonexistent ()
+    SERVER frozen_space
+    OPTIONS (schema_name 'main', table_name 'no_such_table');
+ERROR:  ducklake_fdw: cannot read table "main"."no_such_table": Catalog Error: Table with name no_such_table does not exist!
+Did you mean "astronauts"?
+
+LINE 1: SELECT * FROM "__ducklake_fdw_probe__".main.no_such_table LIMIT 0
+                      ^
+-- Cleanup
+DROP FOREIGN TABLE frozen_missions;
+DROP SERVER frozen_space;

@@ -8,9 +8,16 @@
  * through PostgreSQL's SPI, not through direct DuckDB instance access.
  */
 
+namespace duckdb {
+class DuckDB;
+}
+
 /*
  * Callback invoked by pg_duckdb during DuckDBManager::Initialize().
  * Receives a pointer to the DuckDB instance (duckdb::DuckDB*) and loads
  * the DuckLake static extension into it.
  */
 void ducklake_load_extension(void *db, void *context);
+
+/* Returns the DuckDB instance, used by FDW for column inference. */
+duckdb::DuckDB *ducklake_get_duckdb_database();

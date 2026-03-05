@@ -9,6 +9,7 @@
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 #include "pgducklake/pgducklake_time_travel.hpp"
@@ -27,8 +28,15 @@ extern "C" {
 #include "utils/elog.h"
 }
 
+static duckdb::DuckDB *ducklake_duckdb_instance = nullptr;
+
+duckdb::DuckDB *ducklake_get_duckdb_database() {
+  return ducklake_duckdb_instance;
+}
+
 void ducklake_load_extension(void *db_ptr, void *context_ptr) {
   auto *db = static_cast<duckdb::DuckDB *>(db_ptr);
+  ducklake_duckdb_instance = db;
   db->LoadStaticExtension<duckdb::DucklakeExtension>();
   pgducklake::RegisterTimeTravelFunction(*db->instance);
 

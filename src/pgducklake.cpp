@@ -7,6 +7,7 @@
 
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
+#include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_hooks.hpp"
 
@@ -37,6 +38,8 @@ void _PG_init(void) {
   pgducklake::RegisterDirectInsertNode();
   // Install pg_ducklake planner/utility hooks.
   pgducklake::InitHooks();
+  // Register FDW callbacks and hooks.
+  pgducklake::InitFDW();
 }
 
 } // extern "C"

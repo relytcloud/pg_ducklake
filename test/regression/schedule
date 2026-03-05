@@ -16,3 +16,5 @@ test: hybrid_scan
 test: time_travel
 test: freeze
 test: metadata_sync
+test: fdw
+test: frozen_fdw
