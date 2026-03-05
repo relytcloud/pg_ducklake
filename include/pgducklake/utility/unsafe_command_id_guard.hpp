@@ -31,7 +31,7 @@ public:
   UnsafeCommandIdGuard() {}
 
   ~UnsafeCommandIdGuard() {
-    DuckdbUnsafeSetNextExpectedCommandId(
+    pgduckdb::DuckdbUnsafeSetNextExpectedCommandId(
         static_cast<uint32_t>(GetCurrentCommandId(false)));
   }
 

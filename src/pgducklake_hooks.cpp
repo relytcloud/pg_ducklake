@@ -41,7 +41,7 @@ PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
   }
 
   /* ATTACH databases for any ducklake FDW tables before pg_duckdb plans */
-  if (DuckdbIsInitialized())
+  if (pgduckdb::DuckdbIsInitialized())
     pgducklake::RegisterForeignTablesInQuery(parse);
 
   return prev_planner_hook(parse, query_string, cursor_options, bound_params);
@@ -72,7 +72,7 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
                          ParamListInfo params,
                          struct QueryEnvironment *query_env, DestReceiver *dest,
                          QueryCompletion *qc) {
-  if (IsCommitUtilityStmt(pstmt) && DuckdbIsInitialized()) {
+  if (IsCommitUtilityStmt(pstmt) && pgduckdb::DuckdbIsInitialized()) {
     elog(DEBUG1, "pg_ducklake utility hook caught COMMIT");
     ForceDuckDBCommitOnExplicitCommit();
   }

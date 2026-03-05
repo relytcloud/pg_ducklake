@@ -86,7 +86,7 @@ static bool duckdb_scan_getnextslot(TableScanDesc /*sscan*/,
                                     ScanDirection /*direction*/,
                                     TupleTableSlot *slot) {
   /* If we are executing ALTER TABLE we return empty tuple */
-  if (DuckdbIsAlterTableInProgress()) {
+  if (pgduckdb::DuckdbIsAlterTableInProgress()) {
     ExecClearTuple(slot);
     return false;
   }
@@ -322,7 +322,7 @@ static double duckdb_index_build_range_scan(
     bool /*progress*/, BlockNumber /*start_blockno*/, BlockNumber /*numblocks*/,
     IndexBuildCallback /*callback*/, void * /*callback_state*/,
     TableScanDesc /*scan*/) {
-  if (DuckdbIsAlterTableInProgress()) {
+  if (pgduckdb::DuckdbIsAlterTableInProgress()) {
     return 0;
   }
   NOT_IMPLEMENTED();
