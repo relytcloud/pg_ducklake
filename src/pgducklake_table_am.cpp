@@ -5,7 +5,7 @@
  * delegating unsupported paths and integrating VACUUM hooks where needed.
  */
 
-#include "pgduckdb/pgduckdb_contracts.h"
+#include "pgduckdb/pgduckdb_contracts.hpp"
 
 extern "C" {
 #include "postgres.h"

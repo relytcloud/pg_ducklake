@@ -15,7 +15,7 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
-#include "pgduckdb/pgduckdb_contracts.h"
+#include "pgduckdb/pgduckdb_contracts.hpp"
 
 extern "C" {
 #include "postgres.h"

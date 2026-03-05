@@ -36,7 +36,7 @@ int32_t GetPostgresDuckDBTypemod(const duckdb::LogicalType &type);
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
-#include "pgduckdb/pgduckdb_contracts.h"
+#include "pgduckdb/pgduckdb_contracts.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
 extern "C" {
