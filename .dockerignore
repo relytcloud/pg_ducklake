@@ -2,7 +2,6 @@
 !.git/modules/third_party/pg_duckdb/HEAD
 !.git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD
 !.git/modules/third_party/ducklake/HEAD
-!.git/modules/third_party/duckdb-postgres/HEAD
 *.o
 *.so
 *.dylib
@@ -11,4 +10,3 @@
 Dockerfile
 third_party/pg_duckdb/third_party/duckdb/build
 third_party/ducklake/build
-third_party/duckdb-postgres/build

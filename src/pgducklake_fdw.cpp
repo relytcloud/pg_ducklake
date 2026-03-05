@@ -235,7 +235,7 @@ static void AttachDucklakeDatabase(ForeignServer *server) {
  * Query-tree walker: ATTACH databases and block DML
  * ---------------------------------------------------------------- */
 
-static void RegisterForeignTablesInQuery(Query *query) {
+void pgducklake::RegisterForeignTablesInQuery(Query *query) {
   if (!query || !query->rtable)
     return;
 
@@ -247,7 +247,7 @@ static void RegisterForeignTablesInQuery(Query *query) {
   foreach (lc, query->rtable) {
     RangeTblEntry *rte = (RangeTblEntry *)lfirst(lc);
     if (rte->rtekind == RTE_SUBQUERY && rte->subquery)
-      RegisterForeignTablesInQuery(rte->subquery);
+      pgducklake::RegisterForeignTablesInQuery(rte->subquery);
 
     if (rte->relid == InvalidOid)
       continue;
@@ -266,7 +266,7 @@ static void RegisterForeignTablesInQuery(Query *query) {
   foreach (lc, query->cteList) {
     CommonTableExpr *cte = (CommonTableExpr *)lfirst(lc);
     if (IsA(cte->ctequery, Query))
-      RegisterForeignTablesInQuery(castNode(Query, cte->ctequery));
+      pgducklake::RegisterForeignTablesInQuery(castNode(Query, cte->ctequery));
   }
 
   /* Block DML on FDW tables */
@@ -542,10 +542,6 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
  * ---------------------------------------------------------------- */
 
 namespace pgducklake {
-
-void RegisterForeignTablesInQuery(Query *query) {
-  ::RegisterForeignTablesInQuery(query);
-}
 
 void InitFDW() {
   RegisterDuckdbExternalTableCheck(IsDucklakeForeignTable);

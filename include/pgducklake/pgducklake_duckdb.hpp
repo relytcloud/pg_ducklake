@@ -1,12 +1,11 @@
 #pragma once
 
 /*
- * pgducklake_duckdb.hpp — Interface for DuckDB/DuckLake operations
+ * pgducklake_duckdb.hpp — C interface for DuckDB/DuckLake operations
  *
- * Provides functions for DuckLake extension lifecycle management and
- * direct DuckDB instance access (used by FDW for column inference).
- * General query execution against DuckDB is done via pg_duckdb's raw_query()
- * UDF through PostgreSQL's SPI.
+ * Provides extern "C" functions for DuckLake extension lifecycle management.
+ * Query execution against DuckDB is done via pg_duckdb's raw_query() UDF
+ * through PostgreSQL's SPI, not through direct DuckDB instance access.
  */
 
 namespace duckdb {
@@ -20,9 +19,5 @@ class DuckDB;
  */
 void ducklake_load_extension(void *db, void *context);
 
-/*
- * Returns the DuckDB instance pointer stored during ducklake_load_extension().
- * Used by FDW column inference to probe remote schemas via a temporary
- * DuckDB connection. Returns nullptr before initialization.
- */
+/* Returns the DuckDB instance, used by FDW for column inference. */
 duckdb::DuckDB *ducklake_get_duckdb_database();
