@@ -1,7 +1,8 @@
 .PHONY: FORCE clean-all \
 	check-isolation clean-isolation \
 	ducklake clean-ducklake \
-	pg_duckdb install-pg_duckdb clean-pg_duckdb
+	pg_duckdb install-pg_duckdb clean-pg_duckdb \
+	bench-direct-insert
 
 MODULE_big = pg_ducklake
 EXTENSION = pg_ducklake
@@ -90,6 +91,9 @@ check-isolation:
 
 clean-isolation:
 	$(MAKE) -C test/isolation clean-isolation
+
+bench-direct-insert: all install
+	bash test/benchmark/bench_direct_insert.sh
 
 # ---------------------------------------------------------------------------
 # Submodules

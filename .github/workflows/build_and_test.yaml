@@ -113,6 +113,12 @@ jobs:
         working-directory: pg_ducklake
         run: make installcheck DUCKDB_BUILD_TYPE=${{ matrix.type }}
 
+      - name: Run direct insert benchmark
+        if: matrix.version == 'REL_18_STABLE'
+        working-directory: pg_ducklake
+        run: make bench-direct-insert
+        continue-on-error: true
+
       - name: Print regression.diffs if regression tests failed
         if: failure() && steps.installcheck.outcome == 'failure'
         run: cat pg_ducklake/test/regression/regression.diffs && false
