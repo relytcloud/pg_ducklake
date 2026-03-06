@@ -6,7 +6,8 @@ However, because pg_duckdb routes queries to DuckDB's execution engine, **most
 DML-level permission checks are currently bypassed**.
 
 This document describes what works, what doesn't, and the recommended setup
-for multi-role environments.
+for multi-role environments. See also the upstream
+[DuckLake Access Control guide](https://ducklake.select/docs/stable/duckdb/guides/access_control).
 
 ## What Works
 
@@ -30,44 +31,51 @@ These gaps exist because pg_duckdb's `DuckdbPlanNode()` only runs
 `result->permInfos = NULL` in the `PlannedStmt`, causing the executor to skip
 all relation-level permission checks.
 
-## Role Setup
+## Predefined Roles
 
-### Prerequisites
+pg_ducklake creates three GROUP roles (NOLOGIN) at extension installation:
 
-All roles that need to execute DuckDB queries must be members of `duckdb_group`
-(configured via `duckdb.postgres_role`). For local file storage, roles also need
-`pg_read_server_files` and `pg_write_server_files`; these are **not** needed for
-S3/GCS/R2 storage.
+| Role | GUC | Intended access |
+|---|---|---|
+| `ducklake_superuser` | `ducklake.superuser_role` | Full DDL + DML on DuckLake tables |
+| `ducklake_writer` | `ducklake.writer_role` | DML (SELECT/INSERT/UPDATE/DELETE) on DuckLake tables |
+| `ducklake_reader` | `ducklake.reader_role` | SELECT-only on DuckLake tables |
 
-### Three-Role Model
+Role names are configurable via `postgresql.conf` GUCs (set before
+`CREATE EXTENSION`). Set a GUC to an empty string to skip creating that role.
 
-Despite the DML enforcement gaps, the following setup is still recommended as a
-defense-in-depth measure. When pg_duckdb adds proper permission enforcement,
-these grants will take effect without changes.
+All three roles are members of `duckdb_group` and have full access to the
+`ducklake` metadata schema (required for DuckDB's SPI-based metadata manager).
 
-```sql
--- Admin: full DDL + DML
-CREATE USER lake_admin IN ROLE duckdb_group, pg_read_server_files, pg_write_server_files;
-GRANT ALL ON TABLE my_table TO lake_admin;
+### Usage
 
--- Writer: DML only (DDL blocked by ownership check)
-CREATE USER lake_writer IN ROLE duckdb_group, pg_read_server_files, pg_write_server_files;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE my_table TO lake_writer;
-
--- Reader: SELECT only (DML not currently enforced -- known gap)
-CREATE USER lake_reader IN ROLE duckdb_group, pg_read_server_files, pg_write_server_files;
-GRANT SELECT ON TABLE my_table TO lake_reader;
-```
-
-### DuckLake Metadata Tables
-
-DuckDB's SPI-based metadata manager writes to `ducklake.*` tables internally.
-Non-superuser roles need DML access to these tables:
+Create LOGIN users and grant membership in the appropriate role:
 
 ```sql
-GRANT ALL ON ALL TABLES IN SCHEMA ducklake TO lake_admin, lake_writer, lake_reader;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA ducklake TO lake_admin, lake_writer, lake_reader;
+CREATE USER lake_admin IN ROLE ducklake_superuser;
+CREATE USER lake_writer IN ROLE ducklake_writer;
+CREATE USER lake_reader IN ROLE ducklake_reader;
 ```
+
+For local file storage, also grant filesystem access:
+
+```sql
+GRANT pg_read_server_files, pg_write_server_files TO lake_admin, lake_writer, lake_reader;
+```
+
+These grants are **not** needed for S3/GCS/R2 storage.
+
+Then grant privileges on individual tables to the predefined roles:
+
+```sql
+GRANT ALL ON TABLE my_table TO ducklake_superuser;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE my_table TO ducklake_writer;
+GRANT SELECT ON TABLE my_table TO ducklake_reader;
+```
+
+> **Note:** Due to the known gaps above, DML-level grants are not yet enforced.
+> This role setup is recommended as defense-in-depth; when pg_duckdb adds proper
+> permission enforcement, these grants will take effect without changes.
 
 ## Regression Test
 
@@ -76,5 +84,5 @@ verifies the current behavior, including all known gaps.
 
 ## References
 
-- [DuckLake Access Control](https://ducklake.select/docs/stable/duckdb/guides/access_control) -- DuckLake's native ACL model (metadata-service-based)
+- [DuckLake Access Control guide](https://ducklake.select/docs/stable/duckdb/guides/access_control) -- DuckLake's native ACL model
 - `third_party/pg_duckdb/src/pgduckdb_planner.cpp` -- `check_view_perms_recursive()` and `DuckdbPlanNode()`
