@@ -8,10 +8,14 @@
  *
  * Utility hook:
  * - catches explicit COMMIT utility statements and commits DuckDB early
+ * - detaches the DuckLake catalog on DROP EXTENSION pg_ducklake so that
+ *   a subsequent CREATE EXTENSION can re-attach a fresh catalog
  */
 
 #include "pgducklake/pgducklake_hooks.hpp"
+#include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_direct_insert.hpp"
+#include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
@@ -67,6 +71,26 @@ void ForceDuckDBCommitOnExplicitCommit() {
                          duckdb_errmsg ? duckdb_errmsg : "unknown error")));
 }
 
+/*
+ * Check whether the statement is DROP EXTENSION pg_ducklake.
+ */
+bool IsDropDucklakeExtensionStmt(PlannedStmt *pstmt) {
+  if (!pstmt || !pstmt->utilityStmt || !IsA(pstmt->utilityStmt, DropStmt))
+    return false;
+
+  auto *drop = castNode(DropStmt, pstmt->utilityStmt);
+  if (drop->removeType != OBJECT_EXTENSION)
+    return false;
+
+  ListCell *lc;
+  foreach (lc, drop->objects) {
+    char *extname = strVal(lfirst(lc));
+    if (strcmp(extname, PGDUCKLAKE_PG_EXTENSION) == 0)
+      return true;
+  }
+  return false;
+}
+
 void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
                          bool read_only_tree, ProcessUtilityContext context,
                          ParamListInfo params,
@@ -77,8 +101,15 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
     ForceDuckDBCommitOnExplicitCommit();
   }
 
+  bool dropping_extension = IsDropDucklakeExtensionStmt(pstmt);
+
   prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
                             params, query_env, dest, qc);
+
+  // After DROP EXTENSION completes, detach the DuckLake catalog from DuckDB
+  // so that a subsequent CREATE EXTENSION can attach a fresh one.
+  if (dropping_extension)
+    ducklake_detach_catalog();
 }
 
 } // namespace
