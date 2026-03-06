@@ -18,3 +18,4 @@ test: freeze
 test: metadata_sync
 test: fdw
 test: frozen_fdw
+test: access_control

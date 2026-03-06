@@ -71,6 +71,58 @@ BEGIN
 END
 $$;
 
+-- Predefined roles for DuckLake access control.
+-- https://ducklake.select/docs/stable/duckdb/guides/access_control
+--
+-- Role names are configured via GUCs (ducklake.superuser_role,
+-- ducklake.writer_role, ducklake.reader_role). Set an empty string to skip
+-- creating that role. Defaults: ducklake_superuser, ducklake_writer,
+-- ducklake_reader.
+--
+-- These are GROUP roles (NOLOGIN). Create LOGIN users and grant membership:
+--   CREATE USER analyst IN ROLE ducklake_reader;
+DO $$
+DECLARE
+    duckdb_role text;
+    role_names text[];
+    role_name text;
+BEGIN
+    role_names := ARRAY[
+        current_setting('ducklake.superuser_role'),
+        current_setting('ducklake.writer_role'),
+        current_setting('ducklake.reader_role')
+    ];
+
+    FOREACH role_name IN ARRAY role_names LOOP
+        IF role_name != '' AND NOT EXISTS (
+            SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name
+        ) THEN
+            EXECUTE 'CREATE ROLE ' || quote_ident(role_name);
+        END IF;
+    END LOOP;
+
+    SELECT current_setting('duckdb.postgres_role') INTO duckdb_role;
+    IF duckdb_role != '' AND EXISTS (
+        SELECT FROM pg_catalog.pg_roles WHERE rolname = duckdb_role
+    ) THEN
+        FOREACH role_name IN ARRAY role_names LOOP
+            IF role_name != '' THEN
+                EXECUTE format('GRANT %I TO %I', duckdb_role, role_name);
+            END IF;
+        END LOOP;
+    END IF;
+
+    FOREACH role_name IN ARRAY role_names LOOP
+        IF role_name != '' THEN
+            EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA ducklake TO %I', role_name);
+            EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA ducklake TO %I', role_name);
+            EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA ducklake GRANT ALL ON TABLES TO %I', role_name);
+            EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA ducklake GRANT ALL ON SEQUENCES TO %I', role_name);
+        END IF;
+    END LOOP;
+END
+$$;
+
 -- set_option procedure
 CREATE PROCEDURE ducklake.set_option(
     option_name text,
