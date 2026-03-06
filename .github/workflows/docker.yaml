@@ -1,11 +1,16 @@
 name: Build Docker
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   id-token: write
   contents: write
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   pull_request:
     paths:
@@ -17,12 +22,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Compute build matrix: main-branch push builds only pg-18/amd64 for speed;
+  # cron, tags, PRs, and workflow_dispatch build all versions and arches.
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      build_matrix: ${{ steps.m.outputs.build_matrix }}
+      merge_matrix: ${{ steps.m.outputs.merge_matrix }}
+      is_main_push: ${{ steps.m.outputs.is_main_push }}
+    steps:
+      - id: m
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo 'build_matrix={"postgres":["18"],"runner":["ubuntu-24.04"]}' >> "$GITHUB_OUTPUT"
+            echo 'merge_matrix={"postgres":["18"]}' >> "$GITHUB_OUTPUT"
+            echo 'is_main_push=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build_matrix={"postgres":["14","15","16","17","18"],"runner":["ubuntu-24.04","ubuntu-24.04-arm"]}' >> "$GITHUB_OUTPUT"
+            echo 'merge_matrix={"postgres":["14","15","16","17","18"]}' >> "$GITHUB_OUTPUT"
+            echo 'is_main_push=false' >> "$GITHUB_OUTPUT"
+          fi
+
   docker_build:
     name: Build Docker image for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
+    needs: setup
     strategy:
-      matrix:
-        postgres: ["14", "15", "16", "17", "18"]
-        runner: ["ubuntu-24.04", "ubuntu-24.04-arm"]
+      matrix: ${{ fromJson(needs.setup.outputs.build_matrix) }}
 
     runs-on: ${{ matrix.runner }}
 
@@ -101,14 +126,12 @@ jobs:
   clickbench_test:
     name: ClickBench for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: [setup, docker_build]
     strategy:
-      matrix:
-        postgres: ["14", "15", "16", "17", "18"]
-        runner: ["ubuntu-24.04", "ubuntu-24.04-arm"]
+      matrix: ${{ fromJson(needs.setup.outputs.build_matrix) }}
       fail-fast: false
 
     runs-on: ${{ matrix.runner }}
-    needs: docker_build
 
     steps:
       - name: Login to Docker Hub
@@ -158,14 +181,12 @@ jobs:
   readme_test:
     name: README test for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: [setup, docker_build]
     strategy:
-      matrix:
-        postgres: ["14", "15", "16", "17", "18"]
-        runner: ["ubuntu-24.04", "ubuntu-24.04-arm"]
+      matrix: ${{ fromJson(needs.setup.outputs.build_matrix) }}
       fail-fast: false
 
     runs-on: ${{ matrix.runner }}
-    needs: docker_build
 
     steps:
       - name: Login to Docker Hub
@@ -232,12 +253,11 @@ jobs:
   docker_merge:
     name: Merge Docker image for Postgres ${{ matrix.postgres }}
     if: github.event_name != 'pull_request'
+    needs: [setup, clickbench_test, readme_test]
     strategy:
-      matrix:
-        postgres: ["14", "15", "16", "17", "18"]
+      matrix: ${{ fromJson(needs.setup.outputs.merge_matrix) }}
 
     runs-on: ubuntu-24.04
-    needs: [clickbench_test, readme_test]
 
     steps:
       - name: Login to Docker Hub
@@ -255,13 +275,15 @@ jobs:
             TARGET_REPO='pgducklake/ci-builds'
           fi
 
+          SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}"
+          if [[ "${{ needs.setup.outputs.is_main_push }}" != "true" ]]; then
+            SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
+          fi
+
           echo "Promoting to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
 
           docker buildx imagetools create \
-            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${BRANCH}         \
-            --tag pgducklake/ci-builds:${{ matrix.postgres }}-${{ github.sha }} \
-            --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}               \
-            pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }} \
-            pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}
+            --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH} \
+            $SOURCES
 
           docker buildx imagetools inspect ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}
