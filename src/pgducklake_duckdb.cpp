@@ -1,8 +1,25 @@
 /*
- * pgducklake_duckdb.cpp — DuckDB-facing translation unit
+ * pgducklake_duckdb.cpp -- DuckLake catalog lifecycle in DuckDB
  *
- * This file includes DuckDB and DuckLake headers but NEVER PostgreSQL headers.
- * It provides the DuckLake extension lifecycle functions (init + load).
+ * Manages the "pgducklake" DuckLake catalog attached inside DuckDB.
+ * Two lifecycles exist:
+ *
+ *   First CREATE EXTENSION (DuckDB not yet initialized):
+ *     ducklake_initialize()          -- SQL script entry point
+ *       -> ExecuteDuckDBQuery("SELECT 1")
+ *           -> DuckDBManager::Initialize()
+ *               -> ducklake_load_extension()   [callback from pg_duckdb]
+ *                   -> LoadStaticExtension, Register metadata manager
+ *                   -> ducklake_attach_catalog()
+ *
+ *   DROP + CREATE EXTENSION (DuckDB already alive):
+ *     DROP EXTENSION pg_ducklake
+ *       -> DucklakeUtilityHook        [pgducklake_hooks.cpp]
+ *           -> ducklake_detach_catalog()
+ *     CREATE EXTENSION pg_ducklake
+ *       -> ducklake_initialize()
+ *           -> ExecuteDuckDBQuery("SELECT 1")   (no-op, DuckDB exists)
+ *           -> ducklake_attach_catalog()        (catalog was detached)
  *
  * Query execution against DuckDB is handled via pg_duckdb's raw_query() UDF
  * through PostgreSQL's SPI in the PostgreSQL-facing translation units.
@@ -34,13 +51,17 @@ duckdb::DuckDB *ducklake_get_duckdb_database() {
   return ducklake_duckdb_instance;
 }
 
-void ducklake_load_extension(duckdb::DuckDB &db) {
-  ducklake_duckdb_instance = &db;
-  db.LoadStaticExtension<duckdb::DucklakeExtension>();
-  pgducklake::RegisterTimeTravelFunction(*db.instance);
+void ducklake_detach_catalog() {
+  const char *errmsg;
+  int ret = pgducklake::ExecuteDuckDBQuery(
+      "DETACH DATABASE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG, &errmsg);
+  if (ret != 0) {
+    elog(WARNING, "Failed to detach DuckLake catalog: %s",
+         errmsg ? errmsg : "unknown error");
+  }
+}
 
-  duckdb::DuckLakeMetadataManager::Register(
-      PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
+void ducklake_attach_catalog() {
   duckdb::string query = "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG
                          ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
                          "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED;
@@ -65,6 +86,16 @@ void ducklake_load_extension(duckdb::DuckDB &db) {
   int ret = pgducklake::ExecuteDuckDBQuery(query.c_str(), &errmsg);
 
   if (ret != 0) {
-    elog(ERROR, "Failed to execute query, error: %s", errmsg);
+    elog(ERROR, "Failed to attach DuckLake catalog: %s", errmsg);
   }
+}
+
+void ducklake_load_extension(duckdb::DuckDB &db) {
+  ducklake_duckdb_instance = &db;
+  db.LoadStaticExtension<duckdb::DucklakeExtension>();
+  pgducklake::RegisterTimeTravelFunction(*db.instance);
+
+  duckdb::DuckLakeMetadataManager::Register(
+      PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
+  ducklake_attach_catalog();
 }

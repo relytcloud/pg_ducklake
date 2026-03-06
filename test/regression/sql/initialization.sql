@@ -17,3 +17,9 @@ DROP EXTENSION pg_ducklake;
 SELECT oid FROM pg_namespace WHERE nspname = 'ducklake';
 
 CREATE EXTENSION pg_ducklake;
+
+-- Verify catalog works after DROP+CREATE in same backend
+CREATE TABLE t2 (a int, b text) USING ducklake;
+INSERT INTO t2 VALUES (1, 'hello'), (2, 'world');
+SELECT * FROM t2;
+DROP TABLE t2;
