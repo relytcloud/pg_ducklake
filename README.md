@@ -120,9 +120,9 @@ GROUP BY "Pclass", "Sex";
 - [x] CREATE / CREATE_TABLE_AS for DuckLake tables
 - [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
 - [x] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
-- [x] Time-travel queries
+- [x] Time-travel queries via `time_travel()` table function
 - [ ] Partitioned tables
-- [ ] Read-only `pg_ducklake` tables referencing shared DuckLake datasets (e.g., frozen DuckLake)
+- [x] Frozen DuckLake export (`ducklake.freeze()`) and read-only FDW (`ducklake_fdw`)
 - [x] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
 - [ ] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake)
 - [ ] Complex types
@@ -131,15 +131,13 @@ GROUP BY "Pclass", "Sex";
 
 ### Performance
 
-- [ ] Native inlined (heap) table for small writes
+- [x] Native inlined (heap) table for small writes (`ducklake.data_inlining_row_limit`, `ducklake.enable_direct_insert`)
 - [ ] Better transaction concurrency model (based on PostgreSQL XID)
 - [ ] Faster metadata operations via PostgreSQL native functions (e.g., SPI)
 
 ### Docs
 
-- [x] Access control behavior for DuckLake tables [^]
-
-> [^]: DDL ownership and VACUUM checks work via standard PostgreSQL mechanisms. DML-level permission checks (SELECT/INSERT/UPDATE/DELETE) are currently bypassed because pg_duckdb's planner sets `permInfos = NULL`. See [docs/access_control.md](docs/access_control.md) for details and known gaps.
+- [x] Access control behavior for DuckLake tables (`ducklake_superuser`, `ducklake_writer`, `ducklake_reader`). See [docs/access_control.md](docs/access_control.md).
 
 ## Contributing
 
