@@ -80,6 +80,7 @@ Guidelines:
 - Write header comments for each source file, explaining the purpose and usage of the file. Maintain comments after each edit.
 - Only include comments that are essential to understanding functionality or convey non-obvious information. Otherwise, let code speak for itself.
 - Only write docs about high-level concepts and design decisions if really necessary.
+- `docs/` contains human-readable reference docs (e.g., `functions.md`, `access_control.md`). When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/functions.md` to stay in sync.
 
 ## Miscellaneous
 
