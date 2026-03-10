@@ -12,6 +12,7 @@ test: data_inlining_row_limit
 test: readme_examples
 test: ddl
 test: vacuum
+test: partition
 test: hybrid_scan
 test: time_travel
 test: freeze

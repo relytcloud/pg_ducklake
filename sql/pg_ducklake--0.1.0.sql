@@ -151,6 +151,43 @@ CREATE PROCEDURE ducklake.flush_inlined_data(
 AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
 LANGUAGE C;
 
+-- set_partition / reset_partition procedures
+CREATE PROCEDURE ducklake.set_partition(scope regclass, VARIADIC partition_by text[])
+AS 'MODULE_PATHNAME', 'ducklake_set_partition'
+LANGUAGE C;
+
+CREATE PROCEDURE ducklake.reset_partition(scope regclass)
+AS 'MODULE_PATHNAME', 'ducklake_reset_partition'
+LANGUAGE C;
+
+-- get_partition: query partition metadata for a DuckLake table
+CREATE FUNCTION ducklake.get_partition(
+    scope regclass,
+    OUT partition_key_index bigint,
+    OUT column_name varchar,
+    OUT transform varchar
+)
+RETURNS SETOF record
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+SELECT pc.partition_key_index, c.column_name, pc.transform
+FROM ducklake.ducklake_partition_info pi
+JOIN ducklake.ducklake_partition_column pc USING (partition_id)
+JOIN ducklake.ducklake_column c
+  ON pc.column_id = c.column_id AND pc.table_id = c.table_id
+JOIN ducklake.ducklake_table t ON pi.table_id = t.table_id
+JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+WHERE t.table_name = (SELECT relname FROM pg_class WHERE oid = scope)
+  AND s.schema_name = (SELECT nspname FROM pg_namespace
+                        WHERE oid = (SELECT relnamespace FROM pg_class WHERE oid = scope))
+  AND pi.end_snapshot IS NULL
+  AND c.end_snapshot IS NULL
+  AND t.end_snapshot IS NULL
+  AND s.end_snapshot IS NULL
+ORDER BY pc.partition_key_index
+$$;
+
 -- time_travel by version (DuckDB-only — pg_duckdb routes the query to DuckDB)
 CREATE FUNCTION ducklake.time_travel(table_name text, version bigint)
 RETURNS SETOF duckdb.row
