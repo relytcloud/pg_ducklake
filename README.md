@@ -124,7 +124,7 @@ GROUP BY "Pclass", "Sex";
 - [x] Partitioned tables
 - [x] Frozen DuckLake export (`ducklake.freeze()`) and read-only FDW (`ducklake_fdw`)
 - [x] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
-- [ ] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake)
+- [x] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake) with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe)
 - [ ] Complex types
 
 > [^]: Table maintenance can be carried out by standalone DuckDB clients (preferable, since it is serverless and avoids burdening the PostgreSQL server); `pg_ducklake` still plans to expose these operations for ease of use.
