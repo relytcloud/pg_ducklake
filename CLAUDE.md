@@ -87,20 +87,12 @@ To avoid _Docs Rot_, keep AI docs near the code. Do NOT write separate explanati
 ### Human docs tree (`README.md` entrypoint)
 
 ```
-README.md                        tutorials / quick-start for beginners
+README.md
   +-- docs/README.md             index of all human docs
-        +-- docs/functions.md    technical reference (SQL API)
-        +-- docs/access_control.md  technical reference (roles/permissions)
-        +-- docs/compilation.md  how-to guide (build from source)
+        +-- docs/*.md
 ```
 
-Following [Diataxis](https://diataxis.fr/), human docs contain only:
-
-- **Tutorials** -- `README.md` quick-start examples
-- **Technical reference** -- `docs/*.md` for DBAs
-- **How-to guides** -- only very common tasks
-
-We do NOT write **explanation** docs. Every new doc file must be linked from `docs/README.md`. Keep synced with code:
+Every new doc file must be linked from `docs/README.md`. Keep synced with code:
 
 - When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/functions.md`.
 
