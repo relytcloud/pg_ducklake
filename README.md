@@ -115,30 +115,17 @@ GROUP BY "Pclass", "Sex";
 
 ## Roadmap
 
-### Features
+For a detailed comparison of upstream DuckLake features and what pg_ducklake currently supports, see [DuckLake Feature Coverage](docs/ducklake_feature_coverage.md).
 
-- [x] CREATE / CREATE_TABLE_AS for DuckLake tables
-- [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
-- [x] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
-- [x] Time-travel queries via `time_travel()` table function
-- [x] Partitioned tables
-- [x] Frozen DuckLake export (`ducklake.freeze()`) and read-only FDW (`ducklake_fdw`)
-- [x] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
-- [x] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake) with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe)
-- [ ] Complex types
+### pg_ducklake
 
-> [^]: Table maintenance can be carried out by standalone DuckDB clients (preferable, since it is serverless and avoids burdening the PostgreSQL server); `pg_ducklake` still plans to expose these operations for ease of use.
-
-### Performance
-
-- [x] Native inlined (heap) table for small writes (`ducklake.data_inlining_row_limit`, `ducklake.enable_direct_insert`)
+- [x] HTAP support for incremental row-store to column-store conversion (PostgreSQL heap to DuckLake) with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe)
 - [ ] Better transaction concurrency model (based on PostgreSQL XID)
 - [ ] Faster metadata operations via PostgreSQL native functions (e.g., SPI)
 
-### Docs
+## Documentation
 
-- [x] [SQL functions and procedures reference](docs/functions.md)
-- [x] [Access control](docs/access_control.md) for DuckLake tables (`ducklake_superuser`, `ducklake_writer`, `ducklake_reader`)
+See [docs/](docs/README.md) for full documentation including SQL reference, settings, access control, and feature coverage.
 
 ## Contributing
 
