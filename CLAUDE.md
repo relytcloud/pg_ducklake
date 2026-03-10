@@ -68,18 +68,37 @@ Treat `third_party/pg_duckdb` as upstream:
 
 ## Docs Style
 
-To avoid _Docs Rot_, **DO NOT write docs everywhere**. Consider replacing the documentation with:
+Documentation follows two axes: **AI-oriented** and **human-oriented**.
 
-- self-contained regression tests
-- header comments of source files
-- SKILLs under @.claude/skills/
-- @README.md and @CLAUDE.md
+All docs must be reachable from one of two entrypoints:
 
-Guidelines:
+### AI docs tree (`CLAUDE.md` entrypoint)
 
-- Write header comments for each source file, explaining the purpose and usage of the file. Maintain comments after each edit.
-- Only include comments that are essential to understanding functionality or convey non-obvious information. Otherwise, let code speak for itself.
-- Only write docs about high-level concepts and design decisions if really necessary.
+```
+CLAUDE.md
+  +-- .claude/skills/*          AI workflow guidance
+  +-- src/*.cpp header comments  per-file purpose and usage
+  +-- test/regression/           self-documenting test cases
+  +-- test/isolation/            concurrency test cases
+```
+
+To avoid _Docs Rot_, keep AI docs near the code. Do NOT write separate explanation docs or duplicate what code already says. Maintain header comments after each edit. Inline comments only when logic is non-obvious.
+
+### Human docs tree (`README.md` entrypoint)
+
+```
+README.md
+  +-- docs/README.md              index of all human docs
+        +-- docs/functions.md     SQL API reference
+        +-- docs/settings.md      GUCs and DuckLake options
+        +-- docs/access_control.md
+        +-- docs/compilation.md
+```
+
+Every new doc file must be linked from `docs/README.md`. Keep synced with code:
+
+- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/functions.md`.
+- In reference docs, order TOC tables alphabetically; keep detailed descriptions in logical order.
 
 ## Miscellaneous
 
