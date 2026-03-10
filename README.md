@@ -48,7 +48,7 @@ ATTACH 'ducklake:postgres:dbname=postgres host=localhost' AS my_ducklake (METADA
 SELECT * FROM my_ducklake.public.my_table;
 ```
 
-For cloud storage (AWS S3 or Azure Blob Storage), see the [Secrets Management guide](docs/ducklake/secrets.md).
+For cloud storage (AWS S3 or Azure Blob Storage), see the [DuckLake Secrets Management guide](https://ducklake.select/docs/stable/duckdb/guides/secrets).
 
 ## Quick Start
 
@@ -77,7 +77,7 @@ cd pg_ducklake
 make install
 ```
 
-_See [compilation guide](docs/compilation.md) for detailed instructions._
+_See [documentation](docs/README.md) for detailed instructions._
 
 ## Usecases
 
@@ -121,7 +121,7 @@ GROUP BY "Pclass", "Sex";
 - [x] INSERT / SELECT / DELETE / UPDATE for DuckLake tables
 - [x] Online schema evolution (ADD COLUMN / DROP COLUMN / type promotion)
 - [x] Time-travel queries via `time_travel()` table function
-- [ ] Partitioned tables
+- [x] Partitioned tables
 - [x] Frozen DuckLake export (`ducklake.freeze()`) and read-only FDW (`ducklake_fdw`)
 - [x] Table maintenance (e.g., compaction / GC) via PostgreSQL (e.g., VACUUM or UDFs) [^]
 - [ ] HTAP support for incremental row-store → column-store conversion (PostgreSQL heap → DuckLake)
@@ -137,7 +137,8 @@ GROUP BY "Pclass", "Sex";
 
 ### Docs
 
-- [x] Access control behavior for DuckLake tables (`ducklake_superuser`, `ducklake_writer`, `ducklake_reader`). See [docs/access_control.md](docs/access_control.md).
+- [x] [SQL functions and procedures reference](docs/functions.md)
+- [x] [Access control](docs/access_control.md) for DuckLake tables (`ducklake_superuser`, `ducklake_writer`, `ducklake_reader`)
 
 ## Contributing
 

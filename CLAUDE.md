@@ -68,19 +68,41 @@ Treat `third_party/pg_duckdb` as upstream:
 
 ## Docs Style
 
-To avoid _Docs Rot_, **DO NOT write docs everywhere**. Consider replacing the documentation with:
+Documentation follows two axes: **AI-oriented** and **human-oriented**.
 
-- self-contained regression tests
-- header comments of source files
-- SKILLs under @.claude/skills/
-- @README.md and @CLAUDE.md
+All docs must be reachable from one of two entrypoints:
 
-Guidelines:
+### AI docs tree (`CLAUDE.md` entrypoint)
 
-- Write header comments for each source file, explaining the purpose and usage of the file. Maintain comments after each edit.
-- Only include comments that are essential to understanding functionality or convey non-obvious information. Otherwise, let code speak for itself.
-- Only write docs about high-level concepts and design decisions if really necessary.
-- `docs/` contains human-readable reference docs (e.g., `functions.md`, `access_control.md`). When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/functions.md` to stay in sync.
+```
+CLAUDE.md
+  +-- .claude/skills/*          AI workflow guidance
+  +-- src/*.cpp header comments  per-file purpose and usage
+  +-- test/regression/           self-documenting test cases
+  +-- test/isolation/            concurrency test cases
+```
+
+To avoid _Docs Rot_, keep AI docs near the code. Do NOT write separate explanation docs or duplicate what code already says. Maintain header comments after each edit. Inline comments only when logic is non-obvious.
+
+### Human docs tree (`README.md` entrypoint)
+
+```
+README.md                        tutorials / quick-start for beginners
+  +-- docs/README.md             index of all human docs
+        +-- docs/functions.md    technical reference (SQL API)
+        +-- docs/access_control.md  technical reference (roles/permissions)
+        +-- docs/compilation.md  how-to guide (build from source)
+```
+
+Following [Diataxis](https://diataxis.fr/), human docs contain only:
+
+- **Tutorials** -- `README.md` quick-start examples
+- **Technical reference** -- `docs/*.md` for DBAs
+- **How-to guides** -- only very common tasks
+
+We do NOT write **explanation** docs. Every new doc file must be linked from `docs/README.md`. Keep synced with code:
+
+- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/functions.md`.
 
 ## Miscellaneous
 
