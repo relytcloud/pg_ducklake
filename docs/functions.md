@@ -6,14 +6,14 @@ All functions and procedures are installed into the `ducklake` schema.
 
 | Name | Type | Description |
 | :--- | :--- | :---------- |
-| [`set_option`](#set_option) | procedure | Set a DuckLake option |
-| [`options`](#options) | function | List all DuckLake options and their values |
-| [`flush_inlined_data`](#flush_inlined_data) | procedure | Flush inlined data rows to Parquet files |
-| [`set_partition`](#set_partition) | procedure | Set file-level partitioning on a table |
-| [`reset_partition`](#reset_partition) | procedure | Remove partitioning from a table |
-| [`get_partition`](#get_partition) | function | Show partition keys for a table |
-| [`freeze`](#freeze) | procedure | Export metadata to a standalone `.ducklake` file |
 | [`ducklake_cleanup_old_files`](#ducklake_cleanup_old_files) | function | Clean up old data files |
+| [`flush_inlined_data`](#flush_inlined_data) | procedure | Flush inlined data rows to Parquet files |
+| [`freeze`](#freeze) | procedure | Export metadata to a standalone `.ducklake` file |
+| [`get_partition`](#get_partition) | function | Show partition keys for a table |
+| [`options`](#options) | function | List all DuckLake options and their values |
+| [`reset_partition`](#reset_partition) | procedure | Remove partitioning from a table |
+| [`set_option`](#set_option) | procedure | Set a DuckLake option |
+| [`set_partition`](#set_partition) | procedure | Set file-level partitioning on a table |
 
 ## Time Travel
 
