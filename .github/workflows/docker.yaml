@@ -110,7 +110,7 @@ jobs:
         with:
           platforms: linux/${{ steps.params.outputs.platform }}
 
-      - name: docker bake
+      - name: docker bake (full)
         uses: docker/bake-action@v5
         with:
           targets: pg_ducklake_${{ matrix.postgres }}
@@ -122,6 +122,18 @@ jobs:
             *.cache-to=type=gha,mode=max,scope=${{ github.workflow }}
             postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
             postgres.tags=${{ steps.params.outputs.latest_image }}
+
+      - name: docker bake (slim)
+        uses: docker/bake-action@v5
+        with:
+          targets: pg_ducklake_${{ matrix.postgres }}_slim
+          push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          set: |
+            *.platform=linux/${{ steps.params.outputs.platform }}
+            *.cache-from=type=registry,ref=${{ steps.params.outputs.latest_image }}
+            *.cache-from=type=gha,scope=${{ github.workflow }}
+            postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-slim-${{ steps.params.outputs.platform }}-${{ github.sha }}
+            postgres.tags=${{ steps.params.outputs.latest_image }}-slim
 
   clickbench_test:
     name: ClickBench for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
@@ -266,7 +278,7 @@ jobs:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Merge multi-arch image
+      - name: Merge multi-arch images
         run: |
           BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9\-\.]/-/g' | tr '[:upper:]' '[:lower:]')
           if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == refs/tags/* ]]; then
@@ -276,14 +288,20 @@ jobs:
           fi
 
           SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}"
+          SLIM_SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-slim-amd64-${{ github.sha }}"
           if [[ "${{ needs.setup.outputs.is_main_push }}" != "true" ]]; then
             SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
+            SLIM_SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-slim-arm64-${{ github.sha }}"
           fi
 
-          echo "Promoting to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
-
+          echo "Promoting full image to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
           docker buildx imagetools create \
             --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH} \
             $SOURCES
-
           docker buildx imagetools inspect ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}
+
+          echo "Promoting slim image to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}-slim"
+          docker buildx imagetools create \
+            --tag ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}-slim \
+            $SLIM_SOURCES
+          docker buildx imagetools inspect ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}-slim

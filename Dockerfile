@@ -61,14 +61,29 @@ COPY --chown=postgres:postgres test test
 RUN make installcheck
 
 ###
-### OUTPUT
+### SLIM
 ###
-FROM base AS output
+FROM base AS slim
 
 RUN apt-get update -qq && \
-    apt-get install -y ca-certificates libcurl4
+    apt-get install -y ca-certificates libcurl4 && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --chown=postgres:postgres docker/init.d/ /docker-entrypoint-initdb.d/
 
 COPY --from=builder /out /
+USER postgres
+
+###
+### OUTPUT (full image with debugging tools)
+###
+FROM slim AS output
+USER root
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+    procps vim-tiny less curl net-tools iputils-ping htop lsof strace && \
+    ln -sf /usr/bin/vim.tiny /usr/bin/vim && \
+    rm -rf /var/lib/apt/lists/*
+
 USER postgres

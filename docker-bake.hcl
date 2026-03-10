@@ -34,6 +34,11 @@ target "pg_ducklake" {
   target = "output"
 }
 
+target "pg_ducklake_slim" {
+  inherits = ["postgres"]
+  target = "slim"
+}
+
 target "pg_ducklake_14" {
   inherits = ["pg_ducklake"]
 
@@ -68,6 +73,46 @@ target "pg_ducklake_17" {
 
 target "pg_ducklake_18" {
   inherits = ["pg_ducklake"]
+
+  args = {
+    POSTGRES_VERSION = "18"
+  }
+}
+
+target "pg_ducklake_14_slim" {
+  inherits = ["pg_ducklake_slim"]
+
+  args = {
+    POSTGRES_VERSION = "14"
+  }
+}
+
+target "pg_ducklake_15_slim" {
+  inherits = ["pg_ducklake_slim"]
+
+  args = {
+    POSTGRES_VERSION = "15"
+  }
+}
+
+target "pg_ducklake_16_slim" {
+  inherits = ["pg_ducklake_slim"]
+
+  args = {
+    POSTGRES_VERSION = "16"
+  }
+}
+
+target "pg_ducklake_17_slim" {
+  inherits = ["pg_ducklake_slim"]
+
+  args = {
+    POSTGRES_VERSION = "17"
+  }
+}
+
+target "pg_ducklake_18_slim" {
+  inherits = ["pg_ducklake_slim"]
 
   args = {
     POSTGRES_VERSION = "18"
