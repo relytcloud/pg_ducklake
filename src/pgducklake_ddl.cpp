@@ -353,46 +353,6 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
   PG_RETURN_NULL();
 }
 
-/*
- * ducklake_cleanup(older_than) - Clean up old files in the DuckLake database.
- *
- * Parameters:
- *   older_than - PostgreSQL interval (e.g., '24 hours'::interval, '7
- * days'::interval). If NULL, all scheduled files will be cleaned up.
- *
- * Returns the number of files cleaned up.
- */
-DECLARE_PG_FUNCTION(ducklake_cleanup_old_files) {
-  std::string query;
-
-  if (PG_ARGISNULL(0)) {
-    query = "SELECT count(*) FROM "
-            "ducklake_cleanup_old_files(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED ", "
-            "cleanup_all => true)";
-  } else {
-    Interval *interval = PG_GETARG_INTERVAL_P(0);
-    char *interval_str = DatumGetCString(
-        DirectFunctionCall1(interval_out, IntervalPGetDatum(interval)));
-
-    query = duckdb::StringUtil::Format(
-        "SELECT count(*) FROM "
-        "ducklake_cleanup_old_files(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED ", "
-        "older_than => now() - INTERVAL '%s')",
-        interval_str);
-  }
-
-  const char *error_msg = nullptr;
-  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
-  if (result != 0) {
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to clean up old files: %s",
-                           error_msg ? error_msg : "unknown error")));
-  }
-
-  /* TODO: parse result count from DuckDB query result */
-  PG_RETURN_INT64(0);
-}
-
 DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
   std::string query =
       "CALL ducklake_flush_inlined_data(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED;

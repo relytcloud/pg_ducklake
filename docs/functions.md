@@ -6,7 +6,7 @@ All functions and procedures are installed into the `ducklake` schema.
 
 | Name | Type | Description |
 | :--- | :--- | :---------- |
-| [`ducklake_cleanup_old_files`](#ducklake_cleanup_old_files) | function | Clean up old data files |
+| [`cleanup_old_files`](#cleanup_old_files) | function | Clean up old data files |
 | [`flush_inlined_data`](#flush_inlined_data) | procedure | Flush inlined data rows to Parquet files |
 | [`freeze`](#freeze) | procedure | Export metadata to a standalone `.ducklake` file |
 | [`get_partition`](#get_partition) | function | Show partition keys for a table |
@@ -20,6 +20,29 @@ All functions and procedures are installed into the `ducklake` schema.
 | Name | Type | Description |
 | :--- | :--- | :---------- |
 | [`time_travel`](#time_travel) | function | Query a table at a previous version or timestamp |
+
+## Snapshots
+
+| Name | Type | Description |
+| :--- | :--- | :---------- |
+| [`current_snapshot`](#current_snapshot) | function | Get current snapshot ID |
+| [`last_committed_snapshot`](#last_committed_snapshot) | function | Get latest committed snapshot |
+| [`snapshots`](#snapshots) | function | List all snapshots and changesets |
+
+## Data Change Feed
+
+| Name | Type | Description |
+| :--- | :--- | :---------- |
+| [`table_changes`](#table_changes) | function | Query all changes between snapshots |
+| [`table_deletions`](#table_deletions) | function | Query deleted rows between snapshots |
+| [`table_insertions`](#table_insertions) | function | Query inserted rows between snapshots |
+
+## Metadata
+
+| Name | Type | Description |
+| :--- | :--- | :---------- |
+| [`list_files`](#list_files) | function | List data/delete files for a table |
+| [`table_info`](#table_info) | function | List table metadata |
 
 ## Detailed Descriptions
 
@@ -100,16 +123,16 @@ Exports the DuckLake catalog metadata to a standalone `.ducklake` file. If data 
 CALL ducklake.freeze('/path/to/output.ducklake');
 ```
 
-#### <a name="ducklake_cleanup_old_files"></a>`ducklake.ducklake_cleanup_old_files(older_than interval DEFAULT NULL)` -> `bigint`
+#### <a name="cleanup_old_files"></a>`ducklake.cleanup_old_files(older_than interval DEFAULT NULL)` -> `bigint`
 
 Cleans up old data files that are no longer referenced by the current snapshot. When `older_than` is provided, only files older than the given interval are cleaned up. When NULL, all scheduled files are cleaned.
 
 ```sql
 -- Clean up files older than 24 hours
-SELECT ducklake.ducklake_cleanup_old_files('24 hours'::interval);
+SELECT ducklake.cleanup_old_files('24 hours'::interval);
 
 -- Clean up all old files
-SELECT ducklake.ducklake_cleanup_old_files();
+SELECT ducklake.cleanup_old_files();
 ```
 
 #### <a name="time_travel"></a>`ducklake.time_travel(table_name text, version bigint)` / `ducklake.time_travel(table_name text, timestamp timestamptz)` -> `SETOF duckdb.row`
@@ -122,4 +145,80 @@ SELECT * FROM ducklake.time_travel('my_table', 1);
 
 -- Query by timestamp
 SELECT * FROM ducklake.time_travel('my_table', '2024-01-01'::timestamptz);
+```
+
+#### <a name="snapshots"></a>`ducklake.snapshots()` -> `SETOF duckdb.row`
+
+Lists all snapshots and changesets. Returns snapshot metadata including snapshot IDs, timestamps, and changeset information. This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+SELECT * FROM ducklake.snapshots();
+```
+
+#### <a name="current_snapshot"></a>`ducklake.current_snapshot()` -> `SETOF duckdb.row`
+
+Returns the current snapshot ID. This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+SELECT * FROM ducklake.current_snapshot();
+```
+
+#### <a name="last_committed_snapshot"></a>`ducklake.last_committed_snapshot()` -> `SETOF duckdb.row`
+
+Returns the latest committed snapshot. This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+SELECT * FROM ducklake.last_committed_snapshot();
+```
+
+#### <a name="table_insertions"></a>`ducklake.table_insertions(schema_name text, table_name text, start_snapshot bigint, end_snapshot bigint)` / `ducklake.table_insertions(schema_name text, table_name text, start_snapshot timestamptz, end_snapshot timestamptz)` -> `SETOF duckdb.row`
+
+Queries rows inserted into a table between two snapshots (by version or timestamp). This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+-- By version
+SELECT * FROM ducklake.table_insertions('public', 'my_table', 1, 5);
+
+-- By timestamp
+SELECT * FROM ducklake.table_insertions('public', 'my_table', '2024-01-01'::timestamptz, now());
+```
+
+#### <a name="table_deletions"></a>`ducklake.table_deletions(schema_name text, table_name text, start_snapshot bigint, end_snapshot bigint)` / `ducklake.table_deletions(schema_name text, table_name text, start_snapshot timestamptz, end_snapshot timestamptz)` -> `SETOF duckdb.row`
+
+Queries rows deleted from a table between two snapshots (by version or timestamp). This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+-- By version
+SELECT * FROM ducklake.table_deletions('public', 'my_table', 1, 5);
+
+-- By timestamp
+SELECT * FROM ducklake.table_deletions('public', 'my_table', '2024-01-01'::timestamptz, now());
+```
+
+#### <a name="table_changes"></a>`ducklake.table_changes(schema_name text, table_name text, start_snapshot bigint, end_snapshot bigint)` / `ducklake.table_changes(schema_name text, table_name text, start_snapshot timestamptz, end_snapshot timestamptz)` -> `SETOF duckdb.row`
+
+Queries all changes (insertions and deletions) to a table between two snapshots (by version or timestamp). Each row includes a `change_type` column: `insert`, `delete`, `update_preimage`, or `update_postimage`. This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+-- By version
+SELECT * FROM ducklake.table_changes('public', 'my_table', 1, 5);
+
+-- By timestamp
+SELECT * FROM ducklake.table_changes('public', 'my_table', '2024-01-01'::timestamptz, now());
+```
+
+#### <a name="list_files"></a>`ducklake.list_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
+
+Lists data and delete files for a DuckLake table. This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+SELECT * FROM ducklake.list_files('public', 'my_table');
+```
+
+#### <a name="table_info"></a>`ducklake.table_info()` -> `SETOF duckdb.row`
+
+Lists metadata for all tables in the DuckLake catalog. This is a DuckDB-only function (routed to DuckDB for execution).
+
+```sql
+SELECT * FROM ducklake.table_info();
 ```

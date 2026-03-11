@@ -41,16 +41,16 @@ Last updated: 2026-03-10
 
 ## Snapshots
 
-- [ ] `snapshots()`: List all snapshots and changesets
-- [ ] `current_snapshot()`: Get current snapshot ID
-- [ ] `last_committed_snapshot()`: Get latest committed snapshot
+- [x] `snapshots()`: List all snapshots and changesets
+- [x] `current_snapshot()`: Get current snapshot ID
+- [x] `last_committed_snapshot()`: Get latest committed snapshot
 - [ ] `set_commit_message()`: Add author/message to snapshots
 
 ## Data Change Feed
 
-- [ ] `table_changes(tbl, start, end)`: Query changes between snapshots
-- [ ] `table_deletions(tbl, start, end)`: Query deleted rows between snapshots
-- [ ] `table_insertions(tbl, start, end)`: Query inserted rows between snapshots
+- [x] `table_changes(tbl, start, end)`: Query changes between snapshots
+- [x] `table_deletions(tbl, start, end)`: Query deleted rows between snapshots
+- [x] `table_insertions(tbl, start, end)`: Query inserted rows between snapshots
 - [ ] `rowid` virtual column: Unique row lineage identifier
 
 ## Partitioning
@@ -82,14 +82,15 @@ Last updated: 2026-03-10
 - [x] `VACUUM` (merge + rewrite): `VACUUM tablename`
 - [ ] `ducklake_merge_adjacent_files()`: Dedicated merge function
 - [ ] `ducklake_expire_snapshots()`: Expire old snapshots
-- [x] `ducklake_cleanup_old_files()`: `ducklake.ducklake_cleanup_old_files()`
+- [x] `ducklake_cleanup_old_files()`: `ducklake.cleanup_old_files()`
 - [ ] `ducklake_delete_orphaned_files()`: Remove untracked files
 - [ ] `ducklake_rewrite_data_files()`: VACUUM covers rewrite via `vacuum_delete_threshold`, but no dedicated function
 - [ ] `CHECKPOINT` (all-in-one maintenance): Runs all maintenance ops sequentially
 
 ## Metadata
 
-- [ ] `ducklake_list_files()`: List data/delete files for a table
+- [x] `ducklake_list_files()`: `ducklake.list_files()`
+- [x] `ducklake_table_info()`: `ducklake.table_info()`
 - [ ] `ducklake_add_data_files()`: Register external Parquet files
 - [x] Metadata tables (queryable): All `ducklake_*` tables in `ducklake` schema
 
@@ -107,5 +108,5 @@ These features are unique to pg_ducklake and not part of the upstream DuckLake e
 
 ## Summary
 
-- **Supported:** 21 features -- core DML, CREATE/DROP TABLE, ALTER TABLE variants, time travel, partitioning, data inlining, freeze, options, VACUUM, cleanup old files, transactions, metadata tables
-- **Not supported:** 19 features -- MERGE INTO, views, macros, comments, sorted tables, NOT NULL constraint management, snapshot functions, data change feed, rowid, encryption, dedicated maintenance functions, CHECKPOINT, list_files, add_data_files, migration, schema-level option scoping, extension-level settings
+- **Supported:** 29 features -- core DML, CREATE/DROP TABLE, ALTER TABLE variants, time travel, partitioning, data inlining, freeze, options, VACUUM, cleanup old files, transactions, metadata tables, snapshots, current_snapshot, last_committed_snapshot, table_insertions, table_deletions, table_changes, list_files, table_info
+- **Not supported:** 12 features -- MERGE INTO, views, macros, comments, sorted tables, NOT NULL constraint management, set_commit_message, rowid, encryption, dedicated maintenance functions, CHECKPOINT, add_data_files, migration, schema-level option scoping, extension-level settings
