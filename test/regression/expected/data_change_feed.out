@@ -48,5 +48,43 @@ SELECT count(*) >= 0 AS ok FROM ducklake.table_changes('public', 'dcf', now() - 
  t
 (1 row)
 
+-- 5. Regclass overloads (version)
+SELECT count(*) FROM ducklake.table_insertions('dcf'::regclass, :v0, :v2);
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM ducklake.table_deletions('dcf'::regclass, :v2, :v3);
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) > 0 AS has_changes FROM ducklake.table_changes('dcf'::regclass, :v0, :v3);
+ has_changes 
+-------------
+ t
+(1 row)
+
+-- 6. Regclass overloads (timestamp)
+SELECT count(*) >= 0 AS ok FROM ducklake.table_insertions('dcf'::regclass, now() - interval '1 hour', now());
+ ok 
+----
+ t
+(1 row)
+
+SELECT count(*) >= 0 AS ok FROM ducklake.table_deletions('dcf'::regclass, now() - interval '1 hour', now());
+ ok 
+----
+ t
+(1 row)
+
+SELECT count(*) >= 0 AS ok FROM ducklake.table_changes('dcf'::regclass, now() - interval '1 hour', now());
+ ok 
+----
+ t
+(1 row)
+
 -- Cleanup
 DROP TABLE dcf;

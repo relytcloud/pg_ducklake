@@ -171,47 +171,60 @@ Returns the latest committed snapshot. This is a DuckDB-only function (routed to
 SELECT * FROM ducklake.last_committed_snapshot();
 ```
 
-#### <a name="table_insertions"></a>`ducklake.table_insertions(schema_name text, table_name text, start_snapshot bigint, end_snapshot bigint)` / `ducklake.table_insertions(schema_name text, table_name text, start_snapshot timestamptz, end_snapshot timestamptz)` -> `SETOF duckdb.row`
+#### <a name="table_insertions"></a>`ducklake.table_insertions(scope regclass, ...)` / `ducklake.table_insertions(schema_name text, table_name text, ...)` -> `SETOF duckdb.row`
 
-Queries rows inserted into a table between two snapshots (by version or timestamp). This is a DuckDB-only function (routed to DuckDB for execution).
+Queries rows inserted into a table between two snapshots (by version or timestamp). Accepts either a `regclass` table reference or explicit schema/table text arguments.
 
 ```sql
--- By version
+-- By version (regclass)
+SELECT * FROM ducklake.table_insertions('my_table'::regclass, 1, 5);
+
+-- By timestamp (regclass)
+SELECT * FROM ducklake.table_insertions('my_table'::regclass, '2024-01-01'::timestamptz, now());
+
+-- Text-arg form
 SELECT * FROM ducklake.table_insertions('public', 'my_table', 1, 5);
-
--- By timestamp
-SELECT * FROM ducklake.table_insertions('public', 'my_table', '2024-01-01'::timestamptz, now());
 ```
 
-#### <a name="table_deletions"></a>`ducklake.table_deletions(schema_name text, table_name text, start_snapshot bigint, end_snapshot bigint)` / `ducklake.table_deletions(schema_name text, table_name text, start_snapshot timestamptz, end_snapshot timestamptz)` -> `SETOF duckdb.row`
+#### <a name="table_deletions"></a>`ducklake.table_deletions(scope regclass, ...)` / `ducklake.table_deletions(schema_name text, table_name text, ...)` -> `SETOF duckdb.row`
 
-Queries rows deleted from a table between two snapshots (by version or timestamp). This is a DuckDB-only function (routed to DuckDB for execution).
+Queries rows deleted from a table between two snapshots (by version or timestamp). Accepts either a `regclass` table reference or explicit schema/table text arguments.
 
 ```sql
--- By version
+-- By version (regclass)
+SELECT * FROM ducklake.table_deletions('my_table'::regclass, 1, 5);
+
+-- By timestamp (regclass)
+SELECT * FROM ducklake.table_deletions('my_table'::regclass, '2024-01-01'::timestamptz, now());
+
+-- Text-arg form
 SELECT * FROM ducklake.table_deletions('public', 'my_table', 1, 5);
-
--- By timestamp
-SELECT * FROM ducklake.table_deletions('public', 'my_table', '2024-01-01'::timestamptz, now());
 ```
 
-#### <a name="table_changes"></a>`ducklake.table_changes(schema_name text, table_name text, start_snapshot bigint, end_snapshot bigint)` / `ducklake.table_changes(schema_name text, table_name text, start_snapshot timestamptz, end_snapshot timestamptz)` -> `SETOF duckdb.row`
+#### <a name="table_changes"></a>`ducklake.table_changes(scope regclass, ...)` / `ducklake.table_changes(schema_name text, table_name text, ...)` -> `SETOF duckdb.row`
 
-Queries all changes (insertions and deletions) to a table between two snapshots (by version or timestamp). Each row includes a `change_type` column: `insert`, `delete`, `update_preimage`, or `update_postimage`. This is a DuckDB-only function (routed to DuckDB for execution).
+Queries all changes (insertions and deletions) to a table between two snapshots (by version or timestamp). Each row includes a `change_type` column: `insert`, `delete`, `update_preimage`, or `update_postimage`. Accepts either a `regclass` table reference or explicit schema/table text arguments.
 
 ```sql
--- By version
+-- By version (regclass)
+SELECT * FROM ducklake.table_changes('my_table'::regclass, 1, 5);
+
+-- By timestamp (regclass)
+SELECT * FROM ducklake.table_changes('my_table'::regclass, '2024-01-01'::timestamptz, now());
+
+-- Text-arg form
 SELECT * FROM ducklake.table_changes('public', 'my_table', 1, 5);
-
--- By timestamp
-SELECT * FROM ducklake.table_changes('public', 'my_table', '2024-01-01'::timestamptz, now());
 ```
 
-#### <a name="list_files"></a>`ducklake.list_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
+#### <a name="list_files"></a>`ducklake.list_files(scope regclass)` / `ducklake.list_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
 
-Lists data and delete files for a DuckLake table. This is a DuckDB-only function (routed to DuckDB for execution).
+Lists data and delete files for a DuckLake table. Accepts either a `regclass` table reference or explicit schema/table text arguments.
 
 ```sql
+-- Regclass form
+SELECT * FROM ducklake.list_files('my_table'::regclass);
+
+-- Text-arg form
 SELECT * FROM ducklake.list_files('public', 'my_table');
 ```
 

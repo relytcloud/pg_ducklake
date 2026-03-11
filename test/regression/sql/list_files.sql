@@ -8,7 +8,10 @@ INSERT INTO lf_test VALUES (1, 'one');
 -- 1. list_files returns at least one file
 SELECT count(*) > 0 AS has_files FROM ducklake.list_files('public', 'lf_test');
 
--- 2. table_info returns rows
+-- 2. list_files with regclass
+SELECT count(*) > 0 AS has_files FROM ducklake.list_files('lf_test'::regclass);
+
+-- 3. table_info returns rows
 SELECT count(*) > 0 AS has_tables FROM ducklake.table_info();
 
 -- Cleanup

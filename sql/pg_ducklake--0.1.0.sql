@@ -317,6 +317,59 @@ SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
+-- Regclass overloads for table-scoped functions.
+-- The planner hook rewrites these into the text-arg versions above before
+-- pg_duckdb routes them to DuckDB. The C stub is a safety net that errors
+-- if the rewrite did not happen.
+
+CREATE FUNCTION ducklake.list_files(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.table_insertions(
+    scope regclass, start_snapshot bigint, end_snapshot bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.table_insertions(
+    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.table_deletions(
+    scope regclass, start_snapshot bigint, end_snapshot bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.table_deletions(
+    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.table_changes(
+    scope regclass, start_snapshot bigint, end_snapshot bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.table_changes(
+    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
 -- Foreign Data Wrapper for read-only access to DuckLake tables
 CREATE FUNCTION ducklake._fdw_handler()
     RETURNS fdw_handler
