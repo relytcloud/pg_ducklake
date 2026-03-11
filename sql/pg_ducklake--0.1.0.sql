@@ -144,11 +144,23 @@ RETURNS SETOF record
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
--- flush_inlined_data procedure
-CREATE PROCEDURE ducklake.flush_inlined_data(
-    scope regclass DEFAULT NULL
-)
-AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
+-- flush_inlined_data function (DuckDB-only, routed to DuckDB for execution)
+CREATE FUNCTION ducklake.flush_inlined_data()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.flush_inlined_data(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.flush_inlined_data(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
 LANGUAGE C;
 
 -- set_partition / reset_partition procedures

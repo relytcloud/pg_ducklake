@@ -353,43 +353,6 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
   PG_RETURN_NULL();
 }
 
-DECLARE_PG_FUNCTION(ducklake_flush_inlined_data) {
-  std::string query =
-      "CALL ducklake_flush_inlined_data(" PGDUCKLAKE_DUCKDB_CATALOG_QUOTED;
-
-  if (PG_NARGS() > 0 && !PG_ARGISNULL(0)) {
-    Oid relid = PG_GETARG_OID(0);
-    if (!OidIsValid(relid)) {
-      elog(ERROR, "invalid table OID");
-    }
-
-    char *table_name = get_rel_name(relid);
-    if (!table_name) {
-      elog(ERROR, "Could not find relation with OID %u", relid);
-    }
-    char *schema_name = get_namespace_name(get_rel_namespace(relid));
-    if (!schema_name) {
-      elog(ERROR, "Could not find namespace for relation with OID %u", relid);
-    }
-
-    query +=
-        ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
-    query +=
-        ", schema_name => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
-  }
-
-  query += ")";
-
-  const char *error_msg = nullptr;
-  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
-  if (result != 0) {
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to flush inlined data: %s",
-                           error_msg ? error_msg : "unknown error")));
-  }
-
-  PG_RETURN_VOID();
-}
 
 DECLARE_PG_FUNCTION(ducklake_set_option) {
   if (PG_ARGISNULL(0)) {

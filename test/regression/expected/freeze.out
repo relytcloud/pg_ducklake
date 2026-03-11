@@ -59,7 +59,11 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table
 (1 row)
 
 -- Flush inlined data as a separate statement before freeze
-CALL ducklake.flush_inlined_data();
+SELECT * FROM ducklake.flush_inlined_data();
+ Success 
+---------
+(0 rows)
+
 CALL ducklake.freeze('/tmp/test_freeze_inlined.ducklake');
 -- Attach as real DuckLake and query -- proves flush materialized the data
 SET client_min_messages = warning;

@@ -10,7 +10,8 @@
  *     - Registers wrapper table macros in DuckDB's system.main catalog that
  *       inject the catalog constant and delegate to ducklake_<name>() globals.
  *     - Registers DuckDB table functions (TableFunctionSet) for functions
- *       that need overloaded signatures (e.g., cleanup_old_files).
+ *       that need overloaded signatures (e.g., cleanup_old_files,
+ *       flush_inlined_data).
  *
  *   SQL side (pg_ducklake--0.1.0.sql)
  *     - Defines the actual PG function signatures as DuckDB-only C stubs.
@@ -71,6 +72,7 @@ void RegisterDuckdbOnlyFunctions() {
   pgduckdb::RegisterDuckdbOnlyFunction("table_changes");
   // Maintenance functions
   pgduckdb::RegisterDuckdbOnlyFunction("cleanup_old_files");
+  pgduckdb::RegisterDuckdbOnlyFunction("flush_inlined_data");
 }
 
 /*
@@ -189,6 +191,69 @@ void RegisterCleanupFunction(DatabaseInstance &db) {
       TableFunction({}, CleanupExecute, CleanupNoArgsBind, CleanupInit));
   set.AddFunction(TableFunction({LogicalType::INTERVAL}, CleanupExecute,
                                 CleanupIntervalBind, CleanupInit));
+
+  CreateTableFunctionInfo info(set);
+  auto &catalog = Catalog::GetSystemCatalog(db);
+  auto transaction = CatalogTransaction::GetSystemTransaction(db);
+  catalog.CreateTableFunction(transaction, info);
+}
+
+/*
+ * flush_inlined_data() DuckDB table function set.
+ *
+ * Unlike cleanup_old_files, the upstream ducklake_flush_inlined_data uses
+ * bind_operator (not bind) -- it replaces the entire logical plan at bind
+ * time. Each overload's bind_operator looks up the upstream function, sets
+ * the catalog and named parameters, then delegates to its bind_operator.
+ */
+static TableFunction LookupDuckLakeFlushFunction(ClientContext &context) {
+  auto &catalog = Catalog::GetSystemCatalog(context);
+  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(
+      context, DEFAULT_SCHEMA, "ducklake_flush_inlined_data");
+  return entry.functions.GetFunctionByArguments(
+      context, {LogicalType::VARCHAR});
+}
+
+static unique_ptr<LogicalOperator>
+FlushNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
+                  idx_t bind_index, vector<string> &return_names) {
+  input.inputs.clear();
+  input.inputs.push_back(Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.named_parameters.clear();
+
+  auto func = LookupDuckLakeFlushFunction(context);
+  input.table_function = func;
+  return func.bind_operator(context, input, bind_index, return_names);
+}
+
+static unique_ptr<LogicalOperator>
+FlushTableArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
+                     idx_t bind_index, vector<string> &return_names) {
+  auto schema_name = input.inputs[0].GetValue<string>();
+  auto table_name = input.inputs[1].GetValue<string>();
+
+  input.inputs.clear();
+  input.inputs.push_back(Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.named_parameters.clear();
+  input.named_parameters["schema_name"] = Value(schema_name);
+  input.named_parameters["table_name"] = Value(table_name);
+
+  auto func = LookupDuckLakeFlushFunction(context);
+  input.table_function = func;
+  return func.bind_operator(context, input, bind_index, return_names);
+}
+
+void RegisterFlushInlinedDataFunction(DatabaseInstance &db) {
+  TableFunctionSet set("flush_inlined_data");
+
+  TableFunction no_args({}, nullptr, nullptr, nullptr);
+  no_args.bind_operator = FlushNoArgsBindOp;
+  set.AddFunction(no_args);
+
+  TableFunction table_args({LogicalType::VARCHAR, LogicalType::VARCHAR},
+                           nullptr, nullptr, nullptr);
+  table_args.bind_operator = FlushTableArgsBindOp;
+  set.AddFunction(table_args);
 
   CreateTableFunctionInfo info(set);
   auto &catalog = Catalog::GetSystemCatalog(db);

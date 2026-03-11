@@ -34,7 +34,7 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table
                   WHERE table_name = 'freeze_inlined' AND end_snapshot IS NULL);
 
 -- Flush inlined data as a separate statement before freeze
-CALL ducklake.flush_inlined_data();
+SELECT * FROM ducklake.flush_inlined_data();
 CALL ducklake.freeze('/tmp/test_freeze_inlined.ducklake');
 
 -- Attach as real DuckLake and query -- proves flush materialized the data

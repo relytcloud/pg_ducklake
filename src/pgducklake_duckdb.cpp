@@ -97,6 +97,7 @@ void ducklake_load_extension(duckdb::DuckDB &db) {
   pgducklake::RegisterTimeTravelFunction(*db.instance);
   pgducklake::RegisterWrapperMacros(*db.instance);
   pgducklake::RegisterCleanupFunction(*db.instance);
+  pgducklake::RegisterFlushInlinedDataFunction(*db.instance);
 
   duckdb::DuckLakeMetadataManager::Register(
       PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);

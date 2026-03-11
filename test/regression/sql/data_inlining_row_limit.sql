@@ -60,7 +60,7 @@ SELECT * FROM test_inlining ORDER BY i;
 SELECT COUNT(*) AS inlined_rows_after_disable FROM ducklake.:inlined_table_name;
 
 -- Test 6: flush inlined data for one table
-CALL ducklake.flush_inlined_data('test_inlining'::regclass);
+SELECT * FROM ducklake.flush_inlined_data('test_inlining'::regclass);
 SELECT COUNT(*) AS row_count_after_flush FROM test_inlining;
 
 -- Cleanup

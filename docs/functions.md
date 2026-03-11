@@ -7,7 +7,7 @@ All functions and procedures are installed into the `ducklake` schema.
 | Name | Type | Description |
 | :--- | :--- | :---------- |
 | [`cleanup_old_files`](#cleanup_old_files) | function | Clean up old data files |
-| [`flush_inlined_data`](#flush_inlined_data) | procedure | Flush inlined data rows to Parquet files |
+| [`flush_inlined_data`](#flush_inlined_data) | function | Flush inlined data rows to Parquet files |
 | [`freeze`](#freeze) | procedure | Export metadata to a standalone `.ducklake` file |
 | [`get_partition`](#get_partition) | function | Show partition keys for a table |
 | [`options`](#options) | function | List all DuckLake options and their values |
@@ -66,16 +66,19 @@ Lists all DuckLake options with their current values. This is a DuckDB-only func
 SELECT * FROM ducklake.options();
 ```
 
-#### <a name="flush_inlined_data"></a>`ducklake.flush_inlined_data(scope regclass DEFAULT NULL)`
+#### <a name="flush_inlined_data"></a>`ducklake.flush_inlined_data()` / `ducklake.flush_inlined_data(schema_name text, table_name text)` / `ducklake.flush_inlined_data(scope regclass)` -> `SETOF duckdb.row`
 
-Flushes inlined data rows to Parquet files. When `scope` is provided, only that table is flushed.
+Flushes inlined data rows to Parquet files. When a table is specified, only that table is flushed. Accepts either a `regclass` table reference or explicit schema/table text arguments. This is a DuckDB-only function (routed to DuckDB for execution).
 
 ```sql
 -- Flush all tables
-CALL ducklake.flush_inlined_data();
+SELECT * FROM ducklake.flush_inlined_data();
 
--- Flush a specific table
-CALL ducklake.flush_inlined_data('my_table'::regclass);
+-- Flush a specific table (regclass)
+SELECT * FROM ducklake.flush_inlined_data('my_table'::regclass);
+
+-- Flush a specific table (text-arg form)
+SELECT * FROM ducklake.flush_inlined_data('public', 'my_table');
 ```
 
 #### <a name="set_partition"></a>`ducklake.set_partition(scope regclass, VARIADIC partition_by text[])`
