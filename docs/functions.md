@@ -123,16 +123,16 @@ Exports the DuckLake catalog metadata to a standalone `.ducklake` file. If data 
 CALL ducklake.freeze('/path/to/output.ducklake');
 ```
 
-#### <a name="cleanup_old_files"></a>`ducklake.cleanup_old_files(older_than interval DEFAULT NULL)` -> `bigint`
+#### <a name="cleanup_old_files"></a>`ducklake.cleanup_old_files()` / `ducklake.cleanup_old_files(older_than interval)` -> `SETOF duckdb.row`
 
-Cleans up old data files that are no longer referenced by the current snapshot. When `older_than` is provided, only files older than the given interval are cleaned up. When NULL, all scheduled files are cleaned.
+Cleans up old data files that are no longer referenced by the current snapshot. When `older_than` is provided, only files older than the given interval are cleaned up. Without arguments, all scheduled files are cleaned. This is a DuckDB-only function (routed to DuckDB for execution).
 
 ```sql
 -- Clean up files older than 24 hours
-SELECT ducklake.cleanup_old_files('24 hours'::interval);
+SELECT * FROM ducklake.cleanup_old_files('24 hours'::interval);
 
 -- Clean up all old files
-SELECT ducklake.cleanup_old_files();
+SELECT * FROM ducklake.cleanup_old_files();
 ```
 
 #### <a name="time_travel"></a>`ducklake.time_travel(table_name text, version bigint)` / `ducklake.time_travel(table_name text, timestamp timestamptz)` -> `SETOF duckdb.row`

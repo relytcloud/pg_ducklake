@@ -212,12 +212,17 @@ CREATE PROCEDURE ducklake.freeze(
 AS 'MODULE_PATHNAME', 'ducklake_freeze'
 LANGUAGE C;
 
--- cleanup_old_files function
-CREATE FUNCTION ducklake.cleanup_old_files(
-    older_than interval DEFAULT NULL
-)
-RETURNS bigint
-AS 'MODULE_PATHNAME', 'ducklake_cleanup_old_files'
+-- cleanup_old_files function (DuckDB-only -- pg_duckdb routes to DuckDB)
+CREATE FUNCTION ducklake.cleanup_old_files()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.cleanup_old_files(older_than interval)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
 -- ============================================================
