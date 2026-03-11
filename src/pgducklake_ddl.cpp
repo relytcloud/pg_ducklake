@@ -355,8 +355,8 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 
 
 DECLARE_PG_FUNCTION(ducklake_only_procedure) {
-  char *proc_name =
-      DatumGetCString(DirectFunctionCall1(regprocout, fcinfo->flinfo->fn_oid));
+  char *proc_name = DatumGetCString(
+      DirectFunctionCall1(regprocout, ObjectIdGetDatum(fcinfo->flinfo->fn_oid)));
   elog(ERROR, "Procedure '%s' only works with DuckDB execution", proc_name);
 }
 

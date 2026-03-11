@@ -240,13 +240,12 @@ bool IsDucklakeOnlyProcedure(Oid funcid) {
   if (!HeapTupleIsValid(tp))
     return false;
   bool isnull;
-  SysCacheGetAttr(PROCOID, tp, Anum_pg_proc_prosrc, &isnull);
+  Datum prosrc_datum = SysCacheGetAttr(PROCOID, tp, Anum_pg_proc_prosrc, &isnull);
   if (isnull) {
     ReleaseSysCache(tp);
     return false;
   }
-  char *prosrc_str =
-      TextDatumGetCString(SysCacheGetAttr(PROCOID, tp, Anum_pg_proc_prosrc, &isnull));
+  char *prosrc_str = TextDatumGetCString(prosrc_datum);
   ReleaseSysCache(tp);
   return strcmp(prosrc_str, "ducklake_only_procedure") == 0;
 }
