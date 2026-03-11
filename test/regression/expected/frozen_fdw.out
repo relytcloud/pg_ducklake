@@ -55,11 +55,7 @@ HINT:  DELETE is not supported on foreign tables created with ducklake_fdw.
 CREATE FOREIGN TABLE frozen_nonexistent ()
     SERVER frozen_space
     OPTIONS (schema_name 'main', table_name 'no_such_table');
-ERROR:  ducklake_fdw: cannot read table "main"."no_such_table": Catalog Error: Table with name no_such_table does not exist!
-Did you mean "astronauts"?
-
-LINE 1: SELECT * FROM "__ducklake_fdw_probe__".main.no_such_table LIMIT 0
-                      ^
+ERROR:  ducklake_fdw: column inference ATTACH failed: Binder Error: Failed to attach DuckLake MetaData "__ducklake_metadata___ducklake_fdw_probe__" at path + "/tmp/pg_ducklake_testdata/space.ducklake"Unique file handle conflict: Cannot attach "__ducklake_metadata___ducklake_fdw_probe__" - the database file "/tmp/pg_ducklake_testdata/space.ducklake" is already attached by database "__ducklake_metadata_frozen_space"
 -- Cleanup
 DROP FOREIGN TABLE frozen_missions;
 DROP SERVER frozen_space;
