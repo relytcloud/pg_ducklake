@@ -4,7 +4,21 @@ ROOT_DIR = ../..
 
 include $(ROOT_DIR)/Makefile.global
 
-check-regression:
+TESTDATA_DIR = /tmp/pg_ducklake_testdata
+
+$(CURDIR)/data/titanic.csv:
+	mkdir -p $(CURDIR)/data
+	curl -fSL -o $@ 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv'
+
+$(CURDIR)/data/space.ducklake:
+	mkdir -p $(CURDIR)/data
+	curl -fSL -o $@ 'https://raw.githubusercontent.com/marhar/frozen/fce88027556c98161ac3406c39e5a6d60561d34d/space.ducklake'
+
+dataset: $(CURDIR)/data/titanic.csv $(CURDIR)/data/space.ducklake
+	mkdir -p $(TESTDATA_DIR)
+	cp -f $(CURDIR)/data/* $(TESTDATA_DIR)/
+
+check-regression: dataset
 	TEST_DIR=$(CURDIR) $(pg_regress_installcheck) \
 	--encoding=UTF8 \
 	--no-locale \
@@ -15,6 +29,7 @@ check-regression:
 	$(if $(TEST),$(TEST),--schedule=schedule)
 
 clean-regression:
+	rm -rf $(TESTDATA_DIR)
 	rm -fr $(CURDIR)/tmp_check
 	rm -fr $(CURDIR)/log
 	rm -fr $(CURDIR)/results
