@@ -55,6 +55,8 @@ PostgreSQL and DuckDB headers are conflict-prone. Follow strict include order in
 3. Local `pgducklake` headers
 4. PostgreSQL headers last, inside `extern "C"`, must include `<postgres.h>` at first.
 
+**FATAL macro conflict:** PostgreSQL's `elog.h` defines `#define FATAL 22`, which clobbers DuckDB's `ExceptionType::FATAL` enum member in `duckdb/common/exception.hpp`. Any header that transitively includes both will break. The fix is include order: DuckDB's `exception.hpp` (or any header that pulls it in, e.g., `string_util.hpp`, `error_data.hpp`) must be parsed *before* `postgres.h` defines the macro. Once parsed, C++ include guards prevent re-inclusion. Watch for indirect includes -- `pgduckdb/pgduckdb_contracts.hpp` and `pgducklake/utility/cpp_wrapper.hpp` both include `postgres.h`, so any DuckDB header they transitively need must already be included earlier in the translation unit.
+
 ### Third-party Submodules
 
 Treat `third_party/pg_duckdb` as upstream:

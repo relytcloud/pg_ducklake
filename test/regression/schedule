@@ -15,6 +15,9 @@ test: vacuum
 test: partition
 test: hybrid_scan
 test: time_travel
+test: snapshots
+test: data_change_feed
+test: list_files
 test: freeze
 test: metadata_sync
 test: fdw

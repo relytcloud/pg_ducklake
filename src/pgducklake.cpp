@@ -8,6 +8,7 @@
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
+#include "pgducklake/pgducklake_functions.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_hooks.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
@@ -35,9 +36,7 @@ void _PG_init(void) {
   // Register callback for deferred static extension loading
   pgduckdb::RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register pg_ducklake's DuckDB-only functions with pg_duckdb's metadata cache
-  pgduckdb::RegisterDuckdbOnlyExtension("pg_ducklake");
-  pgduckdb::RegisterDuckdbOnlyFunction("options");
-  pgduckdb::RegisterDuckdbOnlyFunction("time_travel");
+  pgducklake::RegisterDuckdbOnlyFunctions();
   // Register DuckLake GUCs
   pgducklake::RegisterGUCs();
   // Register custom scan node methods

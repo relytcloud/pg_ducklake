@@ -4,6 +4,7 @@
  * Installs pg_ducklake planner and utility hooks.
  *
  * Planner hook:
+ * - rewrites regclass overloads of ducklake functions into text-arg versions
  * - delegates INSERT UNNEST planning optimization to pgducklake_direct_insert
  *
  * Utility hook:
@@ -24,15 +25,143 @@
 extern "C" {
 #include "postgres.h"
 
+#include "access/relation.h"
+#include "catalog/namespace.h"
+#include "commands/defrem.h"
+#include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
 #include "nodes/parsenodes.h"
 #include "optimizer/planner.h"
+#include "parser/parse_func.h"
 #include "tcop/utility.h"
+#include "utils/builtins.h"
+#include "utils/lsyscache.h"
 }
 
 namespace {
 
 planner_hook_type prev_planner_hook = NULL;
 ProcessUtility_hook_type prev_process_utility_hook = NULL;
+
+/*
+ * Rewrite a single FuncExpr from regclass to text-arg form.
+ *
+ * ducklake.list_files('t'::regclass)
+ *   -> ducklake.list_files('public', 't')
+ */
+void TryRewriteRegclassFunc(FuncExpr *func) {
+  if (list_length(func->args) < 1)
+    return;
+
+  Node *first_arg = (Node *)linitial(func->args);
+  if (!IsA(first_arg, Const))
+    return;
+  Const *regclass_const = (Const *)first_arg;
+  if (regclass_const->consttype != REGCLASSOID)
+    return;
+
+  /* Confirm function belongs to the ducklake schema */
+  Oid ducklake_nsp = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
+  if (!OidIsValid(ducklake_nsp))
+    return;
+  if (get_func_namespace(func->funcid) != ducklake_nsp)
+    return;
+
+  /* Look up the text-arg version; skip if none exists (e.g. get_partition) */
+  char *func_name = get_func_name(func->funcid);
+  List *func_name_list = list_make2(makeString(pstrdup(PGDUCKLAKE_PG_SCHEMA)),
+                                    makeString(func_name));
+
+  int old_nargs = list_length(func->args);
+  int new_nargs = old_nargs + 1; /* regclass -> (text, text) */
+  Oid *new_argtypes = (Oid *)palloc(sizeof(Oid) * new_nargs);
+  new_argtypes[0] = TEXTOID;
+  new_argtypes[1] = TEXTOID;
+
+  int i = 2;
+  ListCell *lc;
+  for_each_from(lc, func->args, 1) {
+    new_argtypes[i++] = exprType((Node *)lfirst(lc));
+  }
+
+  Oid text_funcid = LookupFuncName(func_name_list, new_nargs,
+                                   new_argtypes, true);
+  if (!OidIsValid(text_funcid))
+    return;
+
+  if (regclass_const->constisnull)
+    ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                    errmsg("table argument cannot be NULL")));
+
+  Oid relid = DatumGetObjectId(regclass_const->constvalue);
+
+  /* Validate that the target is a ducklake table */
+  Oid ducklake_am_oid = get_am_oid("ducklake", false);
+  Relation rel = relation_open(relid, AccessShareLock);
+  Oid rel_am = rel->rd_rel->relam;
+  relation_close(rel, AccessShareLock);
+
+  if (rel_am != ducklake_am_oid)
+    ereport(ERROR,
+            (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+             errmsg("table \"%s\" is not a DuckLake table",
+                    get_rel_name(relid))));
+
+  /* Resolve OID to schema + table names */
+  char *schema_name = get_namespace_name(get_rel_namespace(relid));
+  char *table_name = get_rel_name(relid);
+
+  /* Build new args: (schema_text, table_text, remaining...) */
+  Const *schema_const =
+      makeConst(TEXTOID, -1, InvalidOid, -1,
+                CStringGetTextDatum(schema_name), false, false);
+  Const *table_const =
+      makeConst(TEXTOID, -1, InvalidOid, -1,
+                CStringGetTextDatum(table_name), false, false);
+
+  List *new_args = list_make2(schema_const, table_const);
+  for_each_from(lc, func->args, 1) {
+    new_args = lappend(new_args, lfirst(lc));
+  }
+
+  func->funcid = text_funcid;
+  func->args = new_args;
+}
+
+bool RewriteRegclassWalker(Node *node, void *context) {
+  if (node == NULL)
+    return false;
+
+  if (IsA(node, FuncExpr))
+    TryRewriteRegclassFunc((FuncExpr *)node);
+
+  if (IsA(node, Query)) {
+#if PG_VERSION_NUM >= 160000
+    return query_tree_walker((Query *)node, RewriteRegclassWalker,
+                             context, 0);
+#else
+    return query_tree_walker((Query *)node,
+                             (bool (*)())((void *)RewriteRegclassWalker),
+                             context, 0);
+#endif
+  }
+
+#if PG_VERSION_NUM >= 160000
+  return expression_tree_walker(node, RewriteRegclassWalker, context);
+#else
+  return expression_tree_walker(
+      node, (bool (*)())((void *)RewriteRegclassWalker), context);
+#endif
+}
+
+void RewriteRegclassFunctions(Query *parse) {
+#if PG_VERSION_NUM >= 160000
+  query_tree_walker(parse, RewriteRegclassWalker, NULL, 0);
+#else
+  query_tree_walker(parse, (bool (*)())((void *)RewriteRegclassWalker),
+                    NULL, 0);
+#endif
+}
 
 PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
                                  int cursor_options,
@@ -44,9 +173,12 @@ PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
       return direct_insert_plan;
   }
 
-  /* ATTACH databases for any ducklake FDW tables before pg_duckdb plans */
-  if (pgduckdb::DuckdbIsInitialized())
+  if (pgduckdb::DuckdbIsInitialized()) {
+    /* Rewrite regclass overloads before pg_duckdb sees the query */
+    RewriteRegclassFunctions(parse);
+    /* ATTACH databases for any ducklake FDW tables before pg_duckdb plans */
     pgducklake::RegisterForeignTablesInQuery(parse);
+  }
 
   return prev_planner_hook(parse, query_string, cursor_options, bound_params);
 }
