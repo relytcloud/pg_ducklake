@@ -135,15 +135,32 @@ bool RewriteRegclassWalker(Node *node, void *context) {
   if (IsA(node, FuncExpr))
     TryRewriteRegclassFunc((FuncExpr *)node);
 
-  if (IsA(node, Query))
+  if (IsA(node, Query)) {
+#if PG_VERSION_NUM >= 160000
     return query_tree_walker((Query *)node, RewriteRegclassWalker,
                              context, 0);
+#else
+    return query_tree_walker((Query *)node,
+                             (bool (*)())((void *)RewriteRegclassWalker),
+                             context, 0);
+#endif
+  }
 
+#if PG_VERSION_NUM >= 160000
   return expression_tree_walker(node, RewriteRegclassWalker, context);
+#else
+  return expression_tree_walker(
+      node, (bool (*)())((void *)RewriteRegclassWalker), context);
+#endif
 }
 
 void RewriteRegclassFunctions(Query *parse) {
+#if PG_VERSION_NUM >= 160000
   query_tree_walker(parse, RewriteRegclassWalker, NULL, 0);
+#else
+  query_tree_walker(parse, (bool (*)())((void *)RewriteRegclassWalker),
+                    NULL, 0);
+#endif
 }
 
 PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
