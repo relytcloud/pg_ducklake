@@ -38,7 +38,7 @@ DROP TABLE row_store_table;
 DROP TABLE col_store_table;
 -- Example from README: CREATE AS with read_csv - using titanic dataset
 CREATE TABLE titanic USING ducklake AS
-SELECT * FROM read_csv('https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv');
+SELECT * FROM read_csv('/tmp/pg_ducklake_testdata/titanic.csv');
 SELECT *
 FROM titanic
 ORDER BY "PassengerId"

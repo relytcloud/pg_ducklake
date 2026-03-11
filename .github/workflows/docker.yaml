@@ -265,7 +265,7 @@ jobs:
   docker_merge:
     name: Merge Docker image for Postgres ${{ matrix.postgres }}
     if: github.event_name != 'pull_request'
-    needs: [setup, clickbench_test, readme_test]
+    needs: [setup, readme_test]
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.merge_matrix) }}
 

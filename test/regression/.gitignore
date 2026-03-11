@@ -11,3 +11,6 @@
 
 # core dumps
 core
+
+# Downloaded test data
+/data/
