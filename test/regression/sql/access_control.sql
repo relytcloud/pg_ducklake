@@ -33,6 +33,11 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA ducklake TO test_no_access;
 CREATE TABLE acl_test (id int, name text, secret text) USING ducklake;
 INSERT INTO acl_test VALUES (1, 'Alice', 'pw1'), (2, 'Bob', 'pw2');
 
+-- Re-grant for test_no_access: this user is deliberately not in any
+-- predefined ducklake role, so it does not receive automatic grants on
+-- inlined data tables.  Grant manually so later tests are deterministic.
+GRANT ALL ON ALL TABLES IN SCHEMA ducklake TO test_no_access;
+
 -- Grant privileges on test table to predefined roles
 GRANT ALL ON TABLE acl_test TO ducklake_superuser;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE acl_test TO ducklake_writer;
