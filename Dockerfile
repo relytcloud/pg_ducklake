@@ -82,7 +82,7 @@ USER root
 
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
-    procps vim-tiny less curl net-tools iputils-ping htop lsof strace && \
+    procps vim-tiny less curl net-tools iputils-ping htop lsof strace gdb && \
     ln -sf /usr/bin/vim.tiny /usr/bin/vim && \
     rm -rf /var/lib/apt/lists/*
 
