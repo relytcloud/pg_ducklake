@@ -16,8 +16,10 @@ SELECT * FROM options_test ORDER BY a;
 
 -- 4. Test invalid option name
 CALL ducklake.set_option('nonexistent_option', 42);
-ERROR:  invalid option name "nonexistent_option"
-DETAIL:  Only "data_inlining_row_limit" is supported currently.
+ERROR:  (PGDuckDB/pgduckdb_raw_query_cpp) Not implemented Error: Unsupported option nonexistent_option
+
+LINE 1: CALL pgducklake.set_option('nonexistent_option', 42)
+             ^
 -- Cleanup
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 DROP TABLE options_test;

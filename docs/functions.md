@@ -46,9 +46,9 @@ All functions and procedures are installed into the `ducklake` schema.
 
 ## Detailed Descriptions
 
-#### <a name="set_option"></a>`ducklake.set_option(option_name text, value "any", scope regclass DEFAULT NULL)`
+#### <a name="set_option"></a>`ducklake.set_option(option_name text, value "any")` / `ducklake.set_option(option_name text, value "any", scope regclass)`
 
-Sets a DuckLake catalog option. When `scope` is provided, the option applies only to that table.
+Sets a DuckLake catalog option. When `scope` is provided, the option applies only to that table. This is a DuckDB-only procedure (routed to DuckDB for execution).
 
 ```sql
 -- Set global option

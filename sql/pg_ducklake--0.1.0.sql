@@ -123,13 +123,20 @@ BEGIN
 END
 $$;
 
--- set_option procedure
+-- set_option procedure (DuckDB-only -- utility hook routes CALL to DuckDB)
+CREATE PROCEDURE ducklake.set_option(
+    option_name text,
+    value "any"
+)
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
+LANGUAGE C;
+
 CREATE PROCEDURE ducklake.set_option(
     option_name text,
     value "any",
-    scope regclass DEFAULT NULL
+    scope regclass
 )
-AS 'MODULE_PATHNAME', 'ducklake_set_option'
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
 LANGUAGE C;
 
 -- options function (DuckDB-only — pg_duckdb routes the query to DuckDB)

@@ -24,6 +24,7 @@
 
 // Our vendored type conversion utilities
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_pg_types.hpp"
 
 // PostgreSQL headers
@@ -129,10 +130,30 @@ public:
   GlobalProcessLockGuard &operator=(const GlobalProcessLockGuard &) = delete;
 };
 
+/*
+ * RAII guard that temporarily disables duckdb.force_execution.  SPI queries
+ * from the metadata manager must be planned by PostgreSQL, not re-routed
+ * through DuckDB's planner hook -- otherwise we deadlock on the ClientContext
+ * mutex that the caller already holds.  We toggle the backing bool directly
+ * to avoid SetConfigOption interactions with subtransaction GUC handling.
+ */
+class ForceExecutionGuard {
+public:
+  ForceExecutionGuard()
+      : saved_(pgduckdb::DuckdbSetForceExecution(false)) {}
+  ~ForceExecutionGuard() { pgduckdb::DuckdbSetForceExecution(saved_); }
+  ForceExecutionGuard(const ForceExecutionGuard &) = delete;
+  ForceExecutionGuard &operator=(const ForceExecutionGuard &) = delete;
+
+private:
+  bool saved_;
+};
+
 static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIResult(const duckdb::string &query) {
   elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
 
+  ForceExecutionGuard force_exec_guard;
   GlobalProcessLockGuard global_lock;
   PostgresScopedStackReset scoped_stack_reset;
   UnsafeCommandIdGuard command_id_guard;
@@ -140,10 +161,38 @@ CreateSPIResult(const duckdb::string &query) {
   SPI_connect();
   PushActiveSnapshot(GetTransactionSnapshot());
 
-  int ret = SPI_execute(query.c_str(), false, 0);
+  MemoryContext old_context = CurrentMemoryContext;
+  duckdb::string error_message;
+  bool had_error = false;
+  int ret = -1;
+
+  PG_TRY();
+  {
+    ret = SPI_execute(query.c_str(), false, 0);
+  }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(old_context);
+    ErrorData *edata = CopyErrorData();
+    error_message = edata->message;
+    FreeErrorData(edata);
+    FlushErrorState();
+    had_error = true;
+  }
+  PG_END_TRY();
+
+  if (had_error) {
+    PopActiveSnapshot();
+    SPI_finish();
+    throw duckdb::IOException("SPI execution failed: %s",
+                              error_message.c_str());
+  }
 
   if (ret < 0) {
-    elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
+    PopActiveSnapshot();
+    SPI_finish();
+    throw duckdb::IOException("SPI execution failed: %s",
+                              SPI_result_code_string(ret));
   }
 
   // Get the result table
@@ -246,6 +295,7 @@ static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
   elog(DEBUG1, "CreateSPIExecuteInSubtransaction: %s", query.c_str());
 
+  ForceExecutionGuard force_exec_guard;
   GlobalProcessLockGuard global_lock;
   PostgresScopedStackReset scoped_stack_reset;
   UnsafeCommandIdGuard command_id_guard;
@@ -750,6 +800,32 @@ duckdb::string PgDuckLakeMetadataManager::WrapWithListAggregation(
     fields_part += "'" + entry.first + "', " + entry.second;
   }
   return "json_agg(json_build_object(" + fields_part + "))";
+}
+
+duckdb::string PgDuckLakeMetadataManager::GetInlinedTableQueries(
+    duckdb::DuckLakeSnapshot commit_snapshot,
+    const duckdb::DuckLakeTableInfo &table, duckdb::string &inlined_tables,
+    duckdb::string &inlined_table_queries) {
+  auto table_name = DuckLakeMetadataManager::GetInlinedTableQueries(
+      commit_snapshot, table, inlined_tables, inlined_table_queries);
+
+  // Grant access to predefined roles so SPI metadata queries succeed
+  // regardless of which user created the inlined data table.
+  duckdb::string roles;
+  for (const char *role : {superuser_role, writer_role, reader_role}) {
+    if (role && role[0] != '\0') {
+      if (!roles.empty())
+        roles += ", ";
+      roles += duckdb::StringUtil::Format("%s", duckdb::SQLIdentifier(role));
+    }
+  }
+  if (!roles.empty()) {
+    inlined_table_queries += duckdb::StringUtil::Format(
+        "\nGRANT ALL ON {METADATA_CATALOG}.%s TO %s;",
+        duckdb::SQLIdentifier(table_name), roles);
+  }
+
+  return table_name;
 }
 
 // Helper functions for direct insert optimization
