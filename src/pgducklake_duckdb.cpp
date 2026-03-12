@@ -28,12 +28,10 @@
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
+#include "pgducklake/pgducklake_functions.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 #include "pgducklake/pgducklake_time_travel.hpp"
 
-#include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/catalog_transaction.hpp"
-#include "duckdb/catalog/default/default_table_functions.hpp"
 #include "duckdb/main/database.hpp"
 #include "ducklake_extension.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
@@ -93,62 +91,13 @@ void ducklake_attach_catalog() {
   }
 }
 
-/*
- * Register wrapper table macros in DuckDB's system.main catalog.
- *
- * pg_duckdb's DuckDB-only routing rewrites PG function calls to
- * system.main.<func_name>(args...). DuckLake registers its functions
- * globally as ducklake_<name>(catalog, ...). These macros bridge the
- * gap: a PG function with a clean name (e.g., "snapshots") routes to
- * system.main.snapshots(), which this macro expands to
- * ducklake_snapshots('pgducklake').
- */
-// clang-format off
-static const duckdb::DefaultTableMacro pg_ducklake_wrapper_macros[] = {
-  // catalog-level functions (no table arg)
-  {DEFAULT_SCHEMA, "snapshots", {nullptr}, {{nullptr, nullptr}},
-   "FROM ducklake_snapshots('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
-  {DEFAULT_SCHEMA, "current_snapshot", {nullptr}, {{nullptr, nullptr}},
-   "FROM ducklake_current_snapshot('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
-  {DEFAULT_SCHEMA, "last_committed_snapshot", {nullptr}, {{nullptr, nullptr}},
-   "FROM ducklake_last_committed_snapshot('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
-  {DEFAULT_SCHEMA, "table_info", {nullptr}, {{nullptr, nullptr}},
-   "FROM ducklake_table_info('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
-  // table-scoped functions
-  {DEFAULT_SCHEMA, "list_files", {"schema_name", "table_name", nullptr}, {{nullptr, nullptr}},
-   "FROM ducklake_list_files('" PGDUCKLAKE_DUCKDB_CATALOG "', table_name, schema => schema_name)"},
-  // data change feed functions (schema + table + start + end)
-  {DEFAULT_SCHEMA, "table_insertions",
-   {"schema_name", "table_name", "start_snapshot", "end_snapshot", nullptr},
-   {{nullptr, nullptr}},
-   "FROM ducklake_table_insertions('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name, start_snapshot, end_snapshot)"},
-  {DEFAULT_SCHEMA, "table_deletions",
-   {"schema_name", "table_name", "start_snapshot", "end_snapshot", nullptr},
-   {{nullptr, nullptr}},
-   "FROM ducklake_table_deletions('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name, start_snapshot, end_snapshot)"},
-  {DEFAULT_SCHEMA, "table_changes",
-   {"schema_name", "table_name", "start_snapshot", "end_snapshot", nullptr},
-   {{nullptr, nullptr}},
-   "FROM ducklake_table_changes('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name, start_snapshot, end_snapshot)"},
-  {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}
-};
-// clang-format on
-
-static void RegisterDuckLakeWrapperMacros(duckdb::DatabaseInstance &db) {
-  auto &catalog = duckdb::Catalog::GetSystemCatalog(db);
-  auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
-  for (int i = 0; pg_ducklake_wrapper_macros[i].name != nullptr; i++) {
-    auto info = duckdb::DefaultTableFunctionGenerator::CreateTableMacroInfo(
-        pg_ducklake_wrapper_macros[i]);
-    catalog.CreateFunction(transaction, *info);
-  }
-}
-
 void ducklake_load_extension(duckdb::DuckDB &db) {
   ducklake_duckdb_instance = &db;
   db.LoadStaticExtension<duckdb::DucklakeExtension>();
   pgducklake::RegisterTimeTravelFunction(*db.instance);
-  RegisterDuckLakeWrapperMacros(*db.instance);
+  pgducklake::RegisterWrapperMacros(*db.instance);
+  pgducklake::RegisterCleanupFunction(*db.instance);
+  pgducklake::RegisterFlushInlinedDataFunction(*db.instance);
 
   duckdb::DuckLakeMetadataManager::Register(
       PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);

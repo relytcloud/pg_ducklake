@@ -57,6 +57,11 @@ protected:
   duckdb::string WrapWithListAggregation(
       const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields)
       const override;
+
+  duckdb::string GetInlinedTableQueries(duckdb::DuckLakeSnapshot commit_snapshot,
+                                        const duckdb::DuckLakeTableInfo &table,
+                                        duckdb::string &inlined_tables,
+                                        duckdb::string &inlined_table_queries) override;
 };
 
 // Helper functions for direct insert optimization

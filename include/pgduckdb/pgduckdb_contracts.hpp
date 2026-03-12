@@ -32,6 +32,8 @@ void DuckdbUnsafeSetNextExpectedCommandId(uint32_t command_id);
 void DuckdbAllowSubtransaction(bool allow);
 void DuckdbLockGlobalProcess(void);
 void DuckdbUnlockGlobalProcess(void);
+bool DuckdbSetForceExecution(bool value);
+bool DuckdbEnsureCacheValid(void);
 void RegisterDuckdbOnlyExtension(const char *extension_name);
 void RegisterDuckdbOnlyFunction(const char *function_name);
 

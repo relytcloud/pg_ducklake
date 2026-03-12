@@ -14,6 +14,7 @@
  */
 
 #include "pgducklake/pgducklake_hooks.hpp"
+#include "pgducklake/pgducklake_call_handler.hpp"
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
@@ -33,9 +34,11 @@ extern "C" {
 #include "nodes/parsenodes.h"
 #include "optimizer/planner.h"
 #include "parser/parse_func.h"
+#include "catalog/pg_proc.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 }
 
 namespace {
@@ -223,6 +226,30 @@ bool IsDropDucklakeExtensionStmt(PlannedStmt *pstmt) {
   return false;
 }
 
+/*
+ * Check whether a procedure OID belongs to the ducklake schema and was
+ * registered via the ducklake_only_procedure C stub.
+ */
+bool IsDucklakeOnlyProcedure(Oid funcid) {
+  Oid ducklake_nsp = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
+  if (!OidIsValid(ducklake_nsp))
+    return false;
+  if (get_func_namespace(funcid) != ducklake_nsp)
+    return false;
+  HeapTuple tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+  if (!HeapTupleIsValid(tp))
+    return false;
+  bool isnull;
+  Datum prosrc_datum = SysCacheGetAttr(PROCOID, tp, Anum_pg_proc_prosrc, &isnull);
+  if (isnull) {
+    ReleaseSysCache(tp);
+    return false;
+  }
+  char *prosrc_str = TextDatumGetCString(prosrc_datum);
+  ReleaseSysCache(tp);
+  return strcmp(prosrc_str, "ducklake_only_procedure") == 0;
+}
+
 void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
                          bool read_only_tree, ProcessUtilityContext context,
                          ParamListInfo params,
@@ -231,6 +258,18 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
   if (IsCommitUtilityStmt(pstmt) && pgduckdb::DuckdbIsInitialized()) {
     elog(DEBUG1, "pg_ducklake utility hook caught COMMIT");
     ForceDuckDBCommitOnExplicitCommit();
+  }
+
+  Node *parsetree = pstmt->utilityStmt;
+
+  if (IsA(parsetree, CallStmt)) {
+    CallStmt *call = castNode(CallStmt, parsetree);
+    if (call->funcexpr && IsDucklakeOnlyProcedure(call->funcexpr->funcid)) {
+      pgducklake::HandleDuckdbCall(call, query_string);
+      if (qc)
+        SetQueryCompletion(qc, CMDTAG_CALL, 0);
+      return;
+    }
   }
 
   bool dropping_extension = IsDropDucklakeExtensionStmt(pstmt);

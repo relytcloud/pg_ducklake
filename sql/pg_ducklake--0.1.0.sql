@@ -123,13 +123,20 @@ BEGIN
 END
 $$;
 
--- set_option procedure
+-- set_option procedure (DuckDB-only -- utility hook routes CALL to DuckDB)
+CREATE PROCEDURE ducklake.set_option(
+    option_name text,
+    value "any"
+)
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
+LANGUAGE C;
+
 CREATE PROCEDURE ducklake.set_option(
     option_name text,
     value "any",
-    scope regclass DEFAULT NULL
+    scope regclass
 )
-AS 'MODULE_PATHNAME', 'ducklake_set_option'
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
 LANGUAGE C;
 
 -- options function (DuckDB-only — pg_duckdb routes the query to DuckDB)
@@ -144,11 +151,23 @@ RETURNS SETOF record
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
--- flush_inlined_data procedure
-CREATE PROCEDURE ducklake.flush_inlined_data(
-    scope regclass DEFAULT NULL
-)
-AS 'MODULE_PATHNAME', 'ducklake_flush_inlined_data'
+-- flush_inlined_data function (DuckDB-only, routed to DuckDB for execution)
+CREATE FUNCTION ducklake.flush_inlined_data()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.flush_inlined_data(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.flush_inlined_data(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
 LANGUAGE C;
 
 -- set_partition / reset_partition procedures
@@ -212,12 +231,17 @@ CREATE PROCEDURE ducklake.freeze(
 AS 'MODULE_PATHNAME', 'ducklake_freeze'
 LANGUAGE C;
 
--- cleanup_old_files function
-CREATE FUNCTION ducklake.cleanup_old_files(
-    older_than interval DEFAULT NULL
-)
-RETURNS bigint
-AS 'MODULE_PATHNAME', 'ducklake_cleanup_old_files'
+-- cleanup_old_files function (DuckDB-only -- pg_duckdb routes to DuckDB)
+CREATE FUNCTION ducklake.cleanup_old_files()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+CREATE FUNCTION ducklake.cleanup_old_files(older_than interval)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
 -- ============================================================

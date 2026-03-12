@@ -79,7 +79,7 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
   const char *error_msg = nullptr;
 
   // If data inlining is enabled, the caller must flush inlined data before
-  // freezing (CALL ducklake.flush_inlined_data()). The flush must be a
+  // freezing (SELECT * FROM ducklake.flush_inlined_data()). The flush must be a
   // separate top-level PG statement so pg_duckdb's catalog cache refreshes
   // before the copy reads from pgduckdb.ducklake.*.
   std::string batch;

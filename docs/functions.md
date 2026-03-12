@@ -7,7 +7,7 @@ All functions and procedures are installed into the `ducklake` schema.
 | Name | Type | Description |
 | :--- | :--- | :---------- |
 | [`cleanup_old_files`](#cleanup_old_files) | function | Clean up old data files |
-| [`flush_inlined_data`](#flush_inlined_data) | procedure | Flush inlined data rows to Parquet files |
+| [`flush_inlined_data`](#flush_inlined_data) | function | Flush inlined data rows to Parquet files |
 | [`freeze`](#freeze) | procedure | Export metadata to a standalone `.ducklake` file |
 | [`get_partition`](#get_partition) | function | Show partition keys for a table |
 | [`options`](#options) | function | List all DuckLake options and their values |
@@ -46,9 +46,9 @@ All functions and procedures are installed into the `ducklake` schema.
 
 ## Detailed Descriptions
 
-#### <a name="set_option"></a>`ducklake.set_option(option_name text, value "any", scope regclass DEFAULT NULL)`
+#### <a name="set_option"></a>`ducklake.set_option(option_name text, value "any")` / `ducklake.set_option(option_name text, value "any", scope regclass)`
 
-Sets a DuckLake catalog option. When `scope` is provided, the option applies only to that table.
+Sets a DuckLake catalog option. When `scope` is provided, the option applies only to that table. This is a DuckDB-only procedure (routed to DuckDB for execution).
 
 ```sql
 -- Set global option
@@ -66,16 +66,19 @@ Lists all DuckLake options with their current values. This is a DuckDB-only func
 SELECT * FROM ducklake.options();
 ```
 
-#### <a name="flush_inlined_data"></a>`ducklake.flush_inlined_data(scope regclass DEFAULT NULL)`
+#### <a name="flush_inlined_data"></a>`ducklake.flush_inlined_data()` / `ducklake.flush_inlined_data(schema_name text, table_name text)` / `ducklake.flush_inlined_data(scope regclass)` -> `SETOF duckdb.row`
 
-Flushes inlined data rows to Parquet files. When `scope` is provided, only that table is flushed.
+Flushes inlined data rows to Parquet files. When a table is specified, only that table is flushed. Accepts either a `regclass` table reference or explicit schema/table text arguments. This is a DuckDB-only function (routed to DuckDB for execution).
 
 ```sql
 -- Flush all tables
-CALL ducklake.flush_inlined_data();
+SELECT * FROM ducklake.flush_inlined_data();
 
--- Flush a specific table
-CALL ducklake.flush_inlined_data('my_table'::regclass);
+-- Flush a specific table (regclass)
+SELECT * FROM ducklake.flush_inlined_data('my_table'::regclass);
+
+-- Flush a specific table (text-arg form)
+SELECT * FROM ducklake.flush_inlined_data('public', 'my_table');
 ```
 
 #### <a name="set_partition"></a>`ducklake.set_partition(scope regclass, VARIADIC partition_by text[])`
@@ -123,16 +126,16 @@ Exports the DuckLake catalog metadata to a standalone `.ducklake` file. If data 
 CALL ducklake.freeze('/path/to/output.ducklake');
 ```
 
-#### <a name="cleanup_old_files"></a>`ducklake.cleanup_old_files(older_than interval DEFAULT NULL)` -> `bigint`
+#### <a name="cleanup_old_files"></a>`ducklake.cleanup_old_files()` / `ducklake.cleanup_old_files(older_than interval)` -> `SETOF duckdb.row`
 
-Cleans up old data files that are no longer referenced by the current snapshot. When `older_than` is provided, only files older than the given interval are cleaned up. When NULL, all scheduled files are cleaned.
+Cleans up old data files that are no longer referenced by the current snapshot. When `older_than` is provided, only files older than the given interval are cleaned up. Without arguments, all scheduled files are cleaned. This is a DuckDB-only function (routed to DuckDB for execution).
 
 ```sql
 -- Clean up files older than 24 hours
-SELECT ducklake.cleanup_old_files('24 hours'::interval);
+SELECT * FROM ducklake.cleanup_old_files('24 hours'::interval);
 
 -- Clean up all old files
-SELECT ducklake.cleanup_old_files();
+SELECT * FROM ducklake.cleanup_old_files();
 ```
 
 #### <a name="time_travel"></a>`ducklake.time_travel(table_name text, version bigint)` / `ducklake.time_travel(table_name text, timestamp timestamptz)` -> `SETOF duckdb.row`
