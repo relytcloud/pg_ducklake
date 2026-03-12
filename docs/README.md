@@ -2,7 +2,7 @@
 
 ## Technical Reference
 
-- [Functions and Procedures](functions.md) -- all `ducklake.*` SQL functions and procedures
+- [SQL Objects](sql_objects.md) -- all SQL objects, functions, and procedures
 - [Settings](settings.md) -- PostgreSQL GUCs and DuckLake catalog options
 - [Access Control](access_control.md) -- roles, permissions, and known gaps
 
