@@ -147,9 +147,9 @@ static unique_ptr<FunctionData>
 CleanupNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
                   vector<LogicalType> &return_types, vector<string> &names) {
   input.inputs.clear();
-  input.inputs.push_back(Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
-  input.named_parameters["cleanup_all"] = Value::BOOLEAN(true);
+  input.named_parameters["cleanup_all"] = duckdb::Value::BOOLEAN(true);
 
   auto func = LookupDuckLakeCleanupFunction(context);
   input.table_function = func;
@@ -165,10 +165,10 @@ CleanupIntervalBind(ClientContext &context, TableFunctionBindInput &input,
       duckdb::Interval::Add(now, duckdb::Interval::Invert(interval_val));
 
   input.inputs.clear();
-  input.inputs.push_back(Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
   input.named_parameters["older_than"] =
-      Value::TIMESTAMPTZ(timestamp_tz_t(older_than.value));
+      duckdb::Value::TIMESTAMPTZ(timestamp_tz_t(older_than.value));
 
   auto func = LookupDuckLakeCleanupFunction(context);
   input.table_function = func;
@@ -218,7 +218,7 @@ static unique_ptr<LogicalOperator>
 FlushNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
                   idx_t bind_index, vector<string> &return_names) {
   input.inputs.clear();
-  input.inputs.push_back(Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
 
   auto func = LookupDuckLakeFlushFunction(context);
@@ -233,10 +233,10 @@ FlushTableArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
   auto table_name = input.inputs[1].GetValue<string>();
 
   input.inputs.clear();
-  input.inputs.push_back(Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
-  input.named_parameters["schema_name"] = Value(schema_name);
-  input.named_parameters["table_name"] = Value(table_name);
+  input.named_parameters["schema_name"] = duckdb::Value(schema_name);
+  input.named_parameters["table_name"] = duckdb::Value(table_name);
 
   auto func = LookupDuckLakeFlushFunction(context);
   input.table_function = func;
