@@ -16,6 +16,7 @@ _This project is under high development and is not yet ready for production use.
 ## Key Features
 
 - **Managed DuckLake tables**: Create/Write/Query DuckLake tables in PostgreSQL via SQL (e.g., psql/JDBC).
+- **HTAP support**: incremental heap-to-ducklake conversion with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe).
 - **DuckDB compatibility**: tables created by `pg_ducklake` are directly queryable from DuckDB clients.
 - **Cloud storage**: store data files in AWS S3 (or GCS, R2) to decouple storage and compute for serverless analytics.
 - **Fast analytics**: columnar storage + DuckDB vectorized execution, with hybrid queries over PostgreSQL heap tables supported.
