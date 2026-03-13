@@ -50,6 +50,12 @@ static const char *metadata_tables[] = {
     "ducklake_column_mapping",
     "ducklake_name_mapping",
     "ducklake_schema_versions",
+    "ducklake_macro",
+    "ducklake_macro_impl",
+    "ducklake_macro_parameters",
+    "ducklake_sort_info",
+    "ducklake_sort_expression",
+    "ducklake_file_variant_stats",
 };
 
 static constexpr const char *FROZEN_DB = "__pgducklake_frozen__";

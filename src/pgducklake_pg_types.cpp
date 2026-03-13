@@ -102,6 +102,7 @@ static duckdb::LogicalType ConvertPostgresToBaseDuckType(Oid typid) {
   case VARCHAROID:
   case BPCHAROID:
   case NAMEOID:
+  case BYTEAOID:
     return duckdb::LogicalType::VARCHAR;
 
   // Date/Time types
@@ -242,7 +243,8 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
   case TEXTOID:
   case VARCHAROID:
   case BPCHAROID:
-  case NAMEOID: {
+  case NAMEOID:
+  case BYTEAOID: {
     text *txt = DatumGetTextP(value);
     char *str = VARDATA_ANY(txt);
     size_t len = VARSIZE_ANY_EXHDR(txt);
@@ -286,10 +288,18 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     break;
   }
 
-  case JSONOID:
+  case JSONOID: {
+    // json is stored as text in PostgreSQL
+    text *txt = DatumGetTextP(value);
+    char *str = VARDATA_ANY(txt);
+    size_t len = VARSIZE_ANY_EXHDR(txt);
+    duckdb::string_t duck_str(str, len);
+    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] =
+        duckdb::StringVector::AddString(result, duck_str);
+    break;
+  }
   case JSONBOID: {
-    // Convert JSONB to string
-    // jsonb_out returns cstring
+    // jsonb uses binary format, convert via jsonb_out
     Datum json_datum = DirectFunctionCall1(jsonb_out, value);
     char *json_str = DatumGetCString(json_datum);
     duckdb::string_t duck_str(json_str, strlen(json_str));

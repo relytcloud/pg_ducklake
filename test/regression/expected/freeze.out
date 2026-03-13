@@ -60,9 +60,10 @@ WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table
 
 -- Flush inlined data as a separate statement before freeze
 SELECT * FROM ducklake.flush_inlined_data();
- Success 
----------
-(0 rows)
+ schema_name |   table_name   | rows_flushed 
+-------------+----------------+--------------
+ public      | freeze_inlined |            3
+(1 row)
 
 CALL ducklake.freeze('/tmp/test_freeze_inlined.ducklake');
 -- Attach as real DuckLake and query -- proves flush materialized the data
