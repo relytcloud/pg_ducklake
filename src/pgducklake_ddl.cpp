@@ -304,19 +304,19 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
   }
 
   /*
-   * Drop inlined data tables associated with the dropped DuckLake tables.
-   * These PostgreSQL tables live in the ducklake schema and block
+   * Drop inlined data/delete tables associated with the dropped DuckLake
+   * tables.  These PostgreSQL tables live in the ducklake schema and block
    * DROP EXTENSION if left behind.
    */
   ret = SPI_exec(R"(
-		SELECT idt.table_name
+		SELECT tbl.table_id, idt.table_name
 		FROM pg_catalog.pg_event_trigger_dropped_objects() cmds
 		JOIN ducklake.ducklake_table AS tbl
 		  ON cmds.object_name = tbl.table_name
 		JOIN ducklake.ducklake_schema AS schema
 		  ON cmds.schema_name = schema.schema_name
 		  AND tbl.schema_id = schema.schema_id
-		JOIN ducklake.ducklake_inlined_data_tables idt
+		LEFT JOIN ducklake.ducklake_inlined_data_tables idt
 		  ON idt.table_id = tbl.table_id
 		WHERE cmds.object_type = 'table'
 		  AND tbl.end_snapshot IS NULL
@@ -327,12 +327,19 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
   if (ret == SPI_OK_SELECT) {
     for (uint64_t proc = 0; proc < SPI_processed; ++proc) {
       HeapTuple tuple = SPI_tuptable->vals[proc];
-      char *inlined_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
+      char *table_id_str = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
+      char *inlined_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
       if (inlined_name) {
         std::string drop_inlined = duckdb::StringUtil::Format(
             "DROP TABLE IF EXISTS ducklake.%s",
             duckdb::SQLIdentifier(inlined_name));
         SPI_exec(drop_inlined.c_str(), 0);
+      }
+      if (table_id_str) {
+        std::string drop_delete = duckdb::StringUtil::Format(
+            "DROP TABLE IF EXISTS ducklake.ducklake_inlined_delete_%s",
+            table_id_str);
+        SPI_exec(drop_delete.c_str(), 0);
       }
     }
   }

@@ -167,8 +167,7 @@ static duckdb::string BuildAttachQuery(ForeignServer *server,
   if (IsFrozenServer(server)) {
     const char *url = GetOptionValue(server->options, "frozen_url");
     return duckdb::StringUtil::Format(
-        "ATTACH%s 'ducklake:%s' AS \"%s\" (AUTOMATIC_MIGRATION TRUE)",
-        exists_clause, url, db_alias);
+        "ATTACH%s 'ducklake:%s' AS \"%s\"", exists_clause, url, db_alias);
   }
 
   const char *dbname = GetOptionValue(server->options, "dbname");
