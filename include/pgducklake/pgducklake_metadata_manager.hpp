@@ -6,13 +6,14 @@
 #include <common/ducklake_options.hpp>
 #include <common/ducklake_snapshot.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <metadata_manager/postgres_metadata_manager.hpp>
 #include <storage/ducklake_metadata_info.hpp>
 #include <storage/ducklake_metadata_manager.hpp>
 #include <storage/ducklake_transaction.hpp>
 
 namespace pgducklake {
 
-class PgDuckLakeMetadataManager : public duckdb::DuckLakeMetadataManager {
+class PgDuckLakeMetadataManager : public duckdb::PostgresMetadataManager {
 public:
   explicit PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction);
   ~PgDuckLakeMetadataManager() override;
@@ -38,26 +39,14 @@ public:
   void InitializeDuckLake(bool has_explicit_schema,
                           duckdb::DuckLakeEncryption encryption) override;
 
-  // Some queries contain DuckDB syntax (e.g. LIST, STRUCT), we have to rewrite
-  // them in PGSQL.
-  duckdb::string CastStatsToTarget(const duckdb::string &stats,
-                                   const duckdb::LogicalType &type) override;
-  duckdb::DuckLakeCatalogInfo
-  GetCatalogForSnapshot(duckdb::DuckLakeSnapshot snapshot) override;
-
 private:
   static void EnsureSnapshotTrigger();
 
+  bool TypeIsNativelySupported(const duckdb::LogicalType &type) override;
+  duckdb::string GetColumnTypeInternal(const duckdb::LogicalType &type) override;
+
 protected:
   // Postgres-specific implementations for parsing query results
-  duckdb::vector<duckdb::DuckLakeTag>
-  LoadTags(const duckdb::Value &tag_map) const override;
-  duckdb::vector<duckdb::DuckLakeInlinedTableInfo>
-  LoadInlinedDataTables(const duckdb::Value &list) const override;
-  duckdb::string WrapWithListAggregation(
-      const duckdb::vector<std::pair<duckdb::string, duckdb::string>> &fields)
-      const override;
-
   duckdb::string GetInlinedTableQueries(duckdb::DuckLakeSnapshot commit_snapshot,
                                         const duckdb::DuckLakeTableInfo &table,
                                         duckdb::string &inlined_tables,
