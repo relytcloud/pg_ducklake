@@ -10,11 +10,7 @@ $(CURDIR)/data/titanic.csv:
 	mkdir -p $(CURDIR)/data
 	curl -fSL -o $@ 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv'
 
-$(CURDIR)/data/space.ducklake:
-	mkdir -p $(CURDIR)/data
-	curl -fSL -o $@ 'https://raw.githubusercontent.com/marhar/frozen/fce88027556c98161ac3406c39e5a6d60561d34d/space.ducklake'
-
-dataset: $(CURDIR)/data/titanic.csv $(CURDIR)/data/space.ducklake
+dataset: $(CURDIR)/data/titanic.csv
 	mkdir -p $(TESTDATA_DIR)
 	cp -f $(CURDIR)/data/* $(TESTDATA_DIR)/
 
