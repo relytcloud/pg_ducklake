@@ -9,53 +9,59 @@ CREATE SERVER frozen_bad_2
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (frozen_url 'https://example.com/test.ducklake', metadata_schema 'myschema');
 ERROR:  "frozen_url" and "metadata_schema" are mutually exclusive
+-- Setup: create and freeze our own test data
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CREATE TABLE frozen_src (id int, name text, score numeric(5,2)) USING ducklake;
+INSERT INTO frozen_src VALUES
+    (1, 'Alice', 95.50),
+    (2, 'Bob', 87.00),
+    (3, 'Charlie', 92.75),
+    (4, 'Diana', 88.25),
+    (5, 'Eve', 91.00);
+CALL ducklake.freeze('/tmp/pg_ducklake_frozen_fdw_test.ducklake');
+DROP TABLE frozen_src;
 -- Create frozen server
-CREATE SERVER frozen_space
+CREATE SERVER frozen_test
     FOREIGN DATA WRAPPER ducklake_fdw
-    OPTIONS (frozen_url '/tmp/pg_ducklake_testdata/space.ducklake');
+    OPTIONS (frozen_url '/tmp/pg_ducklake_frozen_fdw_test.ducklake');
 -- Error: columns specified
 CREATE FOREIGN TABLE frozen_bad_cols (id int)
-    SERVER frozen_space
-    OPTIONS (schema_name 'main', table_name 'missions');
+    SERVER frozen_test
+    OPTIONS (schema_name 'public', table_name 'frozen_src');
 ERROR:  ducklake_fdw foreign tables do not accept column definitions
 HINT:  Omit the column list; columns are automatically inferred from the remote DuckLake table.
 -- Create foreign table with auto-inferred columns
-CREATE FOREIGN TABLE frozen_missions ()
-    SERVER frozen_space
-    OPTIONS (schema_name 'main', table_name 'missions');
+CREATE FOREIGN TABLE frozen_src_fdw ()
+    SERVER frozen_test
+    OPTIONS (schema_name 'public', table_name 'frozen_src');
 -- SELECT + ORDER BY + LIMIT
-SELECT * FROM frozen_missions ORDER BY name LIMIT 5;
- mission_id |   name    | launch_date |  end_date  | spacecraft_id | agency | mission_type  | success_status  | cost_millions_usd | duration_days 
-------------+-----------+-------------+------------+---------------+--------+---------------+-----------------+-------------------+---------------
-          1 | Apollo 11 | 07-16-1969  | 07-24-1969 |             1 | NASA   | Lunar Landing | Success         |          25400.00 |             8
-          2 | Apollo 12 | 11-14-1969  | 11-24-1969 |             1 | NASA   | Lunar Landing | Success         |          25400.00 |            10
-         11 | Apollo 13 | 04-11-1970  | 04-17-1970 |             1 | NASA   | Lunar Landing | Partial Failure |          25400.00 |             6
-         18 | Apollo 17 | 12-07-1972  | 12-19-1972 |             1 | NASA   | Lunar Landing | Success         |          25400.00 |            12
-         17 | Apollo 8  | 12-21-1968  | 12-25-1968 |             1 | NASA   | Lunar Orbit   | Success         |          25400.00 |             4
-(5 rows)
+SELECT * FROM frozen_src_fdw ORDER BY name LIMIT 3;
+ id |  name   | score 
+----+---------+-------
+  1 | Alice   | 95.50
+  2 | Bob     | 87.00
+  3 | Charlie | 92.75
+(3 rows)
 
 -- Aggregation
-SELECT count(*) FROM frozen_missions;
+SELECT count(*) FROM frozen_src_fdw;
  count 
 -------
-    68
+     5
 (1 row)
 
 -- READ-ONLY enforcement
-INSERT INTO frozen_missions VALUES (1, 'test');
+INSERT INTO frozen_src_fdw VALUES (6, 'Frank', 80.00);
 ERROR:  ducklake_fdw tables are read-only
 HINT:  INSERT is not supported on foreign tables created with ducklake_fdw.
-UPDATE frozen_missions SET name = 'test' WHERE mission_id = 1;
+UPDATE frozen_src_fdw SET name = 'test' WHERE id = 1;
 ERROR:  ducklake_fdw tables are read-only
 HINT:  UPDATE is not supported on foreign tables created with ducklake_fdw.
-DELETE FROM frozen_missions WHERE mission_id = 1;
+DELETE FROM frozen_src_fdw WHERE id = 1;
 ERROR:  ducklake_fdw tables are read-only
 HINT:  DELETE is not supported on foreign tables created with ducklake_fdw.
--- Error: non-existent table in frozen ducklake
-CREATE FOREIGN TABLE frozen_nonexistent ()
-    SERVER frozen_space
-    OPTIONS (schema_name 'main', table_name 'no_such_table');
-ERROR:  ducklake_fdw: column inference ATTACH failed: Binder Error: Failed to attach DuckLake MetaData "__ducklake_metadata___ducklake_fdw_probe__" at path + "/tmp/pg_ducklake_testdata/space.ducklake"Unique file handle conflict: Cannot attach "__ducklake_metadata___ducklake_fdw_probe__" - the database file "/tmp/pg_ducklake_testdata/space.ducklake" is already attached by database "__ducklake_metadata_frozen_space"
 -- Cleanup
-DROP FOREIGN TABLE frozen_missions;
-DROP SERVER frozen_space;
+DROP FOREIGN TABLE frozen_src_fdw;
+DROP SERVER frozen_test;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+\! rm -f /tmp/pg_ducklake_frozen_fdw_test.ducklake

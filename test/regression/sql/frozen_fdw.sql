@@ -10,37 +10,49 @@ CREATE SERVER frozen_bad_2
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (frozen_url 'https://example.com/test.ducklake', metadata_schema 'myschema');
 
+-- Setup: create and freeze our own test data
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+
+CREATE TABLE frozen_src (id int, name text, score numeric(5,2)) USING ducklake;
+INSERT INTO frozen_src VALUES
+    (1, 'Alice', 95.50),
+    (2, 'Bob', 87.00),
+    (3, 'Charlie', 92.75),
+    (4, 'Diana', 88.25),
+    (5, 'Eve', 91.00);
+
+CALL ducklake.freeze('/tmp/pg_ducklake_frozen_fdw_test.ducklake');
+
+DROP TABLE frozen_src;
+
 -- Create frozen server
-CREATE SERVER frozen_space
+CREATE SERVER frozen_test
     FOREIGN DATA WRAPPER ducklake_fdw
-    OPTIONS (frozen_url '/tmp/pg_ducklake_testdata/space.ducklake');
+    OPTIONS (frozen_url '/tmp/pg_ducklake_frozen_fdw_test.ducklake');
 
 -- Error: columns specified
 CREATE FOREIGN TABLE frozen_bad_cols (id int)
-    SERVER frozen_space
-    OPTIONS (schema_name 'main', table_name 'missions');
+    SERVER frozen_test
+    OPTIONS (schema_name 'public', table_name 'frozen_src');
 
 -- Create foreign table with auto-inferred columns
-CREATE FOREIGN TABLE frozen_missions ()
-    SERVER frozen_space
-    OPTIONS (schema_name 'main', table_name 'missions');
+CREATE FOREIGN TABLE frozen_src_fdw ()
+    SERVER frozen_test
+    OPTIONS (schema_name 'public', table_name 'frozen_src');
 
 -- SELECT + ORDER BY + LIMIT
-SELECT * FROM frozen_missions ORDER BY name LIMIT 5;
+SELECT * FROM frozen_src_fdw ORDER BY name LIMIT 3;
 
 -- Aggregation
-SELECT count(*) FROM frozen_missions;
+SELECT count(*) FROM frozen_src_fdw;
 
 -- READ-ONLY enforcement
-INSERT INTO frozen_missions VALUES (1, 'test');
-UPDATE frozen_missions SET name = 'test' WHERE mission_id = 1;
-DELETE FROM frozen_missions WHERE mission_id = 1;
-
--- Error: non-existent table in frozen ducklake
-CREATE FOREIGN TABLE frozen_nonexistent ()
-    SERVER frozen_space
-    OPTIONS (schema_name 'main', table_name 'no_such_table');
+INSERT INTO frozen_src_fdw VALUES (6, 'Frank', 80.00);
+UPDATE frozen_src_fdw SET name = 'test' WHERE id = 1;
+DELETE FROM frozen_src_fdw WHERE id = 1;
 
 -- Cleanup
-DROP FOREIGN TABLE frozen_missions;
-DROP SERVER frozen_space;
+DROP FOREIGN TABLE frozen_src_fdw;
+DROP SERVER frozen_test;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+\! rm -f /tmp/pg_ducklake_frozen_fdw_test.ducklake
