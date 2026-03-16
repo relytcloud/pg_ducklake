@@ -272,7 +272,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   PG_RETURN_NULL();
 }
 
-DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
+DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
   if (syncing_from_metadata)
     PG_RETURN_NULL();
 
@@ -309,7 +309,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
    * DROP EXTENSION if left behind.
    */
   ret = SPI_exec(R"(
-		SELECT tbl.table_id, idt.table_name
+		SELECT idt.table_name, del.relname
 		FROM pg_catalog.pg_event_trigger_dropped_objects() cmds
 		JOIN ducklake.ducklake_table AS tbl
 		  ON cmds.object_name = tbl.table_name
@@ -318,29 +318,35 @@ DECLARE_PG_FUNCTION(ducklake_drop_trigger) {
 		  AND tbl.schema_id = schema.schema_id
 		LEFT JOIN ducklake.ducklake_inlined_data_tables idt
 		  ON idt.table_id = tbl.table_id
+		LEFT JOIN pg_catalog.pg_class del
+		  ON del.relname = 'ducklake_inlined_delete_' || tbl.table_id
+		  AND del.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace
+		                          WHERE nspname = 'ducklake')
 		WHERE cmds.object_type = 'table'
 		  AND tbl.end_snapshot IS NULL
 		  AND schema.end_snapshot IS NULL
 		)",
                  0);
 
-  if (ret == SPI_OK_SELECT) {
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    std::string drop_sql;
     for (uint64_t proc = 0; proc < SPI_processed; ++proc) {
       HeapTuple tuple = SPI_tuptable->vals[proc];
-      char *table_id_str = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
-      char *inlined_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
-      if (inlined_name) {
-        std::string drop_inlined = duckdb::StringUtil::Format(
-            "DROP TABLE IF EXISTS ducklake.%s",
-            duckdb::SQLIdentifier(inlined_name));
-        SPI_exec(drop_inlined.c_str(), 0);
+      char *inlined_data_table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
+      char *inlined_delete_table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
+      if (inlined_data_table_name) {
+        drop_sql += duckdb::StringUtil::Format(
+            "DROP TABLE ducklake.%s;",
+            duckdb::SQLIdentifier(inlined_data_table_name));
       }
-      if (table_id_str) {
-        std::string drop_delete = duckdb::StringUtil::Format(
-            "DROP TABLE IF EXISTS ducklake.ducklake_inlined_delete_%s",
-            table_id_str);
-        SPI_exec(drop_delete.c_str(), 0);
+      if (inlined_delete_table_name) {
+        drop_sql += duckdb::StringUtil::Format(
+            "DROP TABLE ducklake.%s;",
+            duckdb::SQLIdentifier(inlined_delete_table_name));
       }
+    }
+    if (!drop_sql.empty()) {
+      SPI_exec(drop_sql.c_str(), 0);
     }
   }
 
@@ -820,7 +826,7 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
       if (!OidIsValid(get_relname_relid(di.table_name.c_str(), nsp_oid)))
         continue;
 
-      std::string drop_ddl = "DROP TABLE IF EXISTS ";
+      std::string drop_ddl = "DROP TABLE ";
       drop_ddl += quote_identifier(di.schema_name.c_str());
       drop_ddl += ".";
       drop_ddl += quote_identifier(di.table_name.c_str());

@@ -19,7 +19,7 @@ All objects created by `pg_ducklake--0.1.0.sql`.
 | Event Trigger | Handler | Event | Tags |
 |---------------|---------|-------|------|
 | `ducklake_create_table_trigger` | `ducklake._create_table_trigger()` | `ddl_command_end` | CREATE TABLE, CREATE TABLE AS |
-| `ducklake_drop_trigger` | `ducklake._drop_trigger()` | `sql_drop` | (all) |
+| `ducklake_drop_table_trigger` | `ducklake._drop_table_trigger()` | `sql_drop` | (all) |
 | `ducklake_alter_table_trigger` | `ducklake._alter_table_trigger()` | `ddl_command_end` | ALTER TABLE |
 | *(created at runtime)* | `ducklake._snapshot_trigger()` | row-level trigger | DuckDB-to-PG catalog sync |
 

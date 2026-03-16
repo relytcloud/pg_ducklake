@@ -5,7 +5,7 @@ SELECT evtname FROM pg_event_trigger WHERE evtname LIKE 'ducklake%' ORDER BY evt
 -------------------------------
  ducklake_alter_table_trigger
  ducklake_create_table_trigger
- ducklake_drop_trigger
+ ducklake_drop_table_trigger
 (3 rows)
 
 -- Create a simple ducklake table
