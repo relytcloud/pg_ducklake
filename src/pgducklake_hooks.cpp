@@ -9,6 +9,8 @@
  *
  * Utility hook:
  * - catches explicit COMMIT utility statements and commits DuckDB early
+ * - intercepts CREATE INDEX USING ducklake_sorted to set DuckLake sort order
+ * - intercepts DROP INDEX on ducklake_sorted indexes to reset sort order
  * - detaches the DuckLake catalog on DROP EXTENSION pg_ducklake so that
  *   a subsequent CREATE EXTENSION can re-attach a fresh catalog
  */
@@ -23,22 +25,36 @@
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
+#include <string>
+#include <vector>
+
 extern "C" {
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "catalog/index.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
 #include "commands/defrem.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/parsenodes.h"
+#include "nodes/value.h"
 #include "optimizer/planner.h"
 #include "parser/parse_func.h"
 #include "catalog/pg_proc.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
+
+#include "pgduckdb/pgduckdb_ruleutils.h"
+}
+
+namespace pgducklake {
+extern bool syncing_from_metadata;
 }
 
 namespace {
@@ -250,6 +266,267 @@ bool IsDucklakeOnlyProcedure(Oid funcid) {
   return strcmp(prosrc_str, "ducklake_only_procedure") == 0;
 }
 
+/* ---- Sorted index helpers ---- */
+
+std::string EscapeSQLString(const char *str) {
+  std::string result("'");
+  for (const char *p = str; *p; p++) {
+    if (*p == '\'')
+      result += "''";
+    else
+      result += *p;
+  }
+  result += '\'';
+  return result;
+}
+
+/*
+ * Convert a raw parse-tree Node into SQL text.
+ * Handles ColumnRef, FuncCall, A_Const, TypeCast.
+ */
+std::string NodeToSQL(Node *node) {
+  if (node == NULL)
+    return "";
+
+  switch (nodeTag(node)) {
+  case T_ColumnRef: {
+    ColumnRef *cr = (ColumnRef *)node;
+    std::string result;
+    ListCell *lc;
+    bool first = true;
+    foreach (lc, cr->fields) {
+      if (!first)
+        result += ".";
+      first = false;
+      Node *field = (Node *)lfirst(lc);
+      if (IsA(field, String))
+        result += strVal(field);
+    }
+    return result;
+  }
+  case T_FuncCall: {
+    FuncCall *fc = (FuncCall *)node;
+    std::string result;
+    ListCell *lc;
+    bool first = true;
+    foreach (lc, fc->funcname) {
+      if (!first)
+        result += ".";
+      first = false;
+      result += strVal(lfirst(lc));
+    }
+    result += "(";
+    first = true;
+    foreach (lc, fc->args) {
+      if (!first)
+        result += ", ";
+      first = false;
+      result += NodeToSQL((Node *)lfirst(lc));
+    }
+    result += ")";
+    return result;
+  }
+  case T_A_Const: {
+    A_Const *ac = (A_Const *)node;
+    if (ac->isnull)
+      return "NULL";
+    if (IsA(&ac->val, Integer))
+      return std::to_string(ac->val.ival.ival);
+    if (IsA(&ac->val, Float))
+      return ac->val.fval.fval;
+    if (IsA(&ac->val, String))
+      return EscapeSQLString(ac->val.sval.sval);
+    return "NULL";
+  }
+  case T_TypeCast: {
+    TypeCast *tc = (TypeCast *)node;
+    std::string result = NodeToSQL(tc->arg);
+    result += "::";
+    /* Build type name from TypeName */
+    ListCell *lc;
+    bool first = true;
+    foreach (lc, tc->typeName->names) {
+      Node *n = (Node *)lfirst(lc);
+      if (IsA(n, String)) {
+        /* Skip pg_catalog schema qualifier */
+        if (strcmp(strVal(n), "pg_catalog") == 0)
+          continue;
+        if (!first)
+          result += ".";
+        first = false;
+        result += strVal(n);
+      }
+    }
+    return result;
+  }
+  default:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("unsupported expression type in index key")));
+    return ""; /* unreachable */
+  }
+}
+
+/*
+ * Handle CREATE INDEX ... USING ducklake_sorted.
+ * Validates the statement, lets PG create the catalog entry, then
+ * executes ALTER TABLE ... SET SORTED BY in DuckDB.
+ */
+void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
+                             bool read_only_tree, ProcessUtilityContext context,
+                             ParamListInfo params,
+                             struct QueryEnvironment *query_env,
+                             DestReceiver *dest, QueryCompletion *qc) {
+  IndexStmt *stmt = castNode(IndexStmt, pstmt->utilityStmt);
+
+  /* Reject unsupported options */
+  if (stmt->concurrent)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("CONCURRENTLY is not supported for ducklake_sorted indexes")));
+  if (stmt->unique)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("UNIQUE is not supported for ducklake_sorted indexes")));
+  if (stmt->whereClause)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("WHERE clause is not supported for ducklake_sorted indexes")));
+  if (list_length(stmt->indexIncludingParams) > 0)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("INCLUDE is not supported for ducklake_sorted indexes")));
+  if (stmt->tableSpace)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("TABLESPACE is not supported for ducklake_sorted indexes")));
+
+  /* Resolve table OID and validate it is a DuckLake table */
+  Oid relid = RangeVarGetRelid(stmt->relation, AccessShareLock, false);
+  Oid ducklake_am_oid = get_am_oid("ducklake", false);
+  Relation rel = relation_open(relid, AccessShareLock);
+  Oid rel_am = rel->rd_rel->relam;
+  relation_close(rel, AccessShareLock);
+
+  if (rel_am != ducklake_am_oid)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("table \"%s\" is not a DuckLake table",
+                           get_rel_name(relid))));
+
+  /* Validate index elements and build sort spec */
+  std::string sort_spec;
+  ListCell *lc;
+  bool first = true;
+  foreach (lc, stmt->indexParams) {
+    IndexElem *elem = (IndexElem *)lfirst(lc);
+
+    if (elem->collation != NIL)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("COLLATE is not supported for ducklake_sorted indexes")));
+    if (elem->opclass != NIL) {
+      /* Allow if it is only the default opclass from our family */
+      if (list_length(elem->opclass) != 2 ||
+          strcmp(strVal(linitial(elem->opclass)), PGDUCKLAKE_PG_SCHEMA) != 0)
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("custom opclass is not supported for ducklake_sorted indexes")));
+    }
+
+    if (!first)
+      sort_spec += ", ";
+    first = false;
+
+    if (elem->name)
+      sort_spec += elem->name;
+    else if (elem->expr)
+      sort_spec += NodeToSQL(elem->expr);
+    else
+      ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+                      errmsg("index key must be a column or expression")));
+
+    /* Direction */
+    if (elem->ordering == SORTBY_DESC)
+      sort_spec += " DESC";
+    else
+      sort_spec += " ASC";
+
+    /* Null ordering */
+    if (elem->nulls_ordering == SORTBY_NULLS_FIRST)
+      sort_spec += " NULLS FIRST";
+    else if (elem->nulls_ordering == SORTBY_NULLS_LAST)
+      sort_spec += " NULLS LAST";
+  }
+
+  /* Let PostgreSQL create the index in pg_class */
+  prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
+                            params, query_env, dest, qc);
+
+  /* Skip the DuckDB call when syncing from metadata (snapshot trigger
+   * already created the sort keys in DuckDB; we only need the pg_class entry). */
+  if (pgducklake::syncing_from_metadata)
+    return;
+
+  /* Execute SET SORTED BY in DuckDB */
+  std::string query = std::string("ALTER TABLE ") +
+                       pgduckdb_relation_name(relid) +
+                       " SET SORTED BY (" + sort_spec + ")";
+
+  elog(DEBUG1, "ducklake_sorted: %s", query.c_str());
+
+  PushActiveSnapshot(GetTransactionSnapshot());
+  if (!pgduckdb::DuckdbEnsureCacheValid()) {
+    PopActiveSnapshot();
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("pg_duckdb is not available")));
+  }
+
+  const char *error_msg = nullptr;
+  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  PopActiveSnapshot();
+  if (result != 0)
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to set sort order: %s",
+                           error_msg ? error_msg : "unknown error")));
+}
+
+/*
+ * Check whether a DropStmt targets ducklake_sorted indexes.
+ * Returns a list of (index OID, parent table OID) pairs for affected indexes.
+ */
+struct SortedIndexDrop {
+  Oid index_oid;
+  Oid table_oid;
+};
+
+std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop) {
+  std::vector<SortedIndexDrop> result;
+
+  if (drop->removeType != OBJECT_INDEX)
+    return result;
+
+  Oid sorted_am_oid = get_am_oid("ducklake_sorted", true);
+  if (!OidIsValid(sorted_am_oid))
+    return result;
+
+  ListCell *lc;
+  foreach (lc, drop->objects) {
+    List *name = (List *)lfirst(lc);
+    RangeVar *rv = makeRangeVarFromNameList(name);
+    Oid index_oid = RangeVarGetRelid(rv, AccessShareLock, drop->missing_ok);
+    if (!OidIsValid(index_oid))
+      continue;
+
+    HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(index_oid));
+    if (!HeapTupleIsValid(tp))
+      continue;
+
+    Form_pg_class classForm = (Form_pg_class)GETSTRUCT(tp);
+    Oid relam = classForm->relam;
+    ReleaseSysCache(tp);
+
+    if (relam != sorted_am_oid)
+      continue;
+
+    Oid table_oid = IndexGetRelation(index_oid, false);
+    result.push_back({index_oid, table_oid});
+  }
+
+  return result;
+}
+
 void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
                          bool read_only_tree, ProcessUtilityContext context,
                          ParamListInfo params,
@@ -272,10 +549,54 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
     }
   }
 
+  /* CREATE INDEX ... USING ducklake_sorted */
+  if (IsA(parsetree, IndexStmt)) {
+    IndexStmt *idx = castNode(IndexStmt, parsetree);
+    if (idx->accessMethod &&
+        strcmp(idx->accessMethod, "ducklake_sorted") == 0) {
+      HandleCreateSortedIndex(pstmt, query_string, read_only_tree, context,
+                              params, query_env, dest, qc);
+      return;
+    }
+  }
+
+  /* DROP INDEX on ducklake_sorted indexes -- collect before drop */
+  std::vector<SortedIndexDrop> sorted_drops;
+  if (IsA(parsetree, DropStmt)) {
+    DropStmt *drop = castNode(DropStmt, parsetree);
+    sorted_drops = FindSortedIndexDrops(drop);
+  }
+
   bool dropping_extension = IsDropDucklakeExtensionStmt(pstmt);
 
   prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
                             params, query_env, dest, qc);
+
+  /* After DROP INDEX completes, reset sort order in DuckDB.
+   * Skip when syncing from metadata (snapshot trigger already reset the sort). */
+  if (!sorted_drops.empty() && !pgducklake::syncing_from_metadata) {
+    PushActiveSnapshot(GetTransactionSnapshot());
+    if (!pgduckdb::DuckdbEnsureCacheValid()) {
+      PopActiveSnapshot();
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("pg_duckdb is not available")));
+    }
+
+    for (auto &drop : sorted_drops) {
+      std::string query = std::string("ALTER TABLE ") +
+                           pgduckdb_relation_name(drop.table_oid) +
+                           " RESET SORTED BY";
+      elog(DEBUG1, "ducklake_sorted drop: %s", query.c_str());
+
+      const char *error_msg = nullptr;
+      int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
+      if (result != 0)
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                        errmsg("failed to reset sort order: %s",
+                               error_msg ? error_msg : "unknown error")));
+    }
+    PopActiveSnapshot();
+  }
 
   // After DROP EXTENSION completes, detach the DuckLake catalog from DuckDB
   // so that a subsequent CREATE EXTENSION can attach a fresh one.
