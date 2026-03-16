@@ -2,7 +2,10 @@ CREATE SCHEMA ducklake;
 
 GRANT USAGE ON SCHEMA ducklake TO PUBLIC;
 
+-- ============================================================
 -- Table Access Method
+-- ============================================================
+
 CREATE FUNCTION ducklake._am_handler(internal)
     RETURNS table_am_handler
     SET search_path = pg_catalog, pg_temp
@@ -13,7 +16,10 @@ CREATE ACCESS METHOD ducklake
     TYPE TABLE
     HANDLER ducklake._am_handler;
 
--- DDL Event Triggers
+-- ============================================================
+-- Event Triggers
+-- ============================================================
+
 CREATE FUNCTION ducklake._create_table_trigger()
     RETURNS event_trigger
     SET search_path = pg_catalog, pg_temp
@@ -33,7 +39,6 @@ CREATE FUNCTION ducklake._drop_trigger()
 CREATE EVENT TRIGGER ducklake_drop_trigger ON sql_drop
     EXECUTE FUNCTION ducklake._drop_trigger();
 
--- ALTER TABLE Event Trigger
 CREATE FUNCTION ducklake._alter_table_trigger()
     RETURNS event_trigger
     SET search_path = pg_catalog, pg_temp
@@ -44,7 +49,7 @@ CREATE EVENT TRIGGER ducklake_alter_table_trigger ON ddl_command_end
     WHEN tag IN ('ALTER TABLE')
     EXECUTE FUNCTION ducklake._alter_table_trigger();
 
--- Metadata sync trigger function: DuckDB→PG catalog sync.
+-- Metadata sync trigger function: DuckDB->PG catalog sync.
 -- When an external DuckDB client creates/drops tables (writing directly to
 -- ducklake metadata tables), this trigger creates/drops corresponding
 -- pg_class entries so the tables become visible from PostgreSQL.
@@ -55,7 +60,332 @@ CREATE FUNCTION ducklake._snapshot_trigger()
     AS 'MODULE_PATHNAME', 'ducklake_snapshot_trigger'
     LANGUAGE C;
 
--- Initialization function
+-- ============================================================
+-- Foreign Data Wrapper
+-- ============================================================
+
+CREATE FUNCTION ducklake._fdw_handler()
+    RETURNS fdw_handler
+    AS 'MODULE_PATHNAME', 'ducklake_fdw_handler'
+    LANGUAGE C STRICT;
+
+CREATE FUNCTION ducklake._fdw_validator(text[], oid)
+    RETURNS void
+    AS 'MODULE_PATHNAME', 'ducklake_fdw_validator'
+    LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FOREIGN DATA WRAPPER ducklake_fdw
+    HANDLER ducklake._fdw_handler
+    VALIDATOR ducklake._fdw_validator;
+
+-- ============================================================
+-- Functions & Procedures
+--
+-- Kind legend:
+--   passthrough     SQL stub; pg_duckdb routes the query to DuckDB as-is
+--   rewrite         planner rewrites regclass -> (schema, table) then routes
+--   duckdb-only     CALL intercepted by utility hook, executed in DuckDB
+--   native          procedure runs in PostgreSQL (C language)
+--   pure SQL        executes entirely in PostgreSQL
+-- ============================================================
+
+-- Options -----------------------------------------------------------
+
+-- duckdb-only proc
+CREATE PROCEDURE ducklake.set_option(
+    option_name text,
+    value "any"
+)
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
+LANGUAGE C;
+
+-- duckdb-only proc (table-scoped)
+CREATE PROCEDURE ducklake.set_option(
+    option_name text,
+    value "any",
+    scope regclass
+)
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.options(
+    OUT option_name text,
+    OUT description text,
+    OUT value text,
+    OUT scope text,
+    OUT scope_entry text
+)
+RETURNS SETOF record
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- Flush -------------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.flush_inlined_data()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.flush_inlined_data(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> flush_inlined_data(text, text)
+CREATE FUNCTION ducklake.flush_inlined_data(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- Partitioning ------------------------------------------------------
+
+-- native proc
+CREATE PROCEDURE ducklake.set_partition(scope regclass, VARIADIC partition_by text[])
+AS 'MODULE_PATHNAME', 'ducklake_set_partition'
+LANGUAGE C;
+
+-- native proc
+CREATE PROCEDURE ducklake.reset_partition(scope regclass)
+AS 'MODULE_PATHNAME', 'ducklake_reset_partition'
+LANGUAGE C;
+
+-- pure SQL
+CREATE FUNCTION ducklake.get_partition(
+    scope regclass,
+    OUT partition_key_index bigint,
+    OUT column_name varchar,
+    OUT transform varchar
+)
+RETURNS SETOF record
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+SELECT pc.partition_key_index, c.column_name, pc.transform
+FROM ducklake.ducklake_partition_info pi
+JOIN ducklake.ducklake_partition_column pc USING (partition_id)
+JOIN ducklake.ducklake_column c
+  ON pc.column_id = c.column_id AND pc.table_id = c.table_id
+JOIN ducklake.ducklake_table t ON pi.table_id = t.table_id
+JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+WHERE t.table_name = (SELECT relname FROM pg_class WHERE oid = scope)
+  AND s.schema_name = (SELECT nspname FROM pg_namespace
+                        WHERE oid = (SELECT relnamespace FROM pg_class WHERE oid = scope))
+  AND pi.end_snapshot IS NULL
+  AND c.end_snapshot IS NULL
+  AND t.end_snapshot IS NULL
+  AND s.end_snapshot IS NULL
+ORDER BY pc.partition_key_index
+$$;
+
+-- Snapshots ---------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.snapshots()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.current_snapshot()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.last_committed_snapshot()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- Metadata ----------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.table_info()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.list_files(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> list_files(text, text)
+CREATE FUNCTION ducklake.list_files(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- Time Travel -------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.time_travel(table_name text, version bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.time_travel(table_name text, "timestamp" timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- Change Feed -------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.table_insertions(
+    schema_name text, table_name text,
+    start_snapshot bigint, end_snapshot bigint
+)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.table_insertions(
+    schema_name text, table_name text,
+    start_snapshot timestamptz, end_snapshot timestamptz
+)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> table_insertions(text, text, bigint, bigint)
+CREATE FUNCTION ducklake.table_insertions(
+    scope regclass, start_snapshot bigint, end_snapshot bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- rewrite -> table_insertions(text, text, timestamptz, timestamptz)
+CREATE FUNCTION ducklake.table_insertions(
+    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.table_deletions(
+    schema_name text, table_name text,
+    start_snapshot bigint, end_snapshot bigint
+)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.table_deletions(
+    schema_name text, table_name text,
+    start_snapshot timestamptz, end_snapshot timestamptz
+)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> table_deletions(text, text, bigint, bigint)
+CREATE FUNCTION ducklake.table_deletions(
+    scope regclass, start_snapshot bigint, end_snapshot bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- rewrite -> table_deletions(text, text, timestamptz, timestamptz)
+CREATE FUNCTION ducklake.table_deletions(
+    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.table_changes(
+    schema_name text, table_name text,
+    start_snapshot bigint, end_snapshot bigint
+)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.table_changes(
+    schema_name text, table_name text,
+    start_snapshot timestamptz, end_snapshot timestamptz
+)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> table_changes(text, text, bigint, bigint)
+CREATE FUNCTION ducklake.table_changes(
+    scope regclass, start_snapshot bigint, end_snapshot bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- rewrite -> table_changes(text, text, timestamptz, timestamptz)
+CREATE FUNCTION ducklake.table_changes(
+    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- Cleanup -----------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.cleanup_old_files()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.cleanup_old_files(older_than interval)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- Freeze ------------------------------------------------------------
+
+-- native proc: export metadata to a standalone .ducklake file.
+-- If data inlining is enabled, call ducklake.flush_inlined_data() before
+-- freezing to ensure all rows are materialized as Parquet files.
+CREATE PROCEDURE ducklake.freeze(
+    output_path text
+)
+AS 'MODULE_PATHNAME', 'ducklake_freeze'
+LANGUAGE C;
+
+-- ============================================================
+-- Bootstrap
+-- ============================================================
+
 CREATE FUNCTION ducklake._initialize()
     RETURNS void
     SET search_path = pg_catalog, pg_temp
@@ -122,289 +452,3 @@ BEGIN
     END LOOP;
 END
 $$;
-
--- set_option procedure (DuckDB-only -- utility hook routes CALL to DuckDB)
-CREATE PROCEDURE ducklake.set_option(
-    option_name text,
-    value "any"
-)
-AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
-LANGUAGE C;
-
-CREATE PROCEDURE ducklake.set_option(
-    option_name text,
-    value "any",
-    scope regclass
-)
-AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
-LANGUAGE C;
-
--- options function (DuckDB-only — pg_duckdb routes the query to DuckDB)
-CREATE FUNCTION ducklake.options(
-    OUT option_name text,
-    OUT description text,
-    OUT value text,
-    OUT scope text,
-    OUT scope_entry text
-)
-RETURNS SETOF record
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- flush_inlined_data function (DuckDB-only, routed to DuckDB for execution)
-CREATE FUNCTION ducklake.flush_inlined_data()
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.flush_inlined_data(schema_name text, table_name text)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.flush_inlined_data(scope regclass)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
--- set_partition / reset_partition procedures
-CREATE PROCEDURE ducklake.set_partition(scope regclass, VARIADIC partition_by text[])
-AS 'MODULE_PATHNAME', 'ducklake_set_partition'
-LANGUAGE C;
-
-CREATE PROCEDURE ducklake.reset_partition(scope regclass)
-AS 'MODULE_PATHNAME', 'ducklake_reset_partition'
-LANGUAGE C;
-
--- get_partition: query partition metadata for a DuckLake table
-CREATE FUNCTION ducklake.get_partition(
-    scope regclass,
-    OUT partition_key_index bigint,
-    OUT column_name varchar,
-    OUT transform varchar
-)
-RETURNS SETOF record
-LANGUAGE SQL STABLE
-SET search_path = pg_catalog, pg_temp
-AS $$
-SELECT pc.partition_key_index, c.column_name, pc.transform
-FROM ducklake.ducklake_partition_info pi
-JOIN ducklake.ducklake_partition_column pc USING (partition_id)
-JOIN ducklake.ducklake_column c
-  ON pc.column_id = c.column_id AND pc.table_id = c.table_id
-JOIN ducklake.ducklake_table t ON pi.table_id = t.table_id
-JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
-WHERE t.table_name = (SELECT relname FROM pg_class WHERE oid = scope)
-  AND s.schema_name = (SELECT nspname FROM pg_namespace
-                        WHERE oid = (SELECT relnamespace FROM pg_class WHERE oid = scope))
-  AND pi.end_snapshot IS NULL
-  AND c.end_snapshot IS NULL
-  AND t.end_snapshot IS NULL
-  AND s.end_snapshot IS NULL
-ORDER BY pc.partition_key_index
-$$;
-
--- time_travel by version (DuckDB-only — pg_duckdb routes the query to DuckDB)
-CREATE FUNCTION ducklake.time_travel(table_name text, version bigint)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- time_travel by timestamp (DuckDB-only — pg_duckdb routes the query to DuckDB)
-CREATE FUNCTION ducklake.time_travel(table_name text, "timestamp" timestamptz)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- freeze: export metadata to a standalone .ducklake file
---
--- If data inlining is enabled, call ducklake.flush_inlined_data() before
--- freezing to ensure all rows are materialized as Parquet files.
-CREATE PROCEDURE ducklake.freeze(
-    output_path text
-)
-AS 'MODULE_PATHNAME', 'ducklake_freeze'
-LANGUAGE C;
-
--- cleanup_old_files function (DuckDB-only -- pg_duckdb routes to DuckDB)
-CREATE FUNCTION ducklake.cleanup_old_files()
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.cleanup_old_files(older_than interval)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- ============================================================
--- Read-only DuckLake functions (DuckDB-only)
---
--- pg_duckdb routes these to DuckDB as system.main.<func_name>(args...).
--- Wrapper table macros registered in system.main by _PG_init inject
--- the catalog constant and delegate to ducklake_<name>() globals.
--- ============================================================
-
--- Snapshot functions
-CREATE FUNCTION ducklake.snapshots()
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.current_snapshot()
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.last_committed_snapshot()
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- Metadata functions
-CREATE FUNCTION ducklake.table_info()
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.list_files(schema_name text, table_name text)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- Data change feed functions
--- Each takes (schema_name, table_name, start, end). Two overloads per
--- function: bigint (snapshot version) and timestamptz.
-CREATE FUNCTION ducklake.table_insertions(
-    schema_name text, table_name text,
-    start_snapshot bigint, end_snapshot bigint
-)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_insertions(
-    schema_name text, table_name text,
-    start_snapshot timestamptz, end_snapshot timestamptz
-)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_deletions(
-    schema_name text, table_name text,
-    start_snapshot bigint, end_snapshot bigint
-)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_deletions(
-    schema_name text, table_name text,
-    start_snapshot timestamptz, end_snapshot timestamptz
-)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_changes(
-    schema_name text, table_name text,
-    start_snapshot bigint, end_snapshot bigint
-)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_changes(
-    schema_name text, table_name text,
-    start_snapshot timestamptz, end_snapshot timestamptz
-)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS '$libdir/pg_duckdb', 'duckdb_only_function'
-LANGUAGE C;
-
--- Regclass overloads for table-scoped functions.
--- The planner hook rewrites these into the text-arg versions above before
--- pg_duckdb routes them to DuckDB. The C stub is a safety net that errors
--- if the rewrite did not happen.
-
-CREATE FUNCTION ducklake.list_files(scope regclass)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_insertions(
-    scope regclass, start_snapshot bigint, end_snapshot bigint)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_insertions(
-    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_deletions(
-    scope regclass, start_snapshot bigint, end_snapshot bigint)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_deletions(
-    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_changes(
-    scope regclass, start_snapshot bigint, end_snapshot bigint)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
-CREATE FUNCTION ducklake.table_changes(
-    scope regclass, start_snapshot timestamptz, end_snapshot timestamptz)
-RETURNS SETOF duckdb.row
-SET search_path = pg_catalog, pg_temp
-AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
-LANGUAGE C;
-
--- Foreign Data Wrapper for read-only access to DuckLake tables
-CREATE FUNCTION ducklake._fdw_handler()
-    RETURNS fdw_handler
-    AS 'MODULE_PATHNAME', 'ducklake_fdw_handler'
-    LANGUAGE C STRICT;
-
-CREATE FUNCTION ducklake._fdw_validator(text[], oid)
-    RETURNS void
-    AS 'MODULE_PATHNAME', 'ducklake_fdw_validator'
-    LANGUAGE C STRICT PARALLEL SAFE;
-
-CREATE FOREIGN DATA WRAPPER ducklake_fdw
-    HANDLER ducklake._fdw_handler
-    VALIDATOR ducklake._fdw_validator;

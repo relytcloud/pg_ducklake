@@ -91,7 +91,7 @@ To avoid _Docs Rot_, keep AI docs near the code. Do NOT write separate explanati
 ```
 README.md
   +-- docs/README.md              index of all human docs
-        +-- docs/functions.md     SQL API reference
+        +-- docs/sql_objects.md   all SQL objects, functions, and procedures
         +-- docs/settings.md      GUCs and DuckLake options
         +-- docs/access_control.md
         +-- docs/compilation.md
@@ -99,7 +99,7 @@ README.md
 
 Every new doc file must be linked from `docs/README.md`. Keep synced with code:
 
-- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/functions.md`.
+- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/sql_objects.md`.
 - In reference docs, order TOC tables alphabetically; keep detailed descriptions in logical order.
 
 ## Miscellaneous
