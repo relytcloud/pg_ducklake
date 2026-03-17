@@ -328,6 +328,7 @@ std::string NodeToSQL(Node *node) {
   }
   case T_A_Const: {
     A_Const *ac = (A_Const *)node;
+#if PG_VERSION_NUM >= 150000
     if (ac->isnull)
       return "NULL";
     if (IsA(&ac->val, Integer))
@@ -336,6 +337,18 @@ std::string NodeToSQL(Node *node) {
       return ac->val.fval.fval;
     if (IsA(&ac->val, String))
       return EscapeSQLString(ac->val.sval.sval);
+#else
+    switch (ac->val.type) {
+    case T_Integer:
+      return std::to_string(intVal(&ac->val));
+    case T_Float:
+      return strVal(&ac->val);
+    case T_String:
+      return EscapeSQLString(strVal(&ac->val));
+    default:
+      break;
+    }
+#endif
     return "NULL";
   }
   case T_TypeCast: {
