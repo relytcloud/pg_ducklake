@@ -22,16 +22,20 @@ CREATE TABLE types_native (
     iv INTERVAL,
     u UUID
 ) USING ducklake;
+-- Note: DuckLake serializes INTERVAL to the inlined table as
+-- '%d months %d days %lld microseconds'.  PG14's interval parser uses a
+-- 32-bit intermediate, so the microsecond field must stay below INT32_MAX
+-- (~35 minutes).  Use a value within that range here.
 INSERT INTO types_native VALUES (
     true, 1, 2, 3, 1.5, 2.5,
-    '12:30:00', '12:30:00+05:30', '1 day 2 hours',
+    '12:30:00', '12:30:00+05:30', '1 day 30 minutes',
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
 );
 -- Query via ducklake -- should return normal values
 SELECT * FROM types_native;
  b | i2 | i4 | i8 | f4  | f8  |    t     |      ttz       |       iv        |                  u                   
 ---+----+----+----+-----+-----+----------+----------------+-----------------+--------------------------------------
- t |  1 |  2 |  3 | 1.5 | 2.5 | 12:30:00 | 12:30:00+05:30 | @ 1 day 2 hours | 910a38bd-b96b-6dbb-f84e-0b9c99bceea0
+ t |  1 |  2 |  3 | 1.5 | 2.5 | 12:30:00 | 12:30:00+05:30 | @ 1 day 30 mins | 910a38bd-b96b-6dbb-f84e-0b9c99bceea0
 (1 row)
 
 -- Get inlined table name
@@ -63,7 +67,7 @@ ORDER BY ordinal_position;
 SELECT b, i2, i4, i8, f4, f8, t, ttz, iv, u FROM ducklake.:inlined_table_name ORDER BY row_id;
  b | i2 | i4 | i8 | f4  | f8  |    t     |      ttz       |       iv        |                  u                   
 ---+----+----+----+-----+-----+----------+----------------+-----------------+--------------------------------------
- t |  1 |  2 |  3 | 1.5 | 2.5 | 12:30:00 | 12:30:00+05:30 | @ 1 day 2 hours | a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+ t |  1 |  2 |  3 | 1.5 | 2.5 | 12:30:00 | 12:30:00+05:30 | @ 1 day 30 mins | a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
 (1 row)
 
 DROP TABLE types_native;

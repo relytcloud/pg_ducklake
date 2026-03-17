@@ -68,6 +68,16 @@ in inlined data tables (the in-catalog row store controlled by
   only when PostgreSQL processes the value (e.g. returning it to the client via
   the SPI result path).
 
+- **`interval` with large microsecond component on PG14**: DuckLake serializes
+  INTERVAL values to inlined data tables as
+  `'%d months %d days %lld microseconds'`.  PostgreSQL 14's interval parser
+  uses a 32-bit intermediate when parsing field values, so microsecond counts
+  exceeding INT32_MAX (~2147 seconds / ~35 minutes) cause
+  `ERROR: interval field value out of range`.  This is a PG14 parser bug
+  (fixed in PG15+).  Workaround: keep the sub-day time component of interval
+  values below ~35 minutes when using data inlining on PG14, or disable
+  inlining (`data_inlining_row_limit = 0`) and use the Parquet path.
+
 ## References
 
 - [DuckLake Data Types Specification](https://ducklake.select/docs/preview/specification/data_types)

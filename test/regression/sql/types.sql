@@ -26,9 +26,13 @@ CREATE TABLE types_native (
     u UUID
 ) USING ducklake;
 
+-- Note: DuckLake serializes INTERVAL to the inlined table as
+-- '%d months %d days %lld microseconds'.  PG14's interval parser uses a
+-- 32-bit intermediate, so the microsecond field must stay below INT32_MAX
+-- (~35 minutes).  Use a value within that range here.
 INSERT INTO types_native VALUES (
     true, 1, 2, 3, 1.5, 2.5,
-    '12:30:00', '12:30:00+05:30', '1 day 2 hours',
+    '12:30:00', '12:30:00+05:30', '1 day 30 minutes',
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
 );
 
