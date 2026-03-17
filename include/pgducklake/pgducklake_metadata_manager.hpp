@@ -42,9 +42,6 @@ public:
 private:
   static void EnsureSnapshotTrigger();
 
-  bool TypeIsNativelySupported(const duckdb::LogicalType &type) override;
-  duckdb::string GetColumnTypeInternal(const duckdb::LogicalType &type) override;
-
 protected:
   // Postgres-specific implementations for parsing query results
   duckdb::string GetInlinedTableQueries(duckdb::DuckLakeSnapshot commit_snapshot,

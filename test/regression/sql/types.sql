@@ -1,0 +1,110 @@
+-- Test data type handling in inlined data tables.
+-- Verifies the three type categories:
+--   1. Native: inlined as-is (same PG type in inlined table)
+--   2. Not native: ducklake query returns normal values; inlined table uses different PG type
+--   3. No inline: VARIANT/GEOMETRY -- cannot be tested through PG DDL (no PG equivalent type)
+--      and duckdb.raw_query runs without the ducklake catalog attached.
+--
+-- See docs/data_types.md for the full type mapping.
+
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+
+------------------------------------------------------------
+-- Test 1: Native types are inlined as-is
+------------------------------------------------------------
+
+CREATE TABLE types_native (
+    b BOOLEAN,
+    i2 SMALLINT,
+    i4 INT,
+    i8 BIGINT,
+    f4 REAL,
+    f8 DOUBLE PRECISION,
+    t TIME,
+    ttz TIMETZ,
+    iv INTERVAL,
+    u UUID
+) USING ducklake;
+
+INSERT INTO types_native VALUES (
+    true, 1, 2, 3, 1.5, 2.5,
+    '12:30:00', '12:30:00+05:30', '1 day 2 hours',
+    'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+);
+
+-- Query via ducklake -- should return normal values
+SELECT * FROM types_native;
+
+-- Get inlined table name
+SELECT table_name AS inlined_table_name
+FROM ducklake.ducklake_inlined_data_tables
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'types_native')
+\gset
+
+-- Verify inlined table column types match the source PG types
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'ducklake' AND table_name = :'inlined_table_name'
+AND column_name NOT IN ('row_id', 'begin_snapshot', 'end_snapshot')
+ORDER BY ordinal_position;
+
+-- Query inlined table directly -- values should be identical
+SELECT b, i2, i4, i8, f4, f8, t, ttz, iv, u FROM ducklake.:inlined_table_name ORDER BY row_id;
+
+DROP TABLE types_native;
+
+------------------------------------------------------------
+-- Test 2: Not-native types differ in inlined table
+--
+-- Covers all non-native primitive types expressible via PG DDL:
+--   VARCHAR (TEXT)             -> BYTEA
+--   DATE                      -> character varying
+--   TIMESTAMP                 -> character varying
+--   TIMESTAMP WITH TIME ZONE  -> character varying
+--
+-- BLOB (BYTEA) is not native but has a pre-existing read-back bug:
+-- the SPI converter maps BYTEAOID to VARCHAR (text), so DuckDB gets
+-- raw bytes instead of hex-encoded BLOB text and fails conversion.
+--
+-- Not testable via PG DDL (no PG equivalent type):
+--   UBIGINT, HUGEINT, UHUGEINT, TIMESTAMP_S, TIMESTAMP_MS, TIMESTAMP_NS
+------------------------------------------------------------
+
+CREATE TABLE types_not_native (
+    v TEXT,             -- DuckDB VARCHAR      -> inlined as BYTEA
+    d DATE,             -- DuckDB DATE         -> inlined as character varying
+    ts TIMESTAMP,       -- DuckDB TIMESTAMP    -> inlined as character varying
+    tstz TIMESTAMPTZ    -- DuckDB TIMESTAMP_TZ -> inlined as character varying
+) USING ducklake;
+
+INSERT INTO types_not_native VALUES (
+    'hello',
+    '2024-06-15', '2024-06-15 12:30:00', '2024-06-15 12:30:00+05:30'
+);
+
+-- Query via ducklake -- should return normal human-readable values
+SELECT * FROM types_not_native;
+
+-- Get inlined table name
+SELECT table_name AS inlined_table_name
+FROM ducklake.ducklake_inlined_data_tables
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'types_not_native')
+\gset
+
+-- Verify inlined table column types differ from the source PG types
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'ducklake' AND table_name = :'inlined_table_name'
+AND column_name NOT IN ('row_id', 'begin_snapshot', 'end_snapshot')
+ORDER BY ordinal_position;
+
+-- Query inlined table directly -- values are stored in the inlined PG type
+-- v: bytea (need convert_from to see text)
+-- d, ts, tstz: character varying (DuckDB text representation, not PG format)
+SELECT convert_from(v, 'UTF8') AS v, d, ts, tstz
+FROM ducklake.:inlined_table_name ORDER BY row_id;
+
+DROP TABLE types_not_native;
+
+-- Cleanup
+CALL ducklake.set_option('data_inlining_row_limit', 0);

@@ -3,6 +3,7 @@
 ## Technical Reference
 
 - [SQL Objects](sql_objects.md) -- all SQL objects, functions, and procedures
+- [Data Types](data_types.md) -- DuckLake types and inlined data support
 - [Settings](settings.md) -- PostgreSQL GUCs and DuckLake catalog options
 - [Access Control](access_control.md) -- roles, permissions, and known gaps
 

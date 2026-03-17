@@ -9,6 +9,7 @@ test: ctas
 test: gucs
 test: options
 test: data_inlining_row_limit
+test: types
 test: readme_examples
 test: ddl
 test: vacuum

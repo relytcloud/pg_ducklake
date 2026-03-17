@@ -119,6 +119,129 @@ static PlannedStmt *CreateDirectInsertPlan(Query *parse,
                                            DirectInsertContext *context);
 static void DirectInsertIntoInlinedTable(DirectInsertScanState *state);
 
+/*
+ * Map a DuckDB type string (from ducklake_column.column_type) to the PG OID
+ * used in the inlined data table.  Mirrors PostgresMetadataManager::
+ * GetColumnTypeInternal / TypeIsNativelySupported.
+ *
+ * Returns the PG OID for the inlined column, or InvalidOid when the type
+ * cannot be handled by the direct insert path (nested types, VARIANT, etc.).
+ */
+static Oid DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
+  // Nested types stored as VARCHAR in the inlined table -- bail out,
+  // these cannot appear in the UNNEST($param) pattern.
+  // DuckDB ToString() uses mixed case: "STRUCT(...)", "MAP(...)", "INTEGER[]".
+  if (pg_strncasecmp(duckdb_type, "STRUCT", 6) == 0 ||
+      pg_strncasecmp(duckdb_type, "MAP", 3) == 0 ||
+      strchr(duckdb_type, '[') != NULL) {
+    return InvalidOid;
+  }
+
+  // VARIANT and GEOMETRY do not support inlining at all
+  if (pg_strcasecmp(duckdb_type, "VARIANT") == 0 ||
+      pg_strcasecmp(duckdb_type, "GEOMETRY") == 0) {
+    return InvalidOid;
+  }
+
+  // VARCHAR and BLOB are stored as BYTEA
+  if (pg_strcasecmp(duckdb_type, "VARCHAR") == 0 ||
+      pg_strcasecmp(duckdb_type, "BLOB") == 0) {
+    return BYTEAOID;
+  }
+
+  // Scalar types with wider DuckDB range are stored as VARCHAR
+  if (pg_strcasecmp(duckdb_type, "UBIGINT") == 0 ||
+      pg_strcasecmp(duckdb_type, "HUGEINT") == 0 ||
+      pg_strcasecmp(duckdb_type, "UHUGEINT") == 0 ||
+      pg_strcasecmp(duckdb_type, "DATE") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP WITH TIME ZONE") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP_S") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP_MS") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP_NS") == 0) {
+    return VARCHAROID;
+  }
+
+  // Natively supported -- PG element type matches the inlined column type
+  return element_type;
+}
+
+/*
+ * Query ducklake_column metadata to determine the PG types used in the
+ * inlined data table for each user column.  Returns false on bail-out
+ * (nested types, missing metadata, column count mismatch).
+ */
+static bool GetInlinedColumnTypes(uint64_t table_id, List *param_infos,
+                                  List **inlined_col_types_out) {
+  int ret;
+  int num_cols = list_length(param_infos);
+
+  // Allocate in the caller's memory context -- SPI_connect switches to a
+  // private context that is freed by SPI_finish, so List nodes built inside
+  // SPI would be freed too.
+  Oid *oids = (Oid *)palloc(sizeof(Oid) * num_cols);
+
+  if ((ret = SPI_connect()) < 0) {
+    return false;
+  }
+
+  StringInfoData query;
+  initStringInfo(&query);
+  appendStringInfo(&query, R"(
+SELECT column_type
+FROM ducklake.ducklake_column
+WHERE table_id = %llu
+AND end_snapshot IS NULL
+AND parent_column IS NULL
+ORDER BY column_order)",
+                   (unsigned long long)table_id);
+
+  ret = SPI_execute(query.data, true, 0);
+  if (ret != SPI_OK_SELECT) {
+    SPI_finish();
+    return false;
+  }
+
+  if ((int)SPI_processed != num_cols) {
+    SPI_finish();
+    return false;
+  }
+
+  ListCell *lc = list_head(param_infos);
+  for (int i = 0; i < num_cols; i++) {
+    bool isnull;
+    Datum type_datum =
+        SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
+    if (isnull) {
+      SPI_finish();
+      return false;
+    }
+    char *duckdb_type = TextDatumGetCString(type_datum);
+
+    ParamInfo *pinfo = (ParamInfo *)lfirst(lc);
+    Oid inlined_oid = DuckDBTypeToInlinedOid(duckdb_type, pinfo->element_type);
+    pfree(duckdb_type);
+
+    if (!OidIsValid(inlined_oid)) {
+      SPI_finish();
+      return false;
+    }
+    oids[i] = inlined_oid;
+    lc = lnext(param_infos, lc);
+  }
+
+  SPI_finish();
+
+  List *result = NIL;
+  for (int i = 0; i < num_cols; i++) {
+    result = lappend_oid(result, oids[i]);
+  }
+  pfree(oids);
+
+  *inlined_col_types_out = result;
+  return true;
+}
+
 void RegisterDirectInsertNode() {
   RegisterCustomScanMethods(&direct_insert_scan_methods);
 }
@@ -281,6 +404,15 @@ static bool TryDetectDirectInsertPattern(Query *parse,
     return false;
   }
 
+  // Check 9: Query ducklake_column metadata to determine what PG types the
+  // inlined table uses.  Non-natively-supported DuckDB types are stored under
+  // a different PG type (e.g. VARCHAR->BYTEA, DATE->VARCHAR).  Bail out for
+  // nested types (STRUCT/MAP/LIST) which cannot appear in the UNNEST pattern.
+  List *inlined_col_types = NIL;
+  if (!GetInlinedColumnTypes(table_id, param_infos, &inlined_col_types)) {
+    return false;
+  }
+
   // All checks passed, fill context
   context_out->target_table_oid = target_oid;
   context_out->table_id = table_id;
@@ -288,7 +420,7 @@ static bool TryDetectDirectInsertPattern(Query *parse,
   context_out->param_infos = param_infos;
   context_out->expected_row_count = expected_row_count;
   context_out->target_col_names = target_col_names;
-  context_out->target_col_types = target_col_types;
+  context_out->target_col_types = inlined_col_types;
 
   return true;
 }
@@ -665,12 +797,22 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
   }
   appendStringInfo(&query, ")");
 
-  // Prepare parameter types
+  // Collect the inlined table column types from the plan.  These may differ
+  // from element_types when a DuckDB type is not natively supported in PG
+  // (e.g. VARCHAR stored as BYTEA, DATE stored as VARCHAR).
+  Oid *inlined_types = (Oid *)palloc(sizeof(Oid) * num_params);
+  int idx = 0;
+  foreach (lc, state->column_types) {
+    inlined_types[idx++] = lfirst_oid(lc);
+  }
+
+  // Prepare parameter types -- use inlined table column types so SPI_prepare
+  // matches the actual inlined table schema.
   Oid *param_types = (Oid *)palloc(sizeof(Oid) * (num_params + 2));
   param_types[0] = INT8OID; // row_id
   param_types[1] = INT8OID; // begin_snapshot
   for (int i = 0; i < num_params; i++) {
-    param_types[i + 2] = element_types[i];
+    param_types[i + 2] = inlined_types[i];
   }
 
   // Prepare statement
@@ -691,12 +833,25 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
   Datum **elem_values = (Datum **)palloc(sizeof(Datum *) * num_params);
   bool **elem_nulls = (bool **)palloc(sizeof(bool *) * num_params);
 
+  // Pre-compute per-column output function OIDs for non-native scalar types
+  // (DATE, TIMESTAMP, UBIGINT, etc. stored as VARCHAR).  Avoids a syscache
+  // lookup per row inside the hot loop.
+  Oid *typoutput = (Oid *)palloc0(sizeof(Oid) * num_params);
+  bool *needs_text_conv = (bool *)palloc0(sizeof(bool) * num_params);
+
   for (int i = 0; i < num_params; i++) {
     int nelems;
     get_typlenbyvalalign(element_types[i], &typlen[i], &typbyval[i],
                          &typalign[i]);
     deconstruct_array(arrays[i], element_types[i], typlen[i], typbyval[i],
                       typalign[i], &elem_values[i], &elem_nulls[i], &nelems);
+
+    if ((inlined_types[i] == TEXTOID || inlined_types[i] == VARCHAROID) &&
+        inlined_types[i] != element_types[i]) {
+      bool typisvarlena;
+      getTypeOutputInfo(element_types[i], &typoutput[i], &typisvarlena);
+      needs_text_conv[i] = true;
+    }
   }
 
   uint64_t current_row_id = state->next_row_id;
@@ -709,7 +864,15 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
       if (elem_nulls[i][row]) {
         values[i + 2] = (Datum)0;
         nulls[i + 2] = 'n';
+      } else if (needs_text_conv[i]) {
+        // Scalar type (DATE, TIMESTAMP, UBIGINT, etc.) -> VARCHAR:
+        // use PG output function to produce a DuckDB-parseable text string.
+        char *str = OidOutputFunctionCall(typoutput[i], elem_values[i][row]);
+        values[i + 2] = CStringGetTextDatum(str);
+        nulls[i + 2] = ' ';
+        pfree(str);
       } else {
+        // Types match (native), BYTEA zero-copy, or unexpected -- pass as-is.
         values[i + 2] = elem_values[i][row];
         nulls[i + 2] = ' ';
       }

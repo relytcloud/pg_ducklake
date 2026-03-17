@@ -5,6 +5,8 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/interval.hpp"
+#include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/types/vector.hpp"
@@ -114,6 +116,10 @@ static duckdb::LogicalType ConvertPostgresToBaseDuckType(Oid typid) {
     return duckdb::LogicalType::TIMESTAMP_TZ;
   case TIMEOID:
     return duckdb::LogicalType::TIME;
+  case TIMETZOID:
+    return duckdb::LogicalType::TIME_TZ;
+  case INTERVALOID:
+    return duckdb::LogicalType::INTERVAL;
 
   // UUID
   case UUIDOID:
@@ -276,6 +282,38 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     TimestampTz pg_ts = DatumGetTimestampTz(value);
     duckdb::FlatVector::GetData<duckdb::timestamp_t>(result)[offset] =
         duckdb::timestamp_t(pg_ts + DUCK_TIMESTAMP_OFFSET);
+    break;
+  }
+
+  case TIMEOID: {
+    // Both PG and DuckDB store time as microseconds since midnight
+    TimeADT pg_time = DatumGetTimeADT(value);
+    duckdb::FlatVector::GetData<duckdb::dtime_t>(result)[offset] =
+        duckdb::dtime_t(pg_time);
+    break;
+  }
+
+  case TIMETZOID: {
+    // PG TimeTzADT: { TimeADT time (usec); int32 zone (seconds west of UTC) }
+    // DuckDB dtime_tz_t: packed time + offset (seconds east of UTC)
+    TimeTzADT *pg_timetz = DatumGetTimeTzADTP(value);
+    duckdb::dtime_tz_t duck_timetz(duckdb::dtime_t(pg_timetz->time),
+                                   -pg_timetz->zone);
+    duckdb::FlatVector::GetData<duckdb::dtime_tz_t>(result)[offset] =
+        duck_timetz;
+    break;
+  }
+
+  case INTERVALOID: {
+    // PG Interval: { int64 time (usec), int32 day, int32 month }
+    // DuckDB interval_t: { int32_t months, int32_t days, int64_t micros }
+    Interval *pg_interval = DatumGetIntervalP(value);
+    duckdb::interval_t duck_interval;
+    duck_interval.months = pg_interval->month;
+    duck_interval.days = pg_interval->day;
+    duck_interval.micros = pg_interval->time;
+    duckdb::FlatVector::GetData<duckdb::interval_t>(result)[offset] =
+        duck_interval;
     break;
   }
 
