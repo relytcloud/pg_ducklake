@@ -506,28 +506,6 @@ void PgDuckLakeMetadataManager::InitializeDuckLake(
   EnsureSnapshotTrigger();
 }
 
-bool PgDuckLakeMetadataManager::TypeIsNativelySupported(
-    const duckdb::LogicalType &type) {
-  // The upstream PostgresMetadataManager marks VARCHAR as not natively
-  // supported because Postgres cannot store null bytes in TEXT columns.
-  // In our SPI path, VARCHAR values go through normal text I/O, so the
-  // bytea encoding that the upstream uses causes type mismatches
-  // ("column is of type bytea but expression is of type text") and hex
-  // display of text data.  Treat VARCHAR as natively supported here.
-  if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
-    return true;
-  }
-  return duckdb::PostgresMetadataManager::TypeIsNativelySupported(type);
-}
-
-duckdb::string
-PgDuckLakeMetadataManager::GetColumnTypeInternal(const duckdb::LogicalType &type) {
-  if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
-    return "TEXT";
-  }
-  return duckdb::PostgresMetadataManager::GetColumnTypeInternal(type);
-}
-
 duckdb::string PgDuckLakeMetadataManager::GetInlinedTableQueries(
     duckdb::DuckLakeSnapshot commit_snapshot,
     const duckdb::DuckLakeTableInfo &table, duckdb::string &inlined_tables,
