@@ -319,10 +319,19 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
 
   case UUIDOID: {
     pg_uuid_t *pg_uuid = DatumGetUUIDP(value);
-    duckdb::hugeint_t uuid_value;
-    // Copy UUID bytes
-    memcpy(&uuid_value, pg_uuid->data, 16);
-    duckdb::FlatVector::GetData<duckdb::hugeint_t>(result)[offset] = uuid_value;
+    // pg_uuid->data is 16 bytes in big-endian (RFC 4122) byte order.
+    // DuckDB stores UUIDs as hugeint_t with a sign-bit flip for sort order,
+    // so we must read the raw bytes as big-endian and apply FromUHugeint.
+    uint64_t upper = 0, lower = 0;
+    for (int i = 0; i < 8; i++) {
+      upper = (upper << 8) | pg_uuid->data[i];
+      lower = (lower << 8) | pg_uuid->data[i + 8];
+    }
+    duckdb::uhugeint_t raw;
+    raw.upper = upper;
+    raw.lower = lower;
+    duckdb::FlatVector::GetData<duckdb::hugeint_t>(result)[offset] =
+        duckdb::UUID::FromUHugeint(raw);
     break;
   }
 
