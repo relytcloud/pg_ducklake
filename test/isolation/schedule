@@ -1,2 +1,3 @@
 test: explicit_transaction_commit
 test: concurrent_writes
+test: concurrent_cross_table_writes
