@@ -23,7 +23,7 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
-#include "pgducklake/pgducklake_sorted_index.hpp"
+#include "pgducklake/pgducklake_index_am.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 #include <string>
@@ -280,31 +280,42 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
     }
   }
 
-  /* CREATE INDEX ... USING ducklake_sorted */
+  /* CREATE INDEX ... USING ducklake_sorted / ducklake_partitioned */
   if (IsA(parsetree, IndexStmt)) {
     IndexStmt *idx = castNode(IndexStmt, parsetree);
     if (idx->accessMethod &&
-        strcmp(idx->accessMethod, "ducklake_sorted") == 0) {
+        strcmp(idx->accessMethod, PGDUCKLAKE_SORTED_AM) == 0) {
       pgducklake::HandleCreateSortedIndex(pstmt, query_string, read_only_tree,
                                           context, params, query_env, dest, qc,
                                           prev_process_utility_hook);
       return;
     }
+    if (idx->accessMethod &&
+        strcmp(idx->accessMethod, PGDUCKLAKE_PARTITIONED_AM) == 0) {
+      pgducklake::HandleCreatePartitionedIndex(
+          pstmt, query_string, read_only_tree, context, params, query_env,
+          dest, qc, prev_process_utility_hook);
+      return;
+    }
   }
 
-  /* DROP INDEX on ducklake_sorted indexes -- collect before drop */
-  std::vector<pgducklake::SortedIndexDrop> sorted_drops;
-  if (IsA(parsetree, DropStmt))
-    sorted_drops = pgducklake::FindSortedIndexDrops(castNode(DropStmt, parsetree));
+  /* DROP INDEX on ducklake_sorted / ducklake_partitioned -- collect before drop */
+  std::vector<pgducklake::IndexDrop> sorted_drops;
+  std::vector<pgducklake::IndexDrop> partitioned_drops;
+  if (IsA(parsetree, DropStmt)) {
+    sorted_drops = pgducklake::FindIndexDropsByAM(castNode(DropStmt, parsetree), PGDUCKLAKE_SORTED_AM);
+    partitioned_drops = pgducklake::FindIndexDropsByAM(castNode(DropStmt, parsetree), PGDUCKLAKE_PARTITIONED_AM);
+  }
 
   bool dropping_extension = IsDropDucklakeExtensionStmt(pstmt);
 
   prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
                             params, query_env, dest, qc);
 
-  /* After DROP INDEX completes, reset sort order in DuckDB.
-   * Skip when syncing from metadata (snapshot trigger already reset the sort). */
-  if (!sorted_drops.empty() && !pgducklake::syncing_from_metadata) {
+  /* After DROP INDEX completes, reset sort/partition in DuckDB.
+   * Skip when syncing from metadata (snapshot trigger already handled it). */
+  if ((!sorted_drops.empty() || !partitioned_drops.empty()) &&
+      !pgducklake::syncing_from_metadata) {
     PushActiveSnapshot(GetTransactionSnapshot());
     if (!pgduckdb::DuckdbEnsureCacheValid()) {
       PopActiveSnapshot();
@@ -323,6 +334,20 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
       if (result != 0)
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                         errmsg("failed to reset sort order: %s",
+                               error_msg ? error_msg : "unknown error")));
+    }
+
+    for (auto &drop : partitioned_drops) {
+      std::string query = std::string("ALTER TABLE ") +
+                           pgduckdb_relation_name(drop.table_oid) +
+                           " RESET PARTITIONED BY";
+      elog(DEBUG1, "ducklake_partitioned drop: %s", query.c_str());
+
+      const char *error_msg = nullptr;
+      int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
+      if (result != 0)
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                        errmsg("failed to reset partition: %s",
                                error_msg ? error_msg : "unknown error")));
     }
     PopActiveSnapshot();
