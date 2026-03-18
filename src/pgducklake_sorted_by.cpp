@@ -249,14 +249,13 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
                            error_msg ? error_msg : "unknown error")));
 }
 
-std::vector<IndexDrop> FindIndexDropsByAM(DropStmt *drop,
-                                          const char *am_name) {
-  std::vector<IndexDrop> result;
+std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop) {
+  std::vector<SortedIndexDrop> result;
 
   if (drop->removeType != OBJECT_INDEX)
     return result;
 
-  Oid am_oid = get_am_oid(am_name, true);
+  Oid am_oid = get_am_oid(PGDUCKLAKE_SORTED_AM, true);
   if (!OidIsValid(am_oid))
     return result;
 

@@ -19,9 +19,8 @@ All objects created by `pg_ducklake--0.1.0.sql`.
 | Access Method | Handler | Purpose |
 |---------------|---------|---------|
 | `ducklake_sorted` | `ducklake._sorted_am_handler(internal)` | Sorted table marker; intercepted by utility hook |
-| `ducklake_partitioned` | `ducklake._partitioned_am_handler(internal)` | Partition marker; intercepted by utility hook |
 
-Default operator classes are registered for common types (bool, int2, int4, int8, float4, float8, numeric, text, varchar, bpchar, date, timestamp, timestamptz, interval, uuid, oid, bytea) in the `ducklake.sorted_ops` and `ducklake.partitioned_ops` operator families.
+Default operator classes are registered for common types (bool, int2, int4, int8, float4, float8, numeric, text, varchar, bpchar, date, timestamp, timestamptz, interval, uuid, oid, bytea) in the `ducklake.sorted_ops` operator family.
 
 ## Event Triggers
 
@@ -46,11 +45,9 @@ Default operator classes are registered for common types (bool, int2, int4, int8
 | | [`ducklake.options()`](#options) | passthrough | - |
 | Flush | [`ducklake.flush_inlined_data()`](#flush_inlined_data) | passthrough | - |
 | | [`ducklake.flush_inlined_data(text, text)`](#flush_inlined_data) | passthrough | `(regclass)` -- rewrite |
-| Partitioning | [`CREATE INDEX ... USING ducklake_partitioned`](#ducklake_partitioned) | index intercept | - |
-| | [`ducklake.set_partition(regclass, VARIADIC text[])`](#set_partition) | native proc | - |
+| Partitioning | [`ducklake.set_partition(regclass, VARIADIC text[])`](#set_partition) | native proc | - |
 | | [`ducklake.reset_partition(regclass)`](#reset_partition) | native proc | - |
 | | [`ducklake.get_partition(regclass)`](#get_partition) | pure SQL | - |
-| | `ducklake.year/month/day/hour(timestamp/timestamptz/date)` | SQL helper | - |
 | Sorted Tables | [`CREATE INDEX ... USING ducklake_sorted`](#ducklake_sorted) | index intercept | - |
 | | [`ducklake.set_sort(regclass, VARIADIC text[])`](#set_sort) | native proc | - |
 | | [`ducklake.reset_sort(regclass)`](#reset_sort) | native proc | - |
@@ -126,32 +123,6 @@ SELECT * FROM ducklake.flush_inlined_data('my_table'::regclass);
 -- Flush a specific table (text-arg form)
 SELECT * FROM ducklake.flush_inlined_data('public', 'my_table');
 ```
-
-#### <a name="ducklake_partitioned"></a>`CREATE INDEX ... USING ducklake_partitioned`
-
-Sets file-level partitioning on a DuckLake table using standard PostgreSQL CREATE INDEX syntax. The `ducklake_partitioned` index access method creates a catalog-only index in `pg_class` and translates the partition specification into `ALTER TABLE ... SET PARTITIONED BY` in DuckDB. `DROP INDEX` resets the partition.
-
-The index stores no data and is never used by the planner -- it exists purely as a catalog marker for the partition configuration.
-
-Supported transforms: `ducklake.year()`, `ducklake.month()`, `ducklake.day()`, `ducklake.hour()`.
-
-```sql
--- Single column
-CREATE INDEX ON my_table USING ducklake_partitioned (category);
-
--- With transforms
-CREATE INDEX ON events USING ducklake_partitioned (ducklake.year(ts), ducklake.month(ts));
-
--- Mixed column + transform
-CREATE INDEX ON orders USING ducklake_partitioned (region, ducklake.year(created_at));
-
--- Drop index resets partition
-DROP INDEX my_idx;
-```
-
-**Unsupported options:** CONCURRENTLY, UNIQUE, WHERE, INCLUDE, TABLESPACE, custom opclass, COLLATE, ASC/DESC, NULLS FIRST/LAST.
-
-**Bidirectional sync:** When an external DuckDB client sets partitions via `ALTER TABLE ... SET PARTITIONED BY`, the snapshot trigger creates a corresponding `ducklake_partitioned` index in `pg_class`. Similarly, `ALTER TABLE ... RESET PARTITIONED BY` from DuckDB drops the index.
 
 #### <a name="set_partition"></a>`ducklake.set_partition(scope regclass, VARIADIC partition_by text[])`
 

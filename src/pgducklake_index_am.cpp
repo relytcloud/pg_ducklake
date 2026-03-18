@@ -1,11 +1,10 @@
 /*
- * pgducklake_index_am.cpp -- Shared dummy index AM routines.
+ * pgducklake_index_am.cpp -- Dummy index AM routines for ducklake_sorted.
  *
- * Provides minimal IndexAmRoutine implementations for ducklake_sorted and
- * ducklake_partitioned.  Both AMs store no data and are never used by the
- * planner; they exist only as catalog markers.  The actual DuckDB commands
- * are issued by HandleCreateSortedIndex / HandleCreatePartitionedIndex in
- * their respective translation units.
+ * Provides a minimal IndexAmRoutine so that CREATE INDEX ... USING
+ * ducklake_sorted registers a real pg_class entry.  The index stores no data
+ * and is never used by the planner; it exists only as a catalog marker that
+ * the utility hook translates into ALTER TABLE ... SET SORTED BY in DuckDB.
  */
 
 extern "C" {
@@ -17,11 +16,10 @@ extern "C" {
 #include "utils/selfuncs.h"
 
 /* ================================================================
- * Index AM routines (shared by both AMs)
+ * Index AM routines
  * ================================================================ */
 
 PG_FUNCTION_INFO_V1(ducklake_sorted_am_handler);
-PG_FUNCTION_INFO_V1(ducklake_partitioned_am_handler);
 
 static IndexBuildResult *dummy_ambuild(Relation heap, Relation index,
                                        IndexInfo *indexInfo) {
@@ -84,10 +82,13 @@ static void dummy_amrescan(IndexScanDesc scan, ScanKey keys, int nkeys,
 
 static void dummy_amendscan(IndexScanDesc scan) {}
 
-static void fill_common_amroutine(IndexAmRoutine *amroutine) {
+Datum ducklake_sorted_am_handler(PG_FUNCTION_ARGS) {
+  IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
+
   amroutine->amstrategies = 0;
   amroutine->amsupport = 0;
   amroutine->amoptsprocnum = 0;
+  amroutine->amcanorder = true;
   amroutine->amcanorderbyop = false;
   amroutine->amcanbackward = false;
   amroutine->amcanunique = false;
@@ -132,19 +133,7 @@ static void fill_common_amroutine(IndexAmRoutine *amroutine) {
   amroutine->amestimateparallelscan = NULL;
   amroutine->aminitparallelscan = NULL;
   amroutine->amparallelrescan = NULL;
-}
 
-Datum ducklake_sorted_am_handler(PG_FUNCTION_ARGS) {
-  IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
-  fill_common_amroutine(amroutine);
-  amroutine->amcanorder = true;
-  PG_RETURN_POINTER(amroutine);
-}
-
-Datum ducklake_partitioned_am_handler(PG_FUNCTION_ARGS) {
-  IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
-  fill_common_amroutine(amroutine);
-  amroutine->amcanorder = false;
   PG_RETURN_POINTER(amroutine);
 }
 

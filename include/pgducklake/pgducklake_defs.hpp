@@ -11,4 +11,3 @@
 
 // Index access methods
 #define PGDUCKLAKE_SORTED_AM "ducklake_sorted"
-#define PGDUCKLAKE_PARTITIONED_AM "ducklake_partitioned"

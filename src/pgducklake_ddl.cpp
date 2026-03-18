@@ -52,16 +52,12 @@ namespace pgducklake {
 
 /* Guard to prevent circular triggers during metadata->PG catalog sync.
  * Also checked by the utility hook to skip DuckDB execution when creating
- * ducklake_sorted / ducklake_partitioned indexes during sync. */
+ * ducklake_sorted indexes during sync. */
 bool syncing_from_metadata = false;
 
 /* When true, the snapshot trigger skips sort-key sync because set_sort/
  * reset_sort will handle the pg_class index directly after the DuckDB call. */
 bool sort_synced_from_pg = false;
-
-/* When true, the snapshot trigger skips partition-key sync because
- * set_partition/reset_partition already handled the pg_class index. */
-bool partition_synced_from_pg = false;
 
 static Oid GetRawQueryFuncOid() {
   static Oid cached = InvalidOid;
@@ -485,61 +481,24 @@ DECLARE_PG_FUNCTION(ducklake_set_partition) {
     elog(ERROR, "partition_by cannot be empty");
 
   std::string spec;
-  std::string pg_spec; /* schema-qualified for CREATE INDEX in PG */
   for (int i = 0; i < nelems; i++) {
     if (nulls[i])
       elog(ERROR, "partition key cannot be NULL");
-    if (i > 0) {
+    if (i > 0)
       spec += ", ";
-      pg_spec += ", ";
-    }
-    const char *key = text_to_cstring(DatumGetTextPP(elems[i]));
-    spec += key;
-    /* Schema-qualify transforms (e.g. year(ts) -> ducklake.year(ts))
-     * so the PG parser can resolve the function.  Plain column names
-     * never contain '(' in DuckLake partition specs. */
-    if (strchr(key, '('))
-      pg_spec += std::string("ducklake.") + key;
-    else
-      pg_spec += key;
+    spec += text_to_cstring(DatumGetTextPP(elems[i]));
   }
 
   std::string query = std::string("ALTER TABLE ") +
                        pgduckdb_relation_name(relid) +
                        " SET PARTITIONED BY (" + spec + ")";
 
-  pgducklake::partition_synced_from_pg = true;
   const char *error_msg = nullptr;
   int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
-  pgducklake::partition_synced_from_pg = false;
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to set partition: %s",
                            error_msg ? error_msg : "unknown error")));
-
-  /* Sync pg_class: drop old ducklake_partitioned index, create new one.
-   * Set syncing_from_metadata so the utility hook skips DuckDB calls. */
-  SPI_connect();
-  pgducklake::syncing_from_metadata = true;
-
-  DropIndexesByAM(relid, PGDUCKLAKE_PARTITIONED_AM);
-
-  char *schema_name = get_namespace_name(get_rel_namespace(relid));
-  char *table_name = get_rel_name(relid);
-  std::string create_idx = "CREATE INDEX ON ";
-  create_idx += quote_identifier(schema_name);
-  create_idx += ".";
-  create_idx += quote_identifier(table_name);
-  create_idx += " USING ducklake_partitioned (";
-  create_idx += pg_spec;
-  create_idx += ")";
-
-  int ret = SPI_exec(create_idx.c_str(), 0);
-  pgducklake::syncing_from_metadata = false;
-  SPI_finish();
-  if (ret != SPI_OK_UTILITY)
-    elog(ERROR, "SPI_exec CREATE INDEX failed: %s",
-         SPI_result_code_string(ret));
 
   PG_RETURN_VOID();
 }
@@ -555,21 +514,12 @@ DECLARE_PG_FUNCTION(ducklake_reset_partition) {
                        pgduckdb_relation_name(relid) +
                        " RESET PARTITIONED BY";
 
-  pgducklake::partition_synced_from_pg = true;
   const char *error_msg = nullptr;
   int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
-  pgducklake::partition_synced_from_pg = false;
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to reset partition: %s",
                            error_msg ? error_msg : "unknown error")));
-
-  /* Drop any ducklake_partitioned index on this table */
-  SPI_connect();
-  pgducklake::syncing_from_metadata = true;
-  DropIndexesByAM(relid, PGDUCKLAKE_PARTITIONED_AM);
-  pgducklake::syncing_from_metadata = false;
-  SPI_finish();
 
   PG_RETURN_VOID();
 }
@@ -1178,157 +1128,6 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
     }
 
     } /* !sort_synced_from_pg */
-
-    /* ---- Sync partition keys ----
-     * Skip when partition was set from PostgreSQL (set_partition/CREATE INDEX
-     * already handled the pg_class index; re-running here would deadlock). */
-    if (!pgducklake::partition_synced_from_pg) {
-
-    /* ---- new partition set ---- */
-    query = duckdb::StringUtil::Format(R"(
-		SELECT s.schema_name, t.table_name,
-		       c.column_name, pc.transform
-		FROM ducklake.ducklake_partition_info pi
-		JOIN ducklake.ducklake_partition_column pc USING (partition_id)
-		JOIN ducklake.ducklake_column c ON pc.column_id = c.column_id
-		JOIN ducklake.ducklake_table t ON pi.table_id = t.table_id
-		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
-		WHERE pi.begin_snapshot = %s
-		  AND t.end_snapshot IS NULL
-		  AND s.end_snapshot IS NULL
-		ORDER BY t.table_id, pc.partition_key_index
-		)",
-                                       sid.c_str());
-
-    ret = SPI_exec(query.c_str(), 0);
-    if (ret != SPI_OK_SELECT)
-      elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
-
-    if (SPI_processed > 0) {
-      struct PartKeyInfo {
-        std::string schema_name, table_name, column_name, transform;
-      };
-      std::vector<PartKeyInfo> part_keys;
-      for (uint64_t i = 0; i < SPI_processed; ++i) {
-        HeapTuple tup = SPI_tuptable->vals[i];
-        TupleDesc td = SPI_tuptable->tupdesc;
-        PartKeyInfo pk;
-        char *v;
-        v = SPI_getvalue(tup, td, 1);
-        pk.schema_name = v ? v : "";
-        v = SPI_getvalue(tup, td, 2);
-        pk.table_name = v ? v : "";
-        v = SPI_getvalue(tup, td, 3);
-        pk.column_name = v ? v : "";
-        v = SPI_getvalue(tup, td, 4);
-        pk.transform = v ? v : "identity";
-        part_keys.push_back(std::move(pk));
-      }
-
-      /* Group by table, drop existing ducklake_partitioned index, create new */
-      std::string prev_schema, prev_table, idx_cols;
-      auto emit_partition_index = [&]() {
-        if (idx_cols.empty())
-          return;
-
-        Oid nsp_oid = get_namespace_oid(prev_schema.c_str(), true);
-        if (!OidIsValid(nsp_oid))
-          return;
-        Oid relid = get_relname_relid(prev_table.c_str(), nsp_oid);
-        if (!OidIsValid(relid))
-          return;
-
-        DropIndexesByAM(relid, PGDUCKLAKE_PARTITIONED_AM);
-
-        /* Create new index */
-        std::string create_idx = "CREATE INDEX ON ";
-        create_idx += quote_identifier(prev_schema.c_str());
-        create_idx += ".";
-        create_idx += quote_identifier(prev_table.c_str());
-        create_idx += " USING ducklake_partitioned (";
-        create_idx += idx_cols;
-        create_idx += ")";
-
-        elog(DEBUG1, "Metadata sync partition: %s", create_idx.c_str());
-        ret = SPI_exec(create_idx.c_str(), 0);
-        if (ret != SPI_OK_UTILITY)
-          elog(ERROR, "SPI_exec CREATE INDEX failed: %s",
-               SPI_result_code_string(ret));
-
-        idx_cols.clear();
-      };
-
-      for (auto &pk : part_keys) {
-        if (pk.schema_name != prev_schema || pk.table_name != prev_table) {
-          emit_partition_index();
-          prev_schema = pk.schema_name;
-          prev_table = pk.table_name;
-        }
-
-        if (!idx_cols.empty())
-          idx_cols += ", ";
-
-        /* Reconstruct index key from column_name + transform.
-         * Schema-qualify transforms so PG parser can resolve them. */
-        if (pk.transform == "identity" || pk.transform.empty())
-          idx_cols += pk.column_name;
-        else
-          idx_cols += "ducklake." + pk.transform + "(" + pk.column_name + ")";
-      }
-      emit_partition_index();
-    }
-
-    /* ---- Sync partition keys (partition reset) ---- */
-    query = duckdb::StringUtil::Format(R"(
-		SELECT DISTINCT s.schema_name, t.table_name
-		FROM ducklake.ducklake_partition_info pi
-		JOIN ducklake.ducklake_table t ON pi.table_id = t.table_id
-		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
-		WHERE pi.end_snapshot = %s
-		  AND t.end_snapshot IS NULL
-		  AND s.end_snapshot IS NULL
-		  AND NOT EXISTS (
-		    SELECT 1 FROM ducklake.ducklake_partition_info pi2
-		    WHERE pi2.table_id = pi.table_id
-		      AND pi2.begin_snapshot = %s
-		  )
-		)",
-                                       sid.c_str(), sid.c_str());
-
-    ret = SPI_exec(query.c_str(), 0);
-    if (ret != SPI_OK_SELECT)
-      elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
-
-    if (SPI_processed > 0) {
-      struct ResetInfo {
-        std::string schema_name, table_name;
-      };
-      std::vector<ResetInfo> resets;
-      for (uint64_t i = 0; i < SPI_processed; ++i) {
-        HeapTuple tup = SPI_tuptable->vals[i];
-        TupleDesc td = SPI_tuptable->tupdesc;
-        ResetInfo ri;
-        char *v;
-        v = SPI_getvalue(tup, td, 1);
-        ri.schema_name = v ? v : "";
-        v = SPI_getvalue(tup, td, 2);
-        ri.table_name = v ? v : "";
-        resets.push_back(std::move(ri));
-      }
-
-      for (auto &ri : resets) {
-        Oid nsp_oid = get_namespace_oid(ri.schema_name.c_str(), true);
-        if (!OidIsValid(nsp_oid))
-          continue;
-        Oid relid = get_relname_relid(ri.table_name.c_str(), nsp_oid);
-        if (!OidIsValid(relid))
-          continue;
-
-        DropIndexesByAM(relid, PGDUCKLAKE_PARTITIONED_AM);
-      }
-    }
-
-    } /* !partition_synced_from_pg */
 
     pgducklake::syncing_from_metadata = false;
   }
