@@ -14,6 +14,14 @@ All objects created by `pg_ducklake--0.1.0.sql`.
 |---------------|---------|
 | `ducklake` | `ducklake._am_handler(internal)` |
 
+## Index Access Method
+
+| Access Method | Handler | Purpose |
+|---------------|---------|---------|
+| `ducklake_sorted` | `ducklake._sorted_am_handler(internal)` | Sorted table marker; intercepted by utility hook |
+
+Default operator classes are registered for common types (bool, int2, int4, int8, float4, float8, numeric, text, varchar, bpchar, date, timestamp, timestamptz, interval, uuid, oid, bytea) in the `ducklake.sorted_ops` operator family.
+
 ## Event Triggers
 
 | Event Trigger | Handler | Event | Tags |
@@ -40,6 +48,10 @@ All objects created by `pg_ducklake--0.1.0.sql`.
 | Partitioning | [`ducklake.set_partition(regclass, VARIADIC text[])`](#set_partition) | native proc | - |
 | | [`ducklake.reset_partition(regclass)`](#reset_partition) | native proc | - |
 | | [`ducklake.get_partition(regclass)`](#get_partition) | pure SQL | - |
+| Sorted Tables | [`CREATE INDEX ... USING ducklake_sorted`](#ducklake_sorted) | index intercept | - |
+| | [`ducklake.set_sort(regclass, VARIADIC text[])`](#set_sort) | native proc | - |
+| | [`ducklake.reset_sort(regclass)`](#reset_sort) | native proc | - |
+| | [`ducklake.get_sort(regclass)`](#get_sort) | pure SQL | - |
 | Snapshots | [`ducklake.snapshots()`](#snapshots) | passthrough | - |
 | | [`ducklake.current_snapshot()`](#current_snapshot) | passthrough | - |
 | | [`ducklake.last_committed_snapshot()`](#last_committed_snapshot) | passthrough | - |
@@ -63,6 +75,7 @@ All objects created by `pg_ducklake--0.1.0.sql`.
 - **duckdb-only proc** -- CALL is intercepted by utility hook and executed in DuckDB
 - **native proc** -- procedure runs in PostgreSQL (C language)
 - **pure SQL** -- executes entirely in PostgreSQL against DuckLake metadata tables
+- **index intercept** -- utility hook intercepts CREATE/DROP INDEX and translates to DuckDB ALTER TABLE
 
 ## Bootstrap
 
@@ -146,6 +159,64 @@ SELECT * FROM ducklake.get_partition('events'::regclass);
 ---------------------+-------------+-----------
                    0 | ts          | year
                    1 | ts          | month
+```
+
+#### <a name="ducklake_sorted"></a>`CREATE INDEX ... USING ducklake_sorted`
+
+Sets the sort order on a DuckLake table using standard PostgreSQL CREATE INDEX syntax. The `ducklake_sorted` index access method creates a catalog-only index in `pg_class` and translates the sort specification into `ALTER TABLE ... SET SORTED BY` in DuckDB. `DROP INDEX` resets the sort order.
+
+The index stores no data and is never used by the planner -- it exists purely as a catalog marker for the sort configuration.
+
+```sql
+-- Single column
+CREATE INDEX my_idx ON my_table USING ducklake_sorted (ts);
+
+-- Multi-key with directions and null ordering
+CREATE INDEX my_idx ON my_table USING ducklake_sorted (a ASC NULLS LAST, b DESC NULLS FIRST);
+
+-- Expression-based sort key
+CREATE INDEX my_idx ON events USING ducklake_sorted (date_trunc('day', ts));
+
+-- Drop index resets sort order
+DROP INDEX my_idx;
+```
+
+**Unsupported options:** CONCURRENTLY, UNIQUE, WHERE, INCLUDE, TABLESPACE, custom opclass, COLLATE.
+
+**Bidirectional sync:** When an external DuckDB client sets sort keys via `ALTER TABLE ... SET SORTED BY`, the snapshot trigger creates a corresponding `ducklake_sorted` index in `pg_class`. Similarly, `ALTER TABLE ... RESET SORTED BY` from DuckDB drops the index.
+
+#### <a name="set_sort"></a>`ducklake.set_sort(scope regclass, VARIADIC sorted_by text[])`
+
+Sets the sort order on a DuckLake table. This is the procedure-based alternative to `CREATE INDEX ... USING ducklake_sorted`. Each sort key is a separate argument containing a column name or expression, optionally followed by `ASC`/`DESC` and `NULLS FIRST`/`NULLS LAST`. Sorting is applied during file compaction and inlined data flushing, not during direct inserts.
+
+```sql
+-- Single column, ascending
+CALL ducklake.set_sort('my_table'::regclass, 'ts ASC');
+
+-- Multiple keys with direction and null order
+CALL ducklake.set_sort('my_table'::regclass, 'a ASC NULLS LAST', 'b DESC NULLS FIRST');
+
+-- Expression-based sort key
+CALL ducklake.set_sort('events'::regclass, 'date_trunc(''day'', ts) ASC');
+```
+
+#### <a name="reset_sort"></a>`ducklake.reset_sort(scope regclass)`
+
+Removes the sort order from a DuckLake table.
+
+```sql
+CALL ducklake.reset_sort('my_table'::regclass);
+```
+
+#### <a name="get_sort"></a>`ducklake.get_sort(scope regclass)` -> `SETOF record(sort_key_index, expression, direction, null_order)`
+
+Returns the active sort keys for a DuckLake table. Returns zero rows if the table has no sort order.
+
+```sql
+SELECT * FROM ducklake.get_sort('events'::regclass);
+ sort_key_index |      expression       | direction | null_order
+----------------+-----------------------+-----------+------------
+              0 | date_trunc('day', ts) | ASC       | NULLS_LAST
 ```
 
 #### <a name="snapshots"></a>`ducklake.snapshots()` -> `SETOF duckdb.row`

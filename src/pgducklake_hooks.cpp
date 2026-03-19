@@ -9,6 +9,8 @@
  *
  * Utility hook:
  * - catches explicit COMMIT utility statements and commits DuckDB early
+ * - intercepts CREATE INDEX USING ducklake_sorted to set DuckLake sort order
+ * - intercepts DROP INDEX on ducklake_sorted indexes to reset sort order
  * - detaches the DuckLake catalog on DROP EXTENSION pg_ducklake so that
  *   a subsequent CREATE EXTENSION can re-attach a fresh catalog
  */
@@ -21,7 +23,10 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
+#include "pgducklake/pgducklake_sorted_by.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
+
+#include <string>
 
 extern "C" {
 #include "postgres.h"
@@ -38,7 +43,10 @@ extern "C" {
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
+
+#include "pgduckdb/pgduckdb_ruleutils.h"
 }
 
 namespace {
@@ -272,10 +280,29 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
     }
   }
 
+  /* CREATE INDEX ... USING ducklake_sorted */
+  if (IsA(parsetree, IndexStmt)) {
+    IndexStmt *idx = castNode(IndexStmt, parsetree);
+    if (idx->accessMethod &&
+        strcmp(idx->accessMethod, PGDUCKLAKE_SORTED_AM) == 0) {
+      pgducklake::HandleCreateSortedIndex(pstmt, query_string, read_only_tree,
+                                          context, params, query_env, dest, qc,
+                                          prev_process_utility_hook);
+      return;
+    }
+  }
+
+  /* DROP INDEX on ducklake_sorted indexes -- collect before drop */
+  std::vector<pgducklake::SortedIndexDrop> sorted_drops;
+  if (IsA(parsetree, DropStmt))
+    sorted_drops = pgducklake::FindSortedIndexDrops(castNode(DropStmt, parsetree));
+
   bool dropping_extension = IsDropDucklakeExtensionStmt(pstmt);
 
   prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
                             params, query_env, dest, qc);
+
+  pgducklake::HandleDropSortedIndex(sorted_drops);
 
   // After DROP EXTENSION completes, detach the DuckLake catalog from DuckDB
   // so that a subsequent CREATE EXTENSION can attach a fresh one.

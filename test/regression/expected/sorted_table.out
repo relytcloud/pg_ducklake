@@ -1,0 +1,222 @@
+-- Test sorted table support: CREATE INDEX USING ducklake_sorted + set_sort/reset_sort
+-- ============================================================
+-- CREATE INDEX USING ducklake_sorted
+-- ============================================================
+-- 1. Basic single-column sort
+CREATE TABLE sort_idx_basic (id int, val int) USING ducklake;
+CREATE INDEX sort_idx_basic_idx ON sort_idx_basic USING ducklake_sorted (val);
+SELECT c.relname, am.amname
+FROM pg_class c JOIN pg_am am ON c.relam = am.oid
+WHERE c.relname = 'sort_idx_basic_idx';
+      relname       |     amname      
+--------------------+-----------------
+ sort_idx_basic_idx | ducklake_sorted
+(1 row)
+
+SELECT * FROM ducklake.get_sort('sort_idx_basic'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+-- 2. Multi-key with directions and nulls
+CREATE TABLE sort_idx_multi (a int, b text, c int) USING ducklake;
+CREATE INDEX sort_idx_multi_idx ON sort_idx_multi USING ducklake_sorted (a ASC NULLS LAST, b DESC NULLS FIRST);
+SELECT * FROM ducklake.get_sort('sort_idx_multi'::regclass);
+ sort_key_index | expression | direction | null_order  
+----------------+------------+-----------+-------------
+              0 | a          | ASC       | NULLS_LAST
+              1 | b          | DESC      | NULLS_FIRST
+(2 rows)
+
+-- 3. Expression-based sort key
+CREATE TABLE sort_idx_expr (id int, ts timestamp, val int) USING ducklake;
+CREATE INDEX sort_idx_expr_idx ON sort_idx_expr USING ducklake_sorted (date_trunc('day', ts));
+SELECT * FROM ducklake.get_sort('sort_idx_expr'::regclass);
+ sort_key_index |      expression       | direction | null_order 
+----------------+-----------------------+-----------+------------
+              0 | date_trunc('day', ts) | ASC       | NULLS_LAST
+(1 row)
+
+-- 4. DROP INDEX resets sort order and removes pg_class entry
+DROP INDEX sort_idx_basic_idx;
+SELECT c.relname FROM pg_class c WHERE c.relname = 'sort_idx_basic_idx';
+ relname 
+---------
+(0 rows)
+
+SELECT * FROM ducklake.get_sort('sort_idx_basic'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+(0 rows)
+
+-- 5. ALTER INDEX RENAME TO
+ALTER INDEX sort_idx_multi_idx RENAME TO sort_idx_multi_renamed;
+SELECT * FROM ducklake.get_sort('sort_idx_multi'::regclass);
+ sort_key_index | expression | direction | null_order  
+----------------+------------+-----------+-------------
+              0 | a          | ASC       | NULLS_LAST
+              1 | b          | DESC      | NULLS_FIRST
+(2 rows)
+
+-- 6. Error: non-DuckLake table
+CREATE TABLE heap_sort_table (id int);
+CREATE INDEX ON heap_sort_table USING ducklake_sorted (id);
+ERROR:  table "heap_sort_table" is not a DuckLake table
+DROP TABLE heap_sort_table;
+-- 7. Error: CONCURRENTLY
+CREATE INDEX CONCURRENTLY ON sort_idx_basic USING ducklake_sorted (val);
+ERROR:  CONCURRENTLY is not supported for ducklake_sorted indexes
+-- 8. Error: UNIQUE
+CREATE UNIQUE INDEX ON sort_idx_basic USING ducklake_sorted (val);
+ERROR:  UNIQUE is not supported for ducklake_sorted indexes
+-- 9. Error: WHERE clause
+CREATE INDEX ON sort_idx_basic USING ducklake_sorted (val) WHERE val > 0;
+ERROR:  WHERE clause is not supported for ducklake_sorted indexes
+-- 10. Error: INCLUDE
+CREATE INDEX ON sort_idx_basic USING ducklake_sorted (val) INCLUDE (id);
+ERROR:  INCLUDE is not supported for ducklake_sorted indexes
+-- ============================================================
+-- set_sort / reset_sort (procedure-based alternative)
+-- ============================================================
+-- 11. set_sort basic
+CREATE TABLE sort_basic (id int, val int) USING ducklake;
+CALL ducklake.set_sort('sort_basic'::regclass, 'val ASC');
+-- set_sort syncs a ducklake_sorted index to pg_class via snapshot trigger
+SELECT c.relname, am.amname
+FROM pg_class c JOIN pg_am am ON c.relam = am.oid
+JOIN pg_index i ON i.indexrelid = c.oid
+WHERE i.indrelid = 'sort_basic'::regclass AND am.amname = 'ducklake_sorted';
+      relname       |     amname      
+--------------------+-----------------
+ sort_basic_val_idx | ducklake_sorted
+(1 row)
+
+SELECT * FROM ducklake.get_sort('sort_basic'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+-- 12. Multi-key sort with direction and null order
+CREATE TABLE sort_multi (a int, b text, c int) USING ducklake;
+CALL ducklake.set_sort('sort_multi'::regclass, 'a ASC NULLS LAST', 'b DESC NULLS FIRST');
+SELECT * FROM ducklake.get_sort('sort_multi'::regclass);
+ sort_key_index | expression | direction | null_order  
+----------------+------------+-----------+-------------
+              0 | a          | ASC       | NULLS_LAST
+              1 | b          | DESC      | NULLS_FIRST
+(2 rows)
+
+-- 13. Expression-based sort key
+CREATE TABLE sort_expr (id int, ts timestamp, val int) USING ducklake;
+CALL ducklake.set_sort('sort_expr'::regclass, 'date_trunc(''day'', ts) ASC');
+SELECT * FROM ducklake.get_sort('sort_expr'::regclass);
+ sort_key_index |      expression       | direction | null_order 
+----------------+-----------------------+-----------+------------
+              0 | date_trunc('day', ts) | ASC       | NULLS_LAST
+(1 row)
+
+-- 14. set_sort replaces an existing ducklake_sorted index
+CREATE INDEX sort_basic_named ON sort_basic USING ducklake_sorted (id DESC);
+SELECT * FROM ducklake.get_sort('sort_basic'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | id         | DESC      | NULLS_LAST
+(1 row)
+
+CALL ducklake.set_sort('sort_basic'::regclass, 'val ASC');
+SELECT * FROM ducklake.get_sort('sort_basic'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+-- verify old named index is gone and new auto-named one exists
+SELECT c.relname, am.amname
+FROM pg_class c JOIN pg_am am ON c.relam = am.oid
+JOIN pg_index i ON i.indexrelid = c.oid
+WHERE i.indrelid = 'sort_basic'::regclass AND am.amname = 'ducklake_sorted';
+      relname       |     amname      
+--------------------+-----------------
+ sort_basic_val_idx | ducklake_sorted
+(1 row)
+
+-- 15. Reset sort
+CALL ducklake.reset_sort('sort_basic'::regclass);
+SELECT * FROM ducklake.get_sort('sort_basic'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+(0 rows)
+
+-- 16. Error: non-ducklake table
+CREATE TABLE heap_sort_table2 (id int);
+CALL ducklake.set_sort('heap_sort_table2'::regclass, 'id ASC');
+ERROR:  table "heap_sort_table2" is not a DuckLake table
+DROP TABLE heap_sort_table2;
+-- ============================================================
+-- ALTER TABLE with sorted index
+-- ============================================================
+-- 17. ADD COLUMN preserves sort order
+CREATE TABLE sort_alter (id int, val int) USING ducklake;
+CREATE INDEX sort_alter_idx ON sort_alter USING ducklake_sorted (val);
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+ALTER TABLE sort_alter ADD COLUMN extra text;
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+-- verify index still exists
+SELECT c.relname, am.amname
+FROM pg_class c JOIN pg_am am ON c.relam = am.oid
+WHERE c.relname = 'sort_alter_idx';
+    relname     |     amname      
+----------------+-----------------
+ sort_alter_idx | ducklake_sorted
+(1 row)
+
+-- 18. DROP COLUMN on non-sort column preserves sort order
+ALTER TABLE sort_alter DROP COLUMN extra;
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+-- 19. DROP COLUMN on sort key column cascade-drops the pg_class index.
+-- NOTE: DuckDB sort metadata is not reset because ALTER TABLE DROP COLUMN
+-- cascade does not go through the utility hook. DuckDB keeps stale sort
+-- metadata until the next compaction or explicit reset_sort.
+ALTER TABLE sort_alter DROP COLUMN val;
+SELECT c.relname FROM pg_class c WHERE c.relname = 'sort_alter_idx';
+ relname 
+---------
+(0 rows)
+
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+              0 | val        | ASC       | NULLS_LAST
+(1 row)
+
+-- 20. DROP TABLE with sorted index
+CREATE TABLE sort_drop_tbl (id int, val int) USING ducklake;
+CREATE INDEX ON sort_drop_tbl USING ducklake_sorted (val);
+DROP TABLE sort_drop_tbl;
+-- Cleanup
+DROP TABLE sort_idx_basic;
+DROP INDEX sort_idx_multi_renamed;
+DROP TABLE sort_idx_multi;
+DROP INDEX sort_idx_expr_idx;
+DROP TABLE sort_idx_expr;
+DROP TABLE sort_basic;
+DROP TABLE sort_multi;
+DROP TABLE sort_expr;
+DROP TABLE sort_alter;

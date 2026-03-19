@@ -1,12 +1,14 @@
 /*
- * pgducklake_ddl.cpp — DDL synchronization between PostgreSQL and DuckLake.
+ * pgducklake_ddl.cpp -- DDL synchronization between PostgreSQL and DuckLake.
  *
- * Forward (PG→DuckDB): event triggers capture PostgreSQL DDL and replay it
+ * Forward (PG->DuckDB): event triggers capture PostgreSQL DDL and replay it
  * in DuckDB via duckdb.raw_query().
  *
- * Reverse (DuckDB→PG): an AFTER INSERT trigger on ducklake_snapshot detects
- * tables created/dropped by external DuckDB clients and creates/drops
- * corresponding pg_class entries so they become visible from PostgreSQL.
+ * Reverse (DuckDB->PG): the snapshot trigger (ducklake_snapshot_trigger)
+ * detects tables created/dropped by external DuckDB clients and syncs
+ * pg_class entries.  Table sync is handled by SyncNewTables/SyncDroppedTables;
+ * sort-key sync delegates to SyncSortKeys which calls into
+ * pgducklake_sorted_by.cpp.
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
@@ -14,6 +16,7 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
+#include "pgducklake/pgducklake_sorted_by.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
 #include <string>
@@ -48,10 +51,13 @@ extern "C" {
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
 
-/* Guard to prevent circular triggers during metadata→PG catalog sync */
-static bool syncing_from_metadata = false;
-
 namespace pgducklake {
+
+/* Guard to prevent circular triggers during metadata->PG catalog sync.
+ * Also checked by the utility hook to skip DuckDB execution when creating
+ * ducklake_sorted indexes during sync. */
+bool syncing_from_metadata = false;
+
 
 static Oid GetRawQueryFuncOid() {
   static Oid cached = InvalidOid;
@@ -158,7 +164,7 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
 }
 
 DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
-  if (syncing_from_metadata)
+  if (pgducklake::syncing_from_metadata)
     PG_RETURN_NULL();
 
   if (!CALLED_AS_EVENT_TRIGGER(fcinfo)) /* internal error */
@@ -273,7 +279,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 }
 
 DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
-  if (syncing_from_metadata)
+  if (pgducklake::syncing_from_metadata)
     PG_RETURN_NULL();
 
   if (!CALLED_AS_EVENT_TRIGGER(fcinfo)) /* internal error */
@@ -407,7 +413,7 @@ DECLARE_PG_FUNCTION(ducklake_only_procedure) {
   elog(ERROR, "Procedure '%s' only works with DuckDB execution", proc_name);
 }
 
-static void EnsureDuckLakeTable(Oid relid) {
+void EnsureDuckLakeTable(Oid relid) {
   static Oid ducklake_am_oid = InvalidOid;
   if (!OidIsValid(ducklake_am_oid))
     ducklake_am_oid = get_am_oid("ducklake", false);
@@ -489,7 +495,7 @@ DECLARE_PG_FUNCTION(ducklake_reset_partition) {
 }
 
 DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
-  if (syncing_from_metadata)
+  if (pgducklake::syncing_from_metadata)
     PG_RETURN_NULL();
 
   if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
@@ -648,7 +654,307 @@ static std::string DuckLakeTypeToPgType(const char *dl_type) {
 }
 
 /*
- * ducklake_snapshot_trigger — AFTER INSERT trigger on ducklake.ducklake_snapshot.
+ * Sync newly created tables from DuckLake metadata into pg_class.
+ * Queries ducklake_table/ducklake_column for tables with begin_snapshot = sid
+ * and emits CREATE TABLE ... USING ducklake for each one not already present.
+ * Caller must have an active SPI connection.
+ */
+static void SyncNewTables(const char *sid) {
+  std::string query = duckdb::StringUtil::Format(R"(
+		SELECT s.schema_name, t.table_name,
+		       c.column_name, c.column_type, c.nulls_allowed
+		FROM ducklake.ducklake_table t
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		LEFT JOIN ducklake.ducklake_column c ON t.table_id = c.table_id
+		  AND c.parent_column IS NULL
+		  AND c.end_snapshot IS NULL
+		WHERE t.begin_snapshot = %s
+		  AND s.end_snapshot IS NULL
+		ORDER BY t.table_id, c.column_order
+		)",
+                                                 sid);
+
+  int ret = SPI_exec(query.c_str(), 0);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  /* Save results -- SPI_exec invalidates previous tuptable */
+  struct ColInfo {
+    std::string schema_name, table_name, col_name, col_type;
+    bool not_null, has_col;
+  };
+  std::vector<ColInfo> cols;
+  for (uint64_t i = 0; i < SPI_processed; ++i) {
+    HeapTuple tup = SPI_tuptable->vals[i];
+    TupleDesc td = SPI_tuptable->tupdesc;
+    ColInfo ci;
+    char *v;
+    v = SPI_getvalue(tup, td, 1);
+    ci.schema_name = v ? v : "";
+    v = SPI_getvalue(tup, td, 2);
+    ci.table_name = v ? v : "";
+    v = SPI_getvalue(tup, td, 3);
+    ci.has_col = (v != nullptr);
+    ci.col_name = v ? v : "";
+    v = SPI_getvalue(tup, td, 4);
+    ci.col_type = v ? v : "";
+    v = SPI_getvalue(tup, td, 5);
+    ci.not_null = (v && strcmp(v, "f") == 0);
+    cols.push_back(std::move(ci));
+  }
+
+  /* Group by table and emit CREATE TABLE DDL */
+  std::string prev_schema, prev_table, ddl;
+  bool first_col = true;
+  bool skip_table = false;
+
+  auto emit_ddl = [&]() {
+    if (!ddl.empty() && !skip_table) {
+      ddl += ") USING ducklake";
+      elog(DEBUG1, "Metadata sync: %s", ddl.c_str());
+      ret = SPI_exec(ddl.c_str(), 0);
+      if (ret != SPI_OK_UTILITY)
+        elog(ERROR, "SPI_exec CREATE TABLE failed: %s",
+             SPI_result_code_string(ret));
+    }
+    ddl.clear();
+    skip_table = false;
+  };
+
+  for (auto &ci : cols) {
+    if (ci.schema_name != prev_schema || ci.table_name != prev_table) {
+      emit_ddl();
+
+      /* Skip if table already exists in pg_class */
+      Oid nsp_oid = get_namespace_oid(ci.schema_name.c_str(), true);
+      if (OidIsValid(nsp_oid) &&
+          OidIsValid(get_relname_relid(ci.table_name.c_str(), nsp_oid))) {
+        skip_table = true;
+        prev_schema = ci.schema_name;
+        prev_table = ci.table_name;
+        continue;
+      }
+
+      /* Create schema if it doesn't exist yet */
+      if (ci.schema_name != "public") {
+        std::string cs = "CREATE SCHEMA IF NOT EXISTS ";
+        cs += quote_identifier(ci.schema_name.c_str());
+        ret = SPI_exec(cs.c_str(), 0);
+        if (ret != SPI_OK_UTILITY)
+          elog(ERROR, "SPI_exec CREATE SCHEMA failed: %s",
+               SPI_result_code_string(ret));
+      }
+
+      ddl = "CREATE TABLE ";
+      ddl += quote_identifier(ci.schema_name.c_str());
+      ddl += ".";
+      ddl += quote_identifier(ci.table_name.c_str());
+      ddl += " (";
+      first_col = true;
+      prev_schema = ci.schema_name;
+      prev_table = ci.table_name;
+    }
+
+    if (skip_table || !ci.has_col)
+      continue;
+
+    if (!first_col)
+      ddl += ", ";
+    ddl += quote_identifier(ci.col_name.c_str());
+    ddl += " ";
+    ddl += DuckLakeTypeToPgType(ci.col_type.c_str());
+    if (ci.not_null)
+      ddl += " NOT NULL";
+    first_col = false;
+  }
+  emit_ddl();
+}
+
+/*
+ * Sync dropped tables from DuckLake metadata: drop pg_class entries for
+ * tables whose end_snapshot = sid.
+ * Caller must have an active SPI connection.
+ */
+static void SyncDroppedTables(const char *sid) {
+  std::string query = duckdb::StringUtil::Format(R"(
+		SELECT s.schema_name, t.table_name
+		FROM ducklake.ducklake_table t
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		WHERE t.end_snapshot = %s
+		)",
+                                                 sid);
+
+  int ret = SPI_exec(query.c_str(), 0);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  struct DropInfo {
+    std::string schema_name, table_name;
+  };
+  std::vector<DropInfo> drops;
+  for (uint64_t i = 0; i < SPI_processed; ++i) {
+    HeapTuple tup = SPI_tuptable->vals[i];
+    TupleDesc td = SPI_tuptable->tupdesc;
+    DropInfo di;
+    char *v;
+    v = SPI_getvalue(tup, td, 1);
+    di.schema_name = v ? v : "";
+    v = SPI_getvalue(tup, td, 2);
+    di.table_name = v ? v : "";
+    drops.push_back(std::move(di));
+  }
+
+  for (auto &di : drops) {
+    Oid nsp_oid = get_namespace_oid(di.schema_name.c_str(), true);
+    if (!OidIsValid(nsp_oid))
+      continue;
+    if (!OidIsValid(get_relname_relid(di.table_name.c_str(), nsp_oid)))
+      continue;
+
+    std::string drop_ddl = "DROP TABLE ";
+    drop_ddl += quote_identifier(di.schema_name.c_str());
+    drop_ddl += ".";
+    drop_ddl += quote_identifier(di.table_name.c_str());
+    elog(DEBUG1, "Metadata sync: %s", drop_ddl.c_str());
+    ret = SPI_exec(drop_ddl.c_str(), 0);
+    if (ret != SPI_OK_UTILITY)
+      elog(ERROR, "SPI_exec DROP TABLE failed: %s",
+           SPI_result_code_string(ret));
+  }
+}
+
+/*
+ * Sync sort keys from DuckLake metadata: create/drop ducklake_sorted
+ * pg_class indexes to match sort_info changes in this snapshot.
+ * Caller must have an active SPI connection.
+ */
+static void SyncSortKeys(const char *sid) {
+  /* New sort keys set */
+  std::string query = duckdb::StringUtil::Format(R"(
+		SELECT s.schema_name, t.table_name,
+		       se.expression, se.sort_direction, se.null_order
+		FROM ducklake.ducklake_sort_info si
+		JOIN ducklake.ducklake_sort_expression se USING (sort_id)
+		JOIN ducklake.ducklake_table t ON si.table_id = t.table_id
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		WHERE si.begin_snapshot = %s
+		  AND t.end_snapshot IS NULL
+		  AND s.end_snapshot IS NULL
+		ORDER BY t.table_id, se.sort_key_index
+		)",
+                                                 sid);
+
+  int ret = SPI_exec(query.c_str(), 0);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  /* Collect (relid, sort_spec) pairs from SPI results, then batch-execute. */
+  std::vector<pgducklake::SortedIndexCreate> sort_creates;
+
+  if (SPI_processed > 0) {
+    struct SortKeyInfo {
+      std::string schema_name, table_name, expression, direction, null_order;
+    };
+    std::vector<SortKeyInfo> sort_keys;
+    for (uint64_t i = 0; i < SPI_processed; ++i) {
+      HeapTuple tup = SPI_tuptable->vals[i];
+      TupleDesc td = SPI_tuptable->tupdesc;
+      SortKeyInfo sk;
+      char *v;
+      v = SPI_getvalue(tup, td, 1);
+      sk.schema_name = v ? v : "";
+      v = SPI_getvalue(tup, td, 2);
+      sk.table_name = v ? v : "";
+      v = SPI_getvalue(tup, td, 3);
+      sk.expression = v ? v : "";
+      v = SPI_getvalue(tup, td, 4);
+      sk.direction = v ? v : "ASC";
+      v = SPI_getvalue(tup, td, 5);
+      sk.null_order = v ? v : "";
+      sort_keys.push_back(std::move(sk));
+    }
+
+    /* Group by table and build sort spec */
+    std::string prev_schema, prev_table, idx_cols;
+    auto flush = [&]() {
+      if (idx_cols.empty())
+        return;
+      Oid nsp_oid = get_namespace_oid(prev_schema.c_str(), true);
+      if (!OidIsValid(nsp_oid))
+        return;
+      Oid relid = get_relname_relid(prev_table.c_str(), nsp_oid);
+      if (!OidIsValid(relid))
+        return;
+      sort_creates.push_back({relid, std::move(idx_cols)});
+      idx_cols.clear();
+    };
+
+    for (auto &sk : sort_keys) {
+      if (sk.schema_name != prev_schema || sk.table_name != prev_table) {
+        flush();
+        prev_schema = sk.schema_name;
+        prev_table = sk.table_name;
+      }
+
+      if (!idx_cols.empty())
+        idx_cols += ", ";
+      idx_cols += sk.expression;
+      idx_cols += " ";
+      idx_cols += sk.direction;
+      if (!sk.null_order.empty()) {
+        if (sk.null_order == "NULLS_FIRST")
+          idx_cols += " NULLS FIRST";
+        else if (sk.null_order == "NULLS_LAST")
+          idx_cols += " NULLS LAST";
+      }
+    }
+    flush();
+  }
+
+  /* Sort keys reset */
+  query = duckdb::StringUtil::Format(R"(
+		SELECT DISTINCT s.schema_name, t.table_name
+		FROM ducklake.ducklake_sort_info si
+		JOIN ducklake.ducklake_table t ON si.table_id = t.table_id
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		WHERE si.end_snapshot = %s
+		  AND t.end_snapshot IS NULL
+		  AND s.end_snapshot IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM ducklake.ducklake_sort_info si2
+		    WHERE si2.table_id = si.table_id
+		      AND si2.begin_snapshot = %s
+		  )
+		)",
+                                     sid, sid);
+
+  ret = SPI_exec(query.c_str(), 0);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  std::vector<Oid> sort_resets;
+  if (SPI_processed > 0) {
+    for (uint64_t i = 0; i < SPI_processed; ++i) {
+      HeapTuple tup = SPI_tuptable->vals[i];
+      TupleDesc td = SPI_tuptable->tupdesc;
+      char *schema = SPI_getvalue(tup, td, 1);
+      char *table = SPI_getvalue(tup, td, 2);
+      if (!schema || !table)
+        continue;
+      Oid nsp_oid = get_namespace_oid(schema, true);
+      if (!OidIsValid(nsp_oid))
+        continue;
+      Oid relid = get_relname_relid(table, nsp_oid);
+      if (OidIsValid(relid))
+        sort_resets.push_back(relid);
+    }
+  }
+
+  pgducklake::SyncSortedIndexes(sort_creates, sort_resets);
+}
+
+/*
+ * ducklake_snapshot_trigger -- AFTER INSERT trigger on ducklake.ducklake_snapshot.
  *
  * Detects tables created/dropped by external DuckDB clients (which write
  * directly to the ducklake metadata tables) and creates/drops corresponding
@@ -673,176 +979,23 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
   SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
                   PGC_S_SESSION);
 
-  syncing_from_metadata = true;
+  pgducklake::syncing_from_metadata = true;
 
   PG_TRY();
   {
     std::string sid = std::to_string(snapshot_id);
+    SyncNewTables(sid.c_str());
+    SyncDroppedTables(sid.c_str());
 
-    /* ---- Find newly created tables ---- */
-    std::string query = duckdb::StringUtil::Format(R"(
-		SELECT s.schema_name, t.table_name,
-		       c.column_name, c.column_type, c.nulls_allowed
-		FROM ducklake.ducklake_table t
-		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
-		LEFT JOIN ducklake.ducklake_column c ON t.table_id = c.table_id
-		  AND c.parent_column IS NULL
-		  AND c.end_snapshot IS NULL
-		WHERE t.begin_snapshot = %s
-		  AND s.end_snapshot IS NULL
-		ORDER BY t.table_id, c.column_order
-		)",
-                                                   sid.c_str());
-
-    int ret = SPI_exec(query.c_str(), 0);
-    if (ret != SPI_OK_SELECT)
-      elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
-
-    /* Save results — SPI_exec invalidates previous tuptable */
-    struct ColInfo {
-      std::string schema_name, table_name, col_name, col_type;
-      bool not_null, has_col;
-    };
-    std::vector<ColInfo> cols;
-    for (uint64_t i = 0; i < SPI_processed; ++i) {
-      HeapTuple tup = SPI_tuptable->vals[i];
-      TupleDesc td = SPI_tuptable->tupdesc;
-      ColInfo ci;
-      char *v;
-      v = SPI_getvalue(tup, td, 1);
-      ci.schema_name = v ? v : "";
-      v = SPI_getvalue(tup, td, 2);
-      ci.table_name = v ? v : "";
-      v = SPI_getvalue(tup, td, 3);
-      ci.has_col = (v != nullptr);
-      ci.col_name = v ? v : "";
-      v = SPI_getvalue(tup, td, 4);
-      ci.col_type = v ? v : "";
-      v = SPI_getvalue(tup, td, 5);
-      ci.not_null = (v && strcmp(v, "f") == 0);
-      cols.push_back(std::move(ci));
-    }
-
-    /* Group by table and emit CREATE TABLE DDL */
-    std::string prev_schema, prev_table, ddl;
-    bool first_col = true;
-    bool skip_table = false;
-
-    auto emit_ddl = [&]() {
-      if (!ddl.empty() && !skip_table) {
-        ddl += ") USING ducklake";
-        elog(DEBUG1, "Metadata sync: %s", ddl.c_str());
-        ret = SPI_exec(ddl.c_str(), 0);
-        if (ret != SPI_OK_UTILITY)
-          elog(ERROR, "SPI_exec CREATE TABLE failed: %s",
-               SPI_result_code_string(ret));
-      }
-      ddl.clear();
-      skip_table = false;
-    };
-
-    for (auto &ci : cols) {
-      if (ci.schema_name != prev_schema || ci.table_name != prev_table) {
-        emit_ddl();
-
-        /* Skip if table already exists in pg_class */
-        Oid nsp_oid = get_namespace_oid(ci.schema_name.c_str(), true);
-        if (OidIsValid(nsp_oid) &&
-            OidIsValid(
-                get_relname_relid(ci.table_name.c_str(), nsp_oid))) {
-          skip_table = true;
-          prev_schema = ci.schema_name;
-          prev_table = ci.table_name;
-          continue;
-        }
-
-        /* Create schema if it doesn't exist yet */
-        if (ci.schema_name != "public") {
-          std::string cs = "CREATE SCHEMA IF NOT EXISTS ";
-          cs += quote_identifier(ci.schema_name.c_str());
-          ret = SPI_exec(cs.c_str(), 0);
-          if (ret != SPI_OK_UTILITY)
-            elog(ERROR, "SPI_exec CREATE SCHEMA failed: %s",
-                 SPI_result_code_string(ret));
-        }
-
-        ddl = "CREATE TABLE ";
-        ddl += quote_identifier(ci.schema_name.c_str());
-        ddl += ".";
-        ddl += quote_identifier(ci.table_name.c_str());
-        ddl += " (";
-        first_col = true;
-        prev_schema = ci.schema_name;
-        prev_table = ci.table_name;
-      }
-
-      if (skip_table || !ci.has_col)
-        continue;
-
-      if (!first_col)
-        ddl += ", ";
-      ddl += quote_identifier(ci.col_name.c_str());
-      ddl += " ";
-      ddl += DuckLakeTypeToPgType(ci.col_type.c_str());
-      if (ci.not_null)
-        ddl += " NOT NULL";
-      first_col = false;
-    }
-    emit_ddl();
-
-    /* ---- Find dropped tables ---- */
-    query = duckdb::StringUtil::Format(R"(
-		SELECT s.schema_name, t.table_name
-		FROM ducklake.ducklake_table t
-		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
-		WHERE t.end_snapshot = %s
-		)",
-                                       sid.c_str());
-
-    ret = SPI_exec(query.c_str(), 0);
-    if (ret != SPI_OK_SELECT)
-      elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
-
-    struct DropInfo {
-      std::string schema_name, table_name;
-    };
-    std::vector<DropInfo> drops;
-    for (uint64_t i = 0; i < SPI_processed; ++i) {
-      HeapTuple tup = SPI_tuptable->vals[i];
-      TupleDesc td = SPI_tuptable->tupdesc;
-      DropInfo di;
-      char *v;
-      v = SPI_getvalue(tup, td, 1);
-      di.schema_name = v ? v : "";
-      v = SPI_getvalue(tup, td, 2);
-      di.table_name = v ? v : "";
-      drops.push_back(std::move(di));
-    }
-
-    for (auto &di : drops) {
-      Oid nsp_oid = get_namespace_oid(di.schema_name.c_str(), true);
-      if (!OidIsValid(nsp_oid))
-        continue;
-      if (!OidIsValid(get_relname_relid(di.table_name.c_str(), nsp_oid)))
-        continue;
-
-      std::string drop_ddl = "DROP TABLE ";
-      drop_ddl += quote_identifier(di.schema_name.c_str());
-      drop_ddl += ".";
-      drop_ddl += quote_identifier(di.table_name.c_str());
-      elog(DEBUG1, "Metadata sync: %s", drop_ddl.c_str());
-      ret = SPI_exec(drop_ddl.c_str(), 0);
-      if (ret != SPI_OK_UTILITY)
-        elog(ERROR, "SPI_exec DROP TABLE failed: %s",
-             SPI_result_code_string(ret));
-    }
-
-    syncing_from_metadata = false;
+    /* Skip sort-key sync when sort was set from PostgreSQL (set_sort/
+     * CREATE INDEX already handled the pg_class index; re-running here
+     * would deadlock). */
+    if (!pgducklake::sort_synced_from_pg)
+      SyncSortKeys(sid.c_str());
   }
-  PG_CATCH();
+  PG_FINALLY();
   {
-    syncing_from_metadata = false;
-    PG_RE_THROW();
+    pgducklake::syncing_from_metadata = false;
   }
   PG_END_TRY();
 

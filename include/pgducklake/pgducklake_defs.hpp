@@ -8,3 +8,6 @@
 // Metadata schema in PostgreSQL
 #define PGDUCKLAKE_PG_SCHEMA "ducklake"
 #define PGDUCKLAKE_PG_SCHEMA_QUOTED "'ducklake'"
+
+// Index access methods
+#define PGDUCKLAKE_SORTED_AM "ducklake_sorted"

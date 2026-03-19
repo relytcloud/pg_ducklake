@@ -17,6 +17,61 @@ CREATE ACCESS METHOD ducklake
     HANDLER ducklake._am_handler;
 
 -- ============================================================
+-- Sorted Index Access Method
+-- ============================================================
+
+CREATE FUNCTION ducklake._sorted_am_handler(internal)
+    RETURNS index_am_handler
+    SET search_path = pg_catalog, pg_temp
+    AS 'MODULE_PATHNAME', 'ducklake_sorted_am_handler'
+    LANGUAGE C;
+
+CREATE ACCESS METHOD ducklake_sorted
+    TYPE INDEX
+    HANDLER ducklake._sorted_am_handler;
+
+-- Default operator family and classes for ducklake_sorted.
+-- These are STORAGE-only (no operators or functions) so that CREATE INDEX
+-- accepts columns of common types without requiring explicit opclass.
+
+CREATE OPERATOR FAMILY ducklake.sorted_ops USING ducklake_sorted;
+
+CREATE OPERATOR CLASS ducklake.bool_sorted_ops DEFAULT FOR TYPE bool
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE bool;
+CREATE OPERATOR CLASS ducklake.int2_sorted_ops DEFAULT FOR TYPE int2
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE int2;
+CREATE OPERATOR CLASS ducklake.int4_sorted_ops DEFAULT FOR TYPE int4
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE int4;
+CREATE OPERATOR CLASS ducklake.int8_sorted_ops DEFAULT FOR TYPE int8
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE int8;
+CREATE OPERATOR CLASS ducklake.float4_sorted_ops DEFAULT FOR TYPE float4
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE float4;
+CREATE OPERATOR CLASS ducklake.float8_sorted_ops DEFAULT FOR TYPE float8
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE float8;
+CREATE OPERATOR CLASS ducklake.numeric_sorted_ops DEFAULT FOR TYPE numeric
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE numeric;
+CREATE OPERATOR CLASS ducklake.text_sorted_ops DEFAULT FOR TYPE text
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE text;
+CREATE OPERATOR CLASS ducklake.varchar_sorted_ops DEFAULT FOR TYPE varchar
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE varchar;
+CREATE OPERATOR CLASS ducklake.bpchar_sorted_ops DEFAULT FOR TYPE bpchar
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE bpchar;
+CREATE OPERATOR CLASS ducklake.date_sorted_ops DEFAULT FOR TYPE date
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE date;
+CREATE OPERATOR CLASS ducklake.timestamp_sorted_ops DEFAULT FOR TYPE timestamp
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE timestamp;
+CREATE OPERATOR CLASS ducklake.timestamptz_sorted_ops DEFAULT FOR TYPE timestamptz
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE timestamptz;
+CREATE OPERATOR CLASS ducklake.interval_sorted_ops DEFAULT FOR TYPE interval
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE interval;
+CREATE OPERATOR CLASS ducklake.uuid_sorted_ops DEFAULT FOR TYPE uuid
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE uuid;
+CREATE OPERATOR CLASS ducklake.oid_sorted_ops DEFAULT FOR TYPE oid
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE oid;
+CREATE OPERATOR CLASS ducklake.bytea_sorted_ops DEFAULT FOR TYPE bytea
+    USING ducklake_sorted FAMILY ducklake.sorted_ops AS STORAGE bytea;
+
+-- ============================================================
 -- Event Triggers
 -- ============================================================
 
@@ -181,6 +236,44 @@ WHERE t.table_name = (SELECT relname FROM pg_class WHERE oid = scope)
   AND t.end_snapshot IS NULL
   AND s.end_snapshot IS NULL
 ORDER BY pc.partition_key_index
+$$;
+
+-- Sorted Tables ----------------------------------------------------
+
+-- native proc
+CREATE PROCEDURE ducklake.set_sort(scope regclass, VARIADIC sorted_by text[])
+AS 'MODULE_PATHNAME', 'ducklake_set_sort'
+LANGUAGE C;
+
+-- native proc
+CREATE PROCEDURE ducklake.reset_sort(scope regclass)
+AS 'MODULE_PATHNAME', 'ducklake_reset_sort'
+LANGUAGE C;
+
+-- pure SQL
+CREATE FUNCTION ducklake.get_sort(
+    scope regclass,
+    OUT sort_key_index bigint,
+    OUT expression varchar,
+    OUT direction varchar,
+    OUT null_order varchar
+)
+RETURNS SETOF record
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+SELECT se.sort_key_index, se.expression, se.sort_direction, se.null_order
+FROM ducklake.ducklake_sort_info si
+JOIN ducklake.ducklake_sort_expression se USING (sort_id)
+JOIN ducklake.ducklake_table t ON si.table_id = t.table_id
+JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+WHERE t.table_name = (SELECT relname FROM pg_class WHERE oid = scope)
+  AND s.schema_name = (SELECT nspname FROM pg_namespace
+                        WHERE oid = (SELECT relnamespace FROM pg_class WHERE oid = scope))
+  AND si.end_snapshot IS NULL
+  AND t.end_snapshot IS NULL
+  AND s.end_snapshot IS NULL
+ORDER BY se.sort_key_index
 $$;
 
 -- Snapshots ---------------------------------------------------------
