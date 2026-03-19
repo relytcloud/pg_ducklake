@@ -23,7 +23,7 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
-#include "pgducklake/pgducklake_sorted_index.hpp"
+#include "pgducklake/pgducklake_sorted_by.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 #include <string>
@@ -302,31 +302,7 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
   prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
                             params, query_env, dest, qc);
 
-  /* After DROP INDEX completes, reset sort order in DuckDB.
-   * Skip when syncing from metadata (snapshot trigger already reset the sort). */
-  if (!sorted_drops.empty() && !pgducklake::syncing_from_metadata) {
-    PushActiveSnapshot(GetTransactionSnapshot());
-    if (!pgduckdb::DuckdbEnsureCacheValid()) {
-      PopActiveSnapshot();
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("pg_duckdb is not available")));
-    }
-
-    for (auto &drop : sorted_drops) {
-      std::string query = std::string("ALTER TABLE ") +
-                           pgduckdb_relation_name(drop.table_oid) +
-                           " RESET SORTED BY";
-      elog(DEBUG1, "ducklake_sorted drop: %s", query.c_str());
-
-      const char *error_msg = nullptr;
-      int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
-      if (result != 0)
-        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                        errmsg("failed to reset sort order: %s",
-                               error_msg ? error_msg : "unknown error")));
-    }
-    PopActiveSnapshot();
-  }
+  pgducklake::HandleDropSortedIndex(sorted_drops);
 
   // After DROP EXTENSION completes, detach the DuckLake catalog from DuckDB
   // so that a subsequent CREATE EXTENSION can attach a fresh one.

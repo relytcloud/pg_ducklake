@@ -14,7 +14,7 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
-#include "pgducklake/pgducklake_sorted_index.hpp"
+#include "pgducklake/pgducklake_sorted_by.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 
 #include <string>
@@ -771,8 +771,7 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
   pgducklake::syncing_from_metadata = true;
 
   PG_TRY();
-  {
-    std::string sid = std::to_string(snapshot_id);
+  {    std::string sid = std::to_string(snapshot_id);
 
     /* ---- Find newly created tables ---- */
     std::string query = duckdb::StringUtil::Format(R"(
@@ -956,6 +955,14 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
     if (ret != SPI_OK_SELECT)
       elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
 
+    /* Collect (relid, sort_spec) pairs from SPI results, then batch-execute.
+     * This separates metadata extraction from pg_class manipulation. */
+    struct SortIndexAction {
+      Oid relid;
+      std::string sort_spec;
+    };
+    std::vector<SortIndexAction> sort_creates;
+
     if (SPI_processed > 0) {
       struct SortKeyInfo {
         std::string schema_name, table_name, expression, direction, null_order;
@@ -979,9 +986,9 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
         sort_keys.push_back(std::move(sk));
       }
 
-      /* Group by table, build sort spec, sync pg_class index */
+      /* Group by table and build sort spec */
       std::string prev_schema, prev_table, idx_cols;
-      auto emit_sort_index = [&]() {
+      auto flush = [&]() {
         if (idx_cols.empty())
           return;
         Oid nsp_oid = get_namespace_oid(prev_schema.c_str(), true);
@@ -990,13 +997,13 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
         Oid relid = get_relname_relid(prev_table.c_str(), nsp_oid);
         if (!OidIsValid(relid))
           return;
-        pgducklake::CreateSortedIndexForTable(relid, idx_cols.c_str());
+        sort_creates.push_back({relid, std::move(idx_cols)});
         idx_cols.clear();
       };
 
       for (auto &sk : sort_keys) {
         if (sk.schema_name != prev_schema || sk.table_name != prev_table) {
-          emit_sort_index();
+          flush();
           prev_schema = sk.schema_name;
           prev_table = sk.table_name;
         }
@@ -1013,7 +1020,7 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
             idx_cols += " NULLS LAST";
         }
       }
-      emit_sort_index();
+      flush();
     }
 
     /* ---- Sync sort keys (sort reset) ---- */
@@ -1037,43 +1044,37 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
     if (ret != SPI_OK_SELECT)
       elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
 
+    std::vector<Oid> sort_resets;
     if (SPI_processed > 0) {
-      struct ResetInfo {
-        std::string schema_name, table_name;
-      };
-      std::vector<ResetInfo> resets;
       for (uint64_t i = 0; i < SPI_processed; ++i) {
         HeapTuple tup = SPI_tuptable->vals[i];
         TupleDesc td = SPI_tuptable->tupdesc;
-        ResetInfo ri;
-        char *v;
-        v = SPI_getvalue(tup, td, 1);
-        ri.schema_name = v ? v : "";
-        v = SPI_getvalue(tup, td, 2);
-        ri.table_name = v ? v : "";
-        resets.push_back(std::move(ri));
-      }
-
-      for (auto &ri : resets) {
-        Oid nsp_oid = get_namespace_oid(ri.schema_name.c_str(), true);
+        char *schema = SPI_getvalue(tup, td, 1);
+        char *table = SPI_getvalue(tup, td, 2);
+        if (!schema || !table)
+          continue;
+        Oid nsp_oid = get_namespace_oid(schema, true);
         if (!OidIsValid(nsp_oid))
           continue;
-        Oid relid = get_relname_relid(ri.table_name.c_str(), nsp_oid);
-        if (!OidIsValid(relid))
-          continue;
-
-        pgducklake::DropSortedIndexForTable(relid);
+        Oid relid = get_relname_relid(table, nsp_oid);
+        if (OidIsValid(relid))
+          sort_resets.push_back(relid);
       }
     }
 
+    /* Batch-execute: create new sorted indexes, then drop reset ones */
+    for (auto &action : sort_creates)
+      pgducklake::CreateSortedIndexForTable(action.relid,
+                                            action.sort_spec.c_str());
+    for (Oid relid : sort_resets)
+      pgducklake::DropSortedIndexForTable(relid);
+
     } /* !sort_synced_from_pg */
 
-    pgducklake::syncing_from_metadata = false;
   }
-  PG_CATCH();
+  PG_FINALLY();
   {
     pgducklake::syncing_from_metadata = false;
-    PG_RE_THROW();
   }
   PG_END_TRY();
 

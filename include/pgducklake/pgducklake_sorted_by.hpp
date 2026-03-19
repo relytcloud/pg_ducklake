@@ -1,7 +1,8 @@
 /*
- * pgducklake_sorted_index.hpp
+ * pgducklake_sorted_by.hpp
  *
- * Sorted index AM handler and CREATE/DROP INDEX interception helpers.
+ * Sorted index AM handler, CREATE/DROP INDEX interception, and pg_class
+ * sync helpers for ducklake_sorted.
  */
 
 #pragma once
@@ -24,14 +25,15 @@ struct SortedIndexDrop {
   Oid table_oid;
 };
 
-std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop);
-
 void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
                              bool read_only_tree, ProcessUtilityContext context,
                              ParamListInfo params,
                              struct QueryEnvironment *query_env,
                              DestReceiver *dest, QueryCompletion *qc,
                              ProcessUtility_hook_type prev_hook);
+
+std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop);
+void HandleDropSortedIndex(const std::vector<SortedIndexDrop> &drops);
 
 /* Create/drop ducklake_sorted pg_class indexes.
  * Caller must have an active SPI connection with syncing_from_metadata = true. */

@@ -1,18 +1,19 @@
 /*
- * pgducklake_sorted_index_am.cpp -- Sorted index AM and interception helpers.
+ * pgducklake_sorted_by.cpp -- ducklake_sorted index AM and interception.
  *
  * Provides a minimal IndexAmRoutine so that CREATE INDEX ... USING
  * ducklake_sorted registers a real pg_class entry. The index stores no data
  * and is never used by the planner; it exists only as a catalog marker that
  * the utility hook translates into ALTER TABLE ... SET SORTED BY in DuckDB.
  *
- * Also contains HandleCreateSortedIndex / FindSortedIndexDrops which are
- * called from the utility hook in pgducklake_hooks.cpp.
+ * Also contains HandleCreateSortedIndex, HandleDropSortedIndex,
+ * FindSortedIndexDrops, and pg_class sync helpers called from
+ * pgducklake_hooks.cpp and pgducklake_ddl.cpp.
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
-#include "pgducklake/pgducklake_sorted_index.hpp"
+#include "pgducklake/pgducklake_sorted_by.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 #include <string>
@@ -472,6 +473,38 @@ void CreateSortedIndexForTable(Oid relid, const char *sort_spec) {
   if (ret != SPI_OK_UTILITY)
     elog(ERROR, "SPI_exec CREATE INDEX failed: %s",
          SPI_result_code_string(ret));
+}
+
+/*
+ * Post-DROP INDEX handler: reset sort order in DuckDB for each dropped
+ * ducklake_sorted index.  Called from the utility hook after the DROP
+ * has been executed by PostgreSQL.
+ */
+void HandleDropSortedIndex(const std::vector<SortedIndexDrop> &drops) {
+  if (drops.empty() || syncing_from_metadata)
+    return;
+
+  PushActiveSnapshot(GetTransactionSnapshot());
+  if (!pgduckdb::DuckdbEnsureCacheValid()) {
+    PopActiveSnapshot();
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("pg_duckdb is not available")));
+  }
+
+  for (auto &drop : drops) {
+    std::string query = std::string("ALTER TABLE ") +
+                         pgduckdb_relation_name(drop.table_oid) +
+                         " RESET SORTED BY";
+    elog(DEBUG1, "ducklake_sorted drop: %s", query.c_str());
+
+    const char *error_msg = nullptr;
+    int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
+    if (result != 0)
+      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                      errmsg("failed to reset sort order: %s",
+                             error_msg ? error_msg : "unknown error")));
+  }
+  PopActiveSnapshot();
 }
 
 } // namespace pgducklake
