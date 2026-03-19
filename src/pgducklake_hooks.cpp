@@ -23,7 +23,7 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
-#include "pgducklake/pgducklake_index_am.hpp"
+#include "pgducklake/pgducklake_sorted_index.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 #include <string>

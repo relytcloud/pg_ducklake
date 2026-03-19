@@ -112,6 +112,41 @@ CREATE TABLE heap_sort_table2 (id int);
 CALL ducklake.set_sort('heap_sort_table2'::regclass, 'id ASC');
 DROP TABLE heap_sort_table2;
 
+-- ============================================================
+-- ALTER TABLE with sorted index
+-- ============================================================
+
+-- 17. ADD COLUMN preserves sort order
+CREATE TABLE sort_alter (id int, val int) USING ducklake;
+CREATE INDEX sort_alter_idx ON sort_alter USING ducklake_sorted (val);
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+
+ALTER TABLE sort_alter ADD COLUMN extra text;
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+
+-- verify index still exists
+SELECT c.relname, am.amname
+FROM pg_class c JOIN pg_am am ON c.relam = am.oid
+WHERE c.relname = 'sort_alter_idx';
+
+-- 18. DROP COLUMN on non-sort column preserves sort order
+ALTER TABLE sort_alter DROP COLUMN extra;
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+
+-- 19. DROP COLUMN on sort key column cascade-drops the pg_class index.
+-- NOTE: DuckDB sort metadata is not reset because ALTER TABLE DROP COLUMN
+-- cascade does not go through the utility hook. DuckDB keeps stale sort
+-- metadata until the next compaction or explicit reset_sort.
+ALTER TABLE sort_alter DROP COLUMN val;
+
+SELECT c.relname FROM pg_class c WHERE c.relname = 'sort_alter_idx';
+SELECT * FROM ducklake.get_sort('sort_alter'::regclass);
+
+-- 20. DROP TABLE with sorted index
+CREATE TABLE sort_drop_tbl (id int, val int) USING ducklake;
+CREATE INDEX ON sort_drop_tbl USING ducklake_sorted (val);
+DROP TABLE sort_drop_tbl;
+
 -- Cleanup
 DROP TABLE sort_idx_basic;
 DROP INDEX sort_idx_multi_renamed;
@@ -121,3 +156,4 @@ DROP TABLE sort_idx_expr;
 DROP TABLE sort_basic;
 DROP TABLE sort_multi;
 DROP TABLE sort_expr;
+DROP TABLE sort_alter;

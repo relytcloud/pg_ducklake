@@ -1,9 +1,7 @@
 /*
- * pgducklake_index_am.hpp
+ * pgducklake_sorted_index.hpp
  *
- * Declarations for the ducklake_sorted dummy index AM.
- * The AM is a catalog-only marker translated into DuckDB ALTER TABLE
- * statements by the utility hook in pgducklake_hooks.cpp.
+ * Sorted index AM handler and CREATE/DROP INDEX interception helpers.
  */
 
 #pragma once
