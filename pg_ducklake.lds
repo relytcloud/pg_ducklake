@@ -1,0 +1,10 @@
+{
+  global:
+    Pg_magic_func;
+    _PG_init;
+    _PG_fini;
+    pg_finfo_*;
+    ducklake_*;
+  local:
+    *;
+};
