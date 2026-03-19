@@ -1,19 +1,24 @@
 /*
- * pgducklake_sorted_by.cpp -- ducklake_sorted index AM and interception.
+ * pgducklake_sorted_by.cpp -- ducklake_sorted index AM, procedures, and sync.
  *
  * Provides a minimal IndexAmRoutine so that CREATE INDEX ... USING
  * ducklake_sorted registers a real pg_class entry. The index stores no data
  * and is never used by the planner; it exists only as a catalog marker that
  * the utility hook translates into ALTER TABLE ... SET SORTED BY in DuckDB.
  *
- * Also contains HandleCreateSortedIndex, HandleDropSortedIndex,
- * FindSortedIndexDrops, and pg_class sync helpers called from
- * pgducklake_hooks.cpp and pgducklake_ddl.cpp.
+ * Also contains: ducklake.set_sort/reset_sort SQL procedures,
+ * HandleCreateSortedIndex, HandleDropSortedIndex, FindSortedIndexDrops,
+ * and pg_class sync helpers called from pgducklake_hooks.cpp and
+ * pgducklake_ddl.cpp.
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
+
+#include <duckdb/common/error_data.hpp> /* must precede postgres.h (FATAL macro) */
+
 #include "pgducklake/pgducklake_sorted_by.hpp"
+#include "pgducklake/utility/cpp_wrapper.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 #include <string>
@@ -37,9 +42,12 @@ extern "C" {
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 #include "utils/snapmgr.h"
+#include "utils/array.h"
 #include "utils/syscache.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
+
+void EnsureDuckLakeTable(Oid relid);
 
 /* ================================================================
  * Index AM routines
@@ -163,9 +171,99 @@ Datum ducklake_sorted_am_handler(PG_FUNCTION_ARGS) {
   PG_RETURN_POINTER(amroutine);
 }
 
+/* ================================================================
+ * ducklake.set_sort / ducklake.reset_sort procedures
+ * ================================================================ */
+
+DECLARE_PG_FUNCTION(ducklake_set_sort) {
+  if (PG_ARGISNULL(0))
+    elog(ERROR, "table cannot be NULL");
+  if (PG_ARGISNULL(1))
+    elog(ERROR, "sorted_by cannot be NULL");
+
+  Oid relid = PG_GETARG_OID(0);
+  EnsureDuckLakeTable(relid);
+
+  ArrayType *arr = PG_GETARG_ARRAYTYPE_P(1);
+  if (ARR_NDIM(arr) == 0)
+    elog(ERROR, "sorted_by cannot be empty");
+
+  int nelems;
+  Datum *elems;
+  bool *nulls;
+  deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT, &elems, &nulls,
+                    &nelems);
+
+  if (nelems == 0)
+    elog(ERROR, "sorted_by cannot be empty");
+
+  std::string spec;
+  for (int i = 0; i < nelems; i++) {
+    if (nulls[i])
+      elog(ERROR, "sort key cannot be NULL");
+    if (i > 0)
+      spec += ", ";
+    spec += text_to_cstring(DatumGetTextPP(elems[i]));
+  }
+
+  std::string query = std::string("ALTER TABLE ") +
+                       pgduckdb_relation_name(relid) +
+                       " SET SORTED BY (" + spec + ")";
+
+  pgducklake::sort_synced_from_pg = true;
+  const char *error_msg = nullptr;
+  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  pgducklake::sort_synced_from_pg = false;
+  if (result != 0)
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to set sort order: %s",
+                           error_msg ? error_msg : "unknown error")));
+
+  /* Sync pg_class: drop old ducklake_sorted index, create new one. */
+  SPI_connect();
+  pgducklake::syncing_from_metadata = true;
+  pgducklake::CreateSortedIndexForTable(relid, spec.c_str());
+  pgducklake::syncing_from_metadata = false;
+  SPI_finish();
+
+  PG_RETURN_VOID();
+}
+
+DECLARE_PG_FUNCTION(ducklake_reset_sort) {
+  if (PG_ARGISNULL(0))
+    elog(ERROR, "table cannot be NULL");
+
+  Oid relid = PG_GETARG_OID(0);
+  EnsureDuckLakeTable(relid);
+
+  std::string query = std::string("ALTER TABLE ") +
+                       pgduckdb_relation_name(relid) +
+                       " RESET SORTED BY";
+
+  pgducklake::sort_synced_from_pg = true;
+  const char *error_msg = nullptr;
+  int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
+  pgducklake::sort_synced_from_pg = false;
+  if (result != 0)
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to reset sort order: %s",
+                           error_msg ? error_msg : "unknown error")));
+
+  /* Drop any ducklake_sorted index on this table */
+  SPI_connect();
+  pgducklake::syncing_from_metadata = true;
+  pgducklake::DropSortedIndexForTable(relid);
+  pgducklake::syncing_from_metadata = false;
+  SPI_finish();
+
+  PG_RETURN_VOID();
+}
+
 } /* extern "C" */
 
 namespace pgducklake {
+
+bool sort_synced_from_pg = false;
 
 namespace {
 

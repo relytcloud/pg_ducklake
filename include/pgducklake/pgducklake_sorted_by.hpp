@@ -21,6 +21,10 @@ namespace pgducklake {
 
 extern bool syncing_from_metadata;
 
+/* When true, the snapshot trigger skips sort-key sync because set_sort/
+ * reset_sort will handle the pg_class index directly after the DuckDB call. */
+extern bool sort_synced_from_pg;
+
 struct SortedIndexDrop {
   Oid index_oid;
   Oid table_oid;
