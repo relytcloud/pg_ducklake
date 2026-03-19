@@ -60,6 +60,7 @@ ifeq ($(shell uname -s), Darwin)
 	SHLIB_LINK += -Wl,-force_load,$(DUCKLAKE_STATIC_LIB)
 else
 	SHLIB_LINK += -Wl,--whole-archive $(DUCKLAKE_STATIC_LIB) -Wl,--no-whole-archive
+	SHLIB_LINK += -Wl,--exclude-libs,$(DUCKLAKE_STATIC_LIB)
 endif
 
 # Link against libduckdb from PG_LIB (installed by pg_duckdb)
