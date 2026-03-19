@@ -771,7 +771,8 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
   pgducklake::syncing_from_metadata = true;
 
   PG_TRY();
-  {    std::string sid = std::to_string(snapshot_id);
+  {
+    std::string sid = std::to_string(snapshot_id);
 
     /* ---- Find newly created tables ---- */
     std::string query = duckdb::StringUtil::Format(R"(
@@ -957,11 +958,7 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
 
     /* Collect (relid, sort_spec) pairs from SPI results, then batch-execute.
      * This separates metadata extraction from pg_class manipulation. */
-    struct SortIndexAction {
-      Oid relid;
-      std::string sort_spec;
-    };
-    std::vector<SortIndexAction> sort_creates;
+    std::vector<pgducklake::SortedIndexCreate> sort_creates;
 
     if (SPI_processed > 0) {
       struct SortKeyInfo {
@@ -1062,12 +1059,7 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
       }
     }
 
-    /* Batch-execute: create new sorted indexes, then drop reset ones */
-    for (auto &action : sort_creates)
-      pgducklake::CreateSortedIndexForTable(action.relid,
-                                            action.sort_spec.c_str());
-    for (Oid relid : sort_resets)
-      pgducklake::DropSortedIndexForTable(relid);
+    pgducklake::SyncSortedIndexes(sort_creates, sort_resets);
 
     } /* !sort_synced_from_pg */
 
