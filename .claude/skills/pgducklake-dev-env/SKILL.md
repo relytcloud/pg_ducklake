@@ -181,6 +181,29 @@ If the main worktree's submodules are not initialized, fall back to
 `git submodule update --init --recursive --depth=1` (slow, downloads
 from remote).
 
+### Removing a worktree
+
+Remove submodule worktrees first (reverse of setup), then the root.
+This avoids stale entries -- no pruning needed.
+
+```bash
+MAIN=$(git worktree list --porcelain | awk 'NR==1{print $2}')
+WT=<worktree-to-remove>
+
+# Remove submodule worktrees (children before parents via tac)
+git -C "$MAIN" submodule foreach --recursive --quiet \
+    'echo "$toplevel/$sm_path"' | tac | while read abs_path; do
+    rel_path="${abs_path#$MAIN/}"
+    gitdir=$(git -C "$abs_path" rev-parse --git-dir)
+    case "$gitdir" in /*) ;; *) gitdir="$abs_path/$gitdir" ;; esac
+    git -C "$gitdir" worktree remove "$WT/$rel_path" --force 2>/dev/null
+done
+
+# Remove the root worktree
+git worktree remove "$WT" --force
+```
+
+
 ### PG install for new worktree
 
 The PG source worktrees at `~/.dev/pg-<VER>` already have compiled
