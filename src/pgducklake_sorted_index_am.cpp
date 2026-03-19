@@ -28,6 +28,7 @@ extern "C" {
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "commands/defrem.h"
+#include "executor/spi.h"
 #include "nodes/pathnodes.h"
 #include "nodes/value.h"
 #include "utils/builtins.h"
@@ -414,6 +415,63 @@ std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop) {
   }
 
   return result;
+}
+
+/*
+ * Drop all ducklake_sorted pg_class indexes on a table.
+ * Caller must have an active SPI connection and syncing_from_metadata = true.
+ */
+void DropSortedIndexForTable(Oid relid) {
+  Oid sorted_am_oid = get_am_oid(PGDUCKLAKE_SORTED_AM, true);
+  if (!OidIsValid(sorted_am_oid))
+    return;
+
+  char *sql = psprintf(R"(
+	SELECT c.oid FROM pg_catalog.pg_index i
+	JOIN pg_catalog.pg_class c ON i.indexrelid = c.oid
+	WHERE i.indrelid = %u
+	  AND c.relam = %u
+	)",
+                       relid, sorted_am_oid);
+
+  int ret = SPI_exec(sql, 0);
+  std::vector<Oid> idx_oids;
+  if (ret == SPI_OK_SELECT) {
+    for (uint64_t j = 0; j < SPI_processed; ++j) {
+      bool isnull;
+      Oid idx_oid = DatumGetObjectId(SPI_getbinval(
+          SPI_tuptable->vals[j], SPI_tuptable->tupdesc, 1, &isnull));
+      if (!isnull)
+        idx_oids.push_back(idx_oid);
+    }
+  }
+  for (Oid idx_oid : idx_oids) {
+    char *drop_sql = psprintf("DROP INDEX %s",
+                              quote_identifier(get_rel_name(idx_oid)));
+    SPI_exec(drop_sql, 0);
+  }
+}
+
+/*
+ * Create a ducklake_sorted pg_class index for a table, dropping any existing
+ * sorted index first.
+ * Caller must have an active SPI connection and syncing_from_metadata = true.
+ */
+void CreateSortedIndexForTable(Oid relid, const char *sort_spec) {
+  DropSortedIndexForTable(relid);
+
+  char *schema_name = get_namespace_name(get_rel_namespace(relid));
+  char *table_name = get_rel_name(relid);
+  char *sql = psprintf("CREATE INDEX ON %s.%s USING ducklake_sorted (%s)",
+                       quote_identifier(schema_name),
+                       quote_identifier(table_name),
+                       sort_spec);
+
+  elog(DEBUG1, "Sorted index sync: %s", sql);
+  int ret = SPI_exec(sql, 0);
+  if (ret != SPI_OK_UTILITY)
+    elog(ERROR, "SPI_exec CREATE INDEX failed: %s",
+         SPI_result_code_string(ret));
 }
 
 } // namespace pgducklake

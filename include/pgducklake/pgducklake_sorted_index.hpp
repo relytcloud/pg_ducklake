@@ -33,4 +33,9 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
                              DestReceiver *dest, QueryCompletion *qc,
                              ProcessUtility_hook_type prev_hook);
 
+/* Create/drop ducklake_sorted pg_class indexes.
+ * Caller must have an active SPI connection with syncing_from_metadata = true. */
+void CreateSortedIndexForTable(Oid relid, const char *sort_spec);
+void DropSortedIndexForTable(Oid relid);
+
 } // namespace pgducklake
