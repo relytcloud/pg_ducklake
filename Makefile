@@ -76,7 +76,7 @@ endif
 # ---------------------------------------------------------------------------
 include Makefile.global
 
-install: install-pg_duckdb
+# install-pg_duckdb is pulled in via $(shlib) dependency
 
 installcheck: all install
 	$(MAKE) check-regression check-isolation
@@ -161,7 +161,8 @@ $(OBJS): $(PG_DUCKDB_HEAD) $(DUCKLAKE_HEAD)
 COMPILE.cc.bc += $(PG_CPPFLAGS)
 COMPILE.cxx.bc += $(PG_CXXFLAGS)
 
-# Shared library depends on ducklake static lib
-$(shlib): $(DUCKLAKE_STATIC_LIB)
+# Shared library depends on ducklake static lib; libduckdb (from pg_duckdb)
+# must be installed before linking but should not force relinking.
+$(shlib): $(DUCKLAKE_STATIC_LIB) | install-pg_duckdb
 
 clean-all: clean clean-regression clean-isolation clean-pg_duckdb clean-ducklake
