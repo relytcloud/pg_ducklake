@@ -1,5 +1,7 @@
 /*
- * pgducklake_time_travel.cpp — DuckDB table function for time-travel queries
+ * pgducklake_time_travel.cpp -- DuckDB table function for time-travel queries
+ *
+ * @scope duckdb-instance: register time_travel table function
  *
  * Implements `time_travel(table_name, version/timestamp)` as a DuckDB table
  * function. The bind phase resolves the table's schema at the given snapshot

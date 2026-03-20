@@ -1,6 +1,9 @@
 /*
- * pgducklake_metadata_manager.cpp — PostgreSQL-backed DuckLake metadata
+ * pgducklake_metadata_manager.cpp -- PostgreSQL-backed DuckLake metadata
  * manager.
+ *
+ * @scope duckdb-instance: per-transaction PgDuckLakeMetadataManager,
+ *   SPI query execution, snapshot trigger setup
  *
  * Implements DuckLake metadata operations by translating DuckDB requests into
  * SQL against the ducklake_* metadata tables in PostgreSQL.

@@ -1,6 +1,8 @@
 /*
  * pgducklake_functions_mapping.cpp -- regclass-to-text function rewrite stub.
  *
+ * @scope extension: func ducklake_function_mapping (safety-net stub)
+ *
  * The planner hook (pgducklake_hooks.cpp) rewrites regclass overloads of
  * table-scoped DuckLake functions into their text-arg counterparts before
  * pg_duckdb routes them to DuckDB. This file provides a safety-net C

@@ -1,5 +1,10 @@
 /*
- * pgducklake_fdw.cpp — Foreign Data Wrapper for DuckLake tables
+ * pgducklake_fdw.cpp -- Foreign Data Wrapper for DuckLake tables
+ *
+ * @scope extension: ducklake_fdw handler and validator
+ * @scope backend: register external table check, relation name callback,
+ *   FDW utility hook; cached FDW OID
+ * @scope duckdb-instance: attach DuckLake databases for FDW queries
  *
  * Implements a PostgreSQL FDW that provides read-only access to DuckLake
  * tables.  Supports two modes:

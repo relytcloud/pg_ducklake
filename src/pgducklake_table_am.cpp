@@ -1,5 +1,7 @@
 /*
- * pgducklake_table_am.cpp — Table access method surface for DuckLake tables.
+ * pgducklake_table_am.cpp -- Table access method surface for DuckLake tables.
+ *
+ * @scope extension: ducklake table AM handler and callbacks
  *
  * Provides a PostgreSQL TableAM implementation used for routing and compatibility,
  * delegating unsupported paths and integrating VACUUM hooks where needed.

@@ -1,6 +1,11 @@
 /*
  * pgducklake_sorted_by.cpp -- ducklake_sorted index AM, procedures, and sync.
  *
+ * @scope extension: ducklake_sorted index AM, procs ducklake.set_sort
+ *   and ducklake.reset_sort
+ * @scope backend: sort_synced_from_pg guard bool
+ * @scope duckdb-instance: sync sorted indexes between DuckDB and pg_class
+ *
  * Provides a minimal IndexAmRoutine so that CREATE INDEX ... USING
  * ducklake_sorted registers a real pg_class entry. The index stores no data
  * and is never used by the planner; it exists only as a catalog marker that
