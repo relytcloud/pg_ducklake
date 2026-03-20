@@ -1,5 +1,11 @@
-// Vendored type conversion utilities from pg_duckdb
-// Simplified to support only types needed for DuckLake metadata operations
+/*
+ * pgducklake_pg_types.cpp -- PostgreSQL-to-DuckDB type conversion.
+ *
+ * @scope stateless
+ *
+ * Vendored type conversion utilities from pg_duckdb.
+ * Simplified to support only types needed for DuckLake metadata operations.
+ */
 
 #include "pgducklake/pgducklake_pg_types.hpp"
 

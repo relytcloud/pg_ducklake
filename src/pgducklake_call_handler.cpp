@@ -1,6 +1,8 @@
 /*
  * pgducklake_call_handler.cpp -- CALL statement handler for DuckDB routing.
  *
+ * @scope extension: CALL handler for ducklake_only_procedure procs
+ *
  * Handles CALL statements that pg_ducklake's utility hook intercepts.
  * Extracts arguments from the PG CallStmt, converts them to DuckDB SQL
  * literals, resolves regclass arguments to schema+table named parameters,

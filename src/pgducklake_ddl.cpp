@@ -1,9 +1,20 @@
 /*
  * pgducklake_ddl.cpp -- DDL synchronization between PostgreSQL and DuckLake.
  *
- * Forward (PG->DuckDB): event triggers capture PostgreSQL DDL and replay it
- * in DuckDB via duckdb.raw_query().
+ * @scope extension: ducklake_initialize, event triggers, procs
+ *   ducklake.set_partition and ducklake.reset_partition
+ *   TODO(#99): extract table DDL triggers into pgducklake_table.cpp,
+ *   partition procs into pgducklake_partition.cpp.
+ * @scope backend: syncing_from_metadata guard bool
+ * @scope duckdb-instance: DDL sync between PG and DuckDB, snapshot trigger
+ *   TODO(#99): extract sync framework (ducklake_snapshot_trigger,
+ *   SyncNewTables, SyncDroppedTables) into pgducklake_sync.cpp with a
+ *   registration mechanism for per-object-type sync handlers.
  *
+ * ducklake_initialize() bootstraps the DuckDB catalog during CREATE EXTENSION.
+ *
+ * Forward (PG->DuckDB): event triggers capture PostgreSQL DDL and replay
+ * it in DuckDB via duckdb.raw_query().
  * Reverse (DuckDB->PG): the snapshot trigger (ducklake_snapshot_trigger)
  * detects tables created/dropped by external DuckDB clients and syncs
  * pg_class entries.  Table sync is handled by SyncNewTables/SyncDroppedTables;
@@ -40,7 +51,6 @@ extern "C" {
 #include "executor/spi.h"
 #include "fmgr.h"
 #include "nodes/value.h"
-#include "parser/parse_func.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
 #include "utils/guc.h"
@@ -57,68 +67,6 @@ namespace pgducklake {
  * Also checked by the utility hook to skip DuckDB execution when creating
  * ducklake_sorted indexes during sync. */
 bool syncing_from_metadata = false;
-
-
-static Oid GetRawQueryFuncOid() {
-  static Oid cached = InvalidOid;
-  if (!OidIsValid(cached)) {
-    List *funcname = list_make2(makeString(pstrdup("duckdb")),
-                                makeString(pstrdup("raw_query")));
-    Oid argtypes[] = {TEXTOID};
-    cached = LookupFuncName(funcname, 1, argtypes, false);
-    list_free(funcname);
-  }
-  return cached;
-}
-
-static void DuckdbRawQuery(const char *query) {
-  OidFunctionCall1(GetRawQueryFuncOid(), CStringGetTextDatum(query));
-}
-
-/*
- * Execute a DuckDB query via pg_duckdb's duckdb.raw_query() UDF.
- * Ensures the DuckLake catalog is attached first.
- *
- * Returns 0 on success, 1 on error.
- * On error, sets *errmsg_out to the error message (if non-null).
- */
-int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
-  static thread_local std::string last_error;
-
-  // Volatile to survive PG_CATCH longjmp
-  volatile int result = 0;
-  MemoryContext saved_context = CurrentMemoryContext;
-
-  // Suppress NOTICE messages from duckdb.raw_query() which unconditionally
-  // emits "result: ..." via elog(NOTICE).
-  //
-  // FIXME: should we modify pg_duckdb?
-  auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION);
-
-  PG_TRY();
-  {
-    DuckdbRawQuery(query);
-  }
-  PG_CATCH();
-  {
-    MemoryContextSwitchTo(saved_context);
-    ErrorData *edata = CopyErrorData();
-    FlushErrorState();
-
-    last_error = edata->message ? edata->message : "unknown error";
-    FreeErrorData(edata);
-
-    if (errmsg_out)
-      *errmsg_out = last_error.c_str();
-    result = 1;
-  }
-  PG_END_TRY();
-
-  AtEOXact_GUC(false, save_nestlevel);
-
-  return result;
-}
 
 } // namespace pgducklake
 

@@ -1,6 +1,8 @@
 /*
  * pgducklake_freeze.cpp -- Export DuckLake metadata to a standalone .ducklake file.
  *
+ * @scope extension: proc ducklake.freeze
+ *
  * Copies all 22 ducklake_* metadata tables from PostgreSQL into a new DuckDB
  * database file, producing a "frozen" snapshot that DuckDB clients can query
  * directly without PostgreSQL.

@@ -2,14 +2,17 @@
  * pgducklake_duckdb.cpp -- DuckLake catalog lifecycle in DuckDB
  *
  * Manages the "pgducklake" DuckLake catalog attached inside DuckDB.
- * Two lifecycles exist:
+ * Three lifecycles exist:
+ *
+ *   _PG_init() (once per backend):
+ *     DuckLakeMetadataManager::Register("pgducklake", ...)
  *
  *   First CREATE EXTENSION (DuckDB not yet initialized):
  *     ducklake_initialize()          -- SQL script entry point
  *       -> ExecuteDuckDBQuery("SELECT 1")
  *           -> DuckDBManager::Initialize()
  *               -> ducklake_load_extension()   [callback from pg_duckdb]
- *                   -> LoadStaticExtension, Register metadata manager
+ *                   -> LoadStaticExtension
  *                   -> ducklake_attach_catalog()
  *
  *   DROP + CREATE EXTENSION (DuckDB already alive):
@@ -27,8 +30,9 @@
  *     next query
  *       -> DuckDBManager::Initialize()
  *           -> ducklake_load_extension()         [callback from pg_duckdb]
- *               -> LoadStaticExtension, skip metadata manager (already registered)
+ *               -> LoadStaticExtension
  *               -> ducklake_attach_catalog()
+ *     (metadata manager already registered in _PG_init, no re-registration)
  *
  * Query execution against DuckDB is handled via pg_duckdb's raw_query() UDF
  * through PostgreSQL's SPI in the PostgreSQL-facing translation units.
@@ -38,12 +42,10 @@
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_functions.hpp"
-#include "pgducklake/pgducklake_metadata_manager.hpp"
 #include "pgducklake/pgducklake_time_travel.hpp"
 
 #include "duckdb/main/database.hpp"
 #include "ducklake_extension.hpp"
-#include "storage/ducklake_metadata_manager.hpp"
 
 #include <filesystem>
 
@@ -108,15 +110,5 @@ void ducklake_load_extension(duckdb::DuckDB &db) {
   pgducklake::RegisterCleanupFunction(*db.instance);
   pgducklake::RegisterFlushInlinedDataFunction(*db.instance);
 
-  /* The metadata manager registry is a process-global static map that
-   * survives DuckDB instance destruction (e.g. duckdb.recycle_ddb()).
-   * Register only once per backend lifetime. */
-  static bool metadata_manager_registered = false;
-  if (!metadata_manager_registered) {
-    duckdb::DuckLakeMetadataManager::Register(
-        PGDUCKLAKE_DUCKDB_CATALOG,
-        pgducklake::PgDuckLakeMetadataManager::Create);
-    metadata_manager_registered = true;
-  }
   ducklake_attach_catalog();
 }

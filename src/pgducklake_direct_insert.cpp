@@ -1,6 +1,9 @@
 /*
  * pgducklake_direct_insert.cpp
  *
+ * @scope backend: register custom scan node methods; cached ducklake AM OID
+ * @scope duckdb-instance: per-statement scan state (snapshot, row IDs)
+ *
  * Optimization for INSERT ... SELECT UNNEST($1), UNNEST($2), ... pattern.
  *
  * Bypasses DuckDB execution by detecting the pattern at planner time and

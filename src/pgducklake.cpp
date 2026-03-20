@@ -5,6 +5,10 @@
  * callback registration, and pg_ducklake hook initialization.
  */
 
+#include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_metadata_manager.hpp"
+#include "storage/ducklake_metadata_manager.hpp"
+
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
@@ -33,6 +37,10 @@ PG_MODULE_MAGIC;
 #endif
 
 void _PG_init(void) {
+  // Register metadata manager factory in DuckLake's process-global registry.
+  duckdb::DuckLakeMetadataManager::Register(
+      PGDUCKLAKE_DUCKDB_CATALOG,
+      pgducklake::PgDuckLakeMetadataManager::Create);
   // Register callback for deferred static extension loading
   pgduckdb::RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register pg_ducklake's DuckDB-only functions with pg_duckdb's metadata cache

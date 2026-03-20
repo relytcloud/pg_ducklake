@@ -1,5 +1,7 @@
 /*
- * pgducklake_vacuum.cpp — VACUUM support for DuckLake tables
+ * pgducklake_vacuum.cpp -- VACUUM support for DuckLake tables.
+ *
+ * @scope extension: ducklake table AM relation_vacuum callback
  *
  * Implements VACUUM by calling DuckDB's ducklake_rewrite_data_files() and
  * ducklake_merge_adjacent_files() functions via duckdb.raw_query().

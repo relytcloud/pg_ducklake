@@ -1,6 +1,10 @@
 /*
  * pgducklake_functions.cpp -- DuckLake function exposing.
  *
+ * @scope backend: register DuckDB-only function names with pg_duckdb
+ * @scope duckdb-instance: register wrapper macros, cleanup and flush
+ *   table functions in DuckDB catalog
+ *
  * Exposes upstream DuckLake functions as PostgreSQL functions in the
  * `ducklake` schema. Two layers are involved:
  *

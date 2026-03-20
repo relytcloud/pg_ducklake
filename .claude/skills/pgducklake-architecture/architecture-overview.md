@@ -21,6 +21,8 @@
 
 Reason: static extension loading requires fully initialized DuckDB instance; metadata manager registration does not.
 
+For the full scope hierarchy (backend > process-global > DuckDB instance > extension > transaction > SPI query) and per-file classification, see [lifecycle-scopes.md](lifecycle-scopes.md).
+
 ## DDL path
 
 DDL is executed by PostgreSQL, then `ducklake_<ddl>_trigger` is called to handle DDL operations (see @src/pgducklake_ddl.cpp).

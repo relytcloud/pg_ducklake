@@ -1,5 +1,7 @@
 /*
- * pgducklake_hooks.cpp
+ * pgducklake_hooks.cpp -- Planner and utility hooks.
+ *
+ * @scope backend: install planner and utility hooks
  *
  * Installs pg_ducklake planner and utility hooks.
  *
