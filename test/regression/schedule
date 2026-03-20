@@ -1,4 +1,5 @@
 test: initialization
+test: recycle_ddb
 test: ddl_triggers
 test: basic
 test: transaction
