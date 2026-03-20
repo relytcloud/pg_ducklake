@@ -3,8 +3,13 @@
  *
  * @scope extension: ducklake_initialize, event triggers, procs
  *   ducklake.set_partition and ducklake.reset_partition
+ *   TODO(#99): extract table DDL triggers into pgducklake_table.cpp,
+ *   partition procs into pgducklake_partition.cpp.
  * @scope backend: syncing_from_metadata guard bool
  * @scope duckdb-instance: DDL sync between PG and DuckDB, snapshot trigger
+ *   TODO(#99): extract sync framework (ducklake_snapshot_trigger,
+ *   SyncNewTables, SyncDroppedTables) into pgducklake_sync.cpp with a
+ *   registration mechanism for per-object-type sync handlers.
  *
  * ducklake_initialize() bootstraps the DuckDB catalog during CREATE EXTENSION.
  *

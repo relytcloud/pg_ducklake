@@ -5,6 +5,9 @@
  *   and ducklake.reset_sort
  * @scope backend: sort_synced_from_pg guard bool
  * @scope duckdb-instance: sync sorted indexes between DuckDB and pg_class
+ *   TODO(#99): register SyncSortKeys as a sync handler with
+ *   pgducklake_sync.cpp's registration mechanism. All sorted index logic
+ *   stays in this file.
  *
  * Provides a minimal IndexAmRoutine so that CREATE INDEX ... USING
  * ducklake_sorted registers a real pg_class entry. The index stores no data

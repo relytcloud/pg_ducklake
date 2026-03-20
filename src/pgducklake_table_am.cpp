@@ -2,6 +2,8 @@
  * pgducklake_table_am.cpp -- Table access method surface for DuckLake tables.
  *
  * @scope extension: ducklake table AM handler and callbacks
+ *   TODO(#99): merge table DDL triggers (create/drop/alter) from
+ *   pgducklake_ddl.cpp here to form pgducklake_table.cpp.
  *
  * Provides a PostgreSQL TableAM implementation used for routing and compatibility,
  * delegating unsupported paths and integrating VACUUM hooks where needed.
