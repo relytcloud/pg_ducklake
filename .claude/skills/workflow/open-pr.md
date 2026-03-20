@@ -38,15 +38,12 @@ If already on a non-main branch, just push.
 
 ### 4. Open the PR
 
-Use `gh pr create`. Write a concise title (<70 chars) and a body with Summary + Test plan sections. Use a HEREDOC for the body:
+Use `gh pr create`. Write a concise title (<70 chars) and a body with a Summary section. Only include a Test plan section if the PR adds or changes tests. Use a HEREDOC for the body:
 
 ```bash
 gh pr create --title "<title>" --body "$(cat <<'EOF'
 ## Summary
 <1-3 bullet points summarizing all commits>
-
-## Test plan
-<bulleted checklist>
 
 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
