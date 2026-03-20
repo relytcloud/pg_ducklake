@@ -1,0 +1,28 @@
+-- Verify DuckLake works after duckdb.recycle_ddb() destroys and
+-- recreates the DuckDB instance (GitHub issue #81).
+CREATE TABLE t (a int, b text) USING ducklake;
+INSERT INTO t VALUES (1, 'before');
+SELECT * FROM t;
+ a |   b    
+---+--------
+ 1 | before
+(1 row)
+
+CALL duckdb.recycle_ddb();
+-- The metadata manager factory is registered in a process-global static
+-- map, so it survives the recycle. The catalog must be re-attached.
+SELECT * FROM t;
+ a |   b    
+---+--------
+ 1 | before
+(1 row)
+
+INSERT INTO t VALUES (2, 'after');
+SELECT * FROM t ORDER BY a;
+ a |   b    
+---+--------
+ 1 | before
+ 2 | after
+(2 rows)
+
+DROP TABLE t;

@@ -21,6 +21,15 @@
  *           -> ExecuteDuckDBQuery("SELECT 1")   (no-op, DuckDB exists)
  *           -> ducklake_attach_catalog()        (catalog was detached)
  *
+ *   duckdb.recycle_ddb() (DuckDB instance destroyed and recreated):
+ *     recycle_ddb()
+ *       -> DuckDBManager::Reset()               [destroys DuckDB instance]
+ *     next query
+ *       -> DuckDBManager::Initialize()
+ *           -> ducklake_load_extension()         [callback from pg_duckdb]
+ *               -> LoadStaticExtension, skip metadata manager (already registered)
+ *               -> ducklake_attach_catalog()
+ *
  * Query execution against DuckDB is handled via pg_duckdb's raw_query() UDF
  * through PostgreSQL's SPI in the PostgreSQL-facing translation units.
  */
@@ -99,7 +108,15 @@ void ducklake_load_extension(duckdb::DuckDB &db) {
   pgducklake::RegisterCleanupFunction(*db.instance);
   pgducklake::RegisterFlushInlinedDataFunction(*db.instance);
 
-  duckdb::DuckLakeMetadataManager::Register(
-      PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
+  /* The metadata manager registry is a process-global static map that
+   * survives DuckDB instance destruction (e.g. duckdb.recycle_ddb()).
+   * Register only once per backend lifetime. */
+  static bool metadata_manager_registered = false;
+  if (!metadata_manager_registered) {
+    duckdb::DuckLakeMetadataManager::Register(
+        PGDUCKLAKE_DUCKDB_CATALOG,
+        pgducklake::PgDuckLakeMetadataManager::Create);
+    metadata_manager_registered = true;
+  }
   ducklake_attach_catalog();
 }
