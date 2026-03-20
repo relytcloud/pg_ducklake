@@ -22,25 +22,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Compute build matrix: main-branch push builds only pg-18/amd64 for speed;
+  # Compute build matrix: main-branch push builds only pg-18 for speed;
   # cron, tags, PRs, and workflow_dispatch build all versions and arches.
   setup:
     runs-on: ubuntu-24.04
     outputs:
       build_matrix: ${{ steps.m.outputs.build_matrix }}
       merge_matrix: ${{ steps.m.outputs.merge_matrix }}
-      is_main_push: ${{ steps.m.outputs.is_main_push }}
     steps:
       - id: m
         run: |
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo 'build_matrix={"postgres":["18"],"runner":["ubuntu-24.04"]}' >> "$GITHUB_OUTPUT"
+            echo 'build_matrix={"postgres":["18"],"runner":["ubuntu-24.04","ubuntu-24.04-arm"]}' >> "$GITHUB_OUTPUT"
             echo 'merge_matrix={"postgres":["18"]}' >> "$GITHUB_OUTPUT"
-            echo 'is_main_push=true' >> "$GITHUB_OUTPUT"
           else
             echo 'build_matrix={"postgres":["14","15","16","17","18"],"runner":["ubuntu-24.04","ubuntu-24.04-arm"]}' >> "$GITHUB_OUTPUT"
             echo 'merge_matrix={"postgres":["14","15","16","17","18"]}' >> "$GITHUB_OUTPUT"
-            echo 'is_main_push=false' >> "$GITHUB_OUTPUT"
           fi
 
   docker_build:
@@ -288,11 +285,9 @@ jobs:
           fi
 
           SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}"
+          SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
           SLIM_SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-slim-amd64-${{ github.sha }}"
-          if [[ "${{ needs.setup.outputs.is_main_push }}" != "true" ]]; then
-            SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
-            SLIM_SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-slim-arm64-${{ github.sha }}"
-          fi
+          SLIM_SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-slim-arm64-${{ github.sha }}"
 
           echo "Promoting full image to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
           docker buildx imagetools create \
