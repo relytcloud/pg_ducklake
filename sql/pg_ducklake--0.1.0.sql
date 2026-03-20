@@ -476,6 +476,22 @@ AS 'MODULE_PATHNAME', 'ducklake_freeze'
 LANGUAGE C;
 
 -- ============================================================
+-- Variant Type
+-- ============================================================
+
+-- DuckDB-only column type for ducklake tables.
+-- I/O functions store text representation; actual data is handled by DuckDB.
+CREATE FUNCTION ducklake._variant_in(cstring) RETURNS ducklake.variant
+    AS 'MODULE_PATHNAME', 'ducklake_variant_in' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake._variant_out(ducklake.variant) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'ducklake_variant_out' LANGUAGE C IMMUTABLE STRICT;
+CREATE TYPE ducklake.variant (
+    INTERNALLENGTH = VARIABLE,
+    INPUT = ducklake._variant_in,
+    OUTPUT = ducklake._variant_out
+);
+
+-- ============================================================
 -- Bootstrap
 -- ============================================================
 

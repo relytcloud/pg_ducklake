@@ -56,6 +56,7 @@ extern "C" {
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/syscache.h"
 #include "utils/timestamp.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
@@ -67,6 +68,21 @@ namespace pgducklake {
  * Also checked by the utility hook to skip DuckDB execution when creating
  * ducklake_sorted indexes during sync. */
 bool syncing_from_metadata = false;
+
+/* Cached OID for ducklake.variant type */
+static Oid variant_type_oid = InvalidOid;
+
+static Oid GetVariantTypeOid() {
+  if (!OidIsValid(variant_type_oid)) {
+    Oid nsp_oid = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
+    if (OidIsValid(nsp_oid)) {
+      variant_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
+                                         CStringGetDatum("variant"),
+                                         ObjectIdGetDatum(nsp_oid));
+    }
+  }
+  return variant_type_oid;
+}
 
 } // namespace pgducklake
 
@@ -145,7 +161,26 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   /* if we selected a row it was a duckdb table */
   auto is_ducklake_table = SPI_processed > 0;
   if (!is_ducklake_table) {
-    /* No DuckDB tables were created so we don't need to do anything */
+    /* Reject variant columns on non-ducklake tables */
+    Oid variant_oid = pgducklake::GetVariantTypeOid();
+    if (OidIsValid(variant_oid)) {
+      StringInfoData check_sql;
+      initStringInfo(&check_sql);
+      appendStringInfo(&check_sql,
+          "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
+          "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
+          "WHERE cmds.object_type = 'table' "
+          "AND a.attnum > 0 AND NOT a.attisdropped "
+          "AND a.atttypid = %u LIMIT 1",
+          variant_oid);
+      ret = SPI_exec(check_sql.data, 1);
+      pfree(check_sql.data);
+      if (ret == SPI_OK_SELECT && SPI_processed > 0)
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("ducklake.variant type can only be used with "
+                        "ducklake access method")));
+    }
     AtEOXact_GUC(false, save_nestlevel);
     SPI_finish();
     PG_RETURN_NULL();
@@ -474,6 +509,26 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
     elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
 
   if (SPI_processed == 0) {
+    /* Reject variant columns added to non-ducklake tables */
+    Oid variant_oid = pgducklake::GetVariantTypeOid();
+    if (OidIsValid(variant_oid)) {
+      StringInfoData check_sql;
+      initStringInfo(&check_sql);
+      appendStringInfo(&check_sql,
+          "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
+          "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
+          "WHERE cmds.object_type IN ('table', 'table column') "
+          "AND a.attnum > 0 AND NOT a.attisdropped "
+          "AND a.atttypid = %u LIMIT 1",
+          variant_oid);
+      ret = SPI_exec(check_sql.data, 1);
+      pfree(check_sql.data);
+      if (ret == SPI_OK_SELECT && SPI_processed > 0)
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("ducklake.variant type can only be used with "
+                        "ducklake access method")));
+    }
     AtEOXact_GUC(false, save_nestlevel);
     SPI_finish();
     PG_RETURN_NULL();
@@ -591,6 +646,8 @@ static std::string DuckLakeTypeToPgType(const char *dl_type) {
     case duckdb::LogicalTypeId::INTERVAL:
       pg_type = INTERVALOID;
       break;
+    case duckdb::LogicalTypeId::VARIANT:
+      return "ducklake.variant";
     default:
       return "text";
     }

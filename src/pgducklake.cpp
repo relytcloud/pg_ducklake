@@ -45,6 +45,8 @@ void _PG_init(void) {
   pgduckdb::RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register pg_ducklake's DuckDB-only functions with pg_duckdb's metadata cache
   pgducklake::RegisterDuckdbOnlyFunctions();
+  // Register ducklake.variant as a passthrough type (OID resolved lazily)
+  pgduckdb::RegisterPassthroughType(PGDUCKLAKE_PG_SCHEMA, "variant", "VARIANT");
   // Register DuckLake GUCs
   pgducklake::RegisterGUCs();
   // Register custom scan node methods
