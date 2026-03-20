@@ -1,8 +1,3 @@
----
-name: open-pr
-description: Create a new branch from local commits, push to remote, and open a GitHub PR. Trigger when the user says things like "open a PR", "push and create PR", "submit this as a PR", "create a pull request", or any variation involving branch creation + push + PR opening.
----
-
 # Open PR
 
 Create a branch, push, and open a GitHub pull request from local commits.
@@ -43,17 +38,14 @@ If already on a non-main branch, just push.
 
 ### 4. Open the PR
 
-Use `gh pr create`. Write a concise title (<70 chars) and a body with Summary + Test plan sections. Use a HEREDOC for the body:
+Use `gh pr create`. Write a concise title (<70 chars) and a body with a Summary section. Only include a Test plan section if the PR adds or changes tests. Use a HEREDOC for the body:
 
 ```bash
 gh pr create --title "<title>" --body "$(cat <<'EOF'
 ## Summary
 <1-3 bullet points summarizing all commits>
 
-## Test plan
-<bulleted checklist>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```

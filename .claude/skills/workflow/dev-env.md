@@ -1,9 +1,3 @@
----
-name: pgducklake-dev-env
-description: Set up and manage the local dev environment for pg_ducklake. Use whenever the user asks to set up the dev environment, create a new git worktree, initialize submodules, or install PostgreSQL versions. Trigger for phrases like "set up dev env", "create worktree", "new worktree", "init submodules", "install pg", "setup postgres", or any local environment configuration task. Also trigger proactively if the user describes a fresh clone or says they can't build/run tests.
-user-invocable: true
----
-
 # pg_ducklake Dev Environment
 
 Interactive playbook -- follow steps in order, detect current state, skip what is
@@ -180,6 +174,29 @@ submodules. `foreach --recursive` visits parents before children.
 If the main worktree's submodules are not initialized, fall back to
 `git submodule update --init --recursive --depth=1` (slow, downloads
 from remote).
+
+### Removing a worktree
+
+Remove submodule worktrees first (reverse of setup), then the root.
+This avoids stale entries -- no pruning needed.
+
+```bash
+MAIN=$(git worktree list --porcelain | awk 'NR==1{print $2}')
+WT=<worktree-to-remove>
+
+# Remove submodule worktrees (children before parents via tac)
+git -C "$MAIN" submodule foreach --recursive --quiet \
+    'echo "$toplevel/$sm_path"' | tac | while read abs_path; do
+    rel_path="${abs_path#$MAIN/}"
+    gitdir=$(git -C "$abs_path" rev-parse --git-dir)
+    case "$gitdir" in /*) ;; *) gitdir="$abs_path/$gitdir" ;; esac
+    git -C "$gitdir" worktree remove "$WT/$rel_path" --force 2>/dev/null
+done
+
+# Remove the root worktree
+git worktree remove "$WT" --force
+```
+
 
 ### PG install for new worktree
 

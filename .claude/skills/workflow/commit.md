@@ -1,11 +1,6 @@
----
-name: commit-message-format
-description: Use this skill whenever you need to create a git commit message for this repository. This skill defines the commit message format, style, and conventions for pg_ducklake. Always consult this before running git commit.
----
-
 # Commit Message Format
 
-This skill defines how to craft commit messages for the pg_ducklake repository.
+How to craft commit messages for the pg_ducklake repository.
 
 ## Format: Conventional Commits
 
@@ -139,7 +134,7 @@ EOF
 
 When `third_party/pg_duckdb` (or any submodule) is modified, **commit
 the submodule pointer bump together with the pg_ducklake changes that
-depend on it**. This keeps the change atomic — the new export and its
+depend on it**. This keeps the change atomic -- the new export and its
 consumer land in one reviewable unit:
 
 ```bash
