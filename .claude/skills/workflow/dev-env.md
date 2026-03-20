@@ -1,9 +1,3 @@
----
-name: pgducklake-dev-env
-description: Set up and manage the local dev environment for pg_ducklake. Use whenever the user asks to set up the dev environment, create a new git worktree, initialize submodules, or install PostgreSQL versions. Trigger for phrases like "set up dev env", "create worktree", "new worktree", "init submodules", "install pg", "setup postgres", or any local environment configuration task. Also trigger proactively if the user describes a fresh clone or says they can't build/run tests.
-user-invocable: true
----
-
 # pg_ducklake Dev Environment
 
 Interactive playbook -- follow steps in order, detect current state, skip what is

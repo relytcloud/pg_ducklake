@@ -1,8 +1,3 @@
----
-name: open-pr
-description: Create a new branch from local commits, push to remote, and open a GitHub PR. Trigger when the user says things like "open a PR", "push and create PR", "submit this as a PR", "create a pull request", or any variation involving branch creation + push + PR opening.
----
-
 # Open PR
 
 Create a branch, push, and open a GitHub pull request from local commits.
@@ -53,7 +48,7 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 ## Test plan
 <bulleted checklist>
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```
