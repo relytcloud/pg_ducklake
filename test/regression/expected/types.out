@@ -2,8 +2,8 @@
 -- Verifies the three type categories:
 --   1. Native: inlined as-is (same PG type in inlined table)
 --   2. Not native: ducklake query returns normal values; inlined table uses different PG type
---   3. No inline: VARIANT/GEOMETRY -- cannot be tested through PG DDL (no PG equivalent type)
---      and duckdb.raw_query runs without the ducklake catalog attached.
+--   3. No inline: VARIANT (see variant.sql) / GEOMETRY -- no data inlining.
+--      GEOMETRY has no PG equivalent type and cannot be tested through PG DDL.
 --
 -- See docs/data_types.md for the full type mapping.
 CALL ducklake.set_option('data_inlining_row_limit', 100);

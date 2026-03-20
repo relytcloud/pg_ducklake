@@ -36,5 +36,7 @@ bool DuckdbSetForceExecution(bool value);
 bool DuckdbEnsureCacheValid(void);
 void RegisterDuckdbOnlyExtension(const char *extension_name);
 void RegisterDuckdbOnlyFunction(const char *function_name);
+void RegisterPassthroughType(const char *pg_schema, const char *pg_type_name, const char *duckdb_type_name);
+const char *GetPassthroughTypeName(Oid pg_type_oid);
 
 } // namespace pgduckdb

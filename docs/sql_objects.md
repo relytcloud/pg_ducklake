@@ -22,6 +22,12 @@ All objects created by `pg_ducklake--0.1.0.sql`.
 
 Default operator classes are registered for common types (bool, int2, int4, int8, float4, float8, numeric, text, varchar, bpchar, date, timestamp, timestamptz, interval, uuid, oid, bytea) in the `ducklake.sorted_ops` operator family.
 
+## Types
+
+| Type | Purpose |
+|------|---------|
+| `ducklake.variant` | DuckDB VARIANT column type for ducklake tables; PG stores text representation, DuckDB handles actual data |
+
 ## Event Triggers
 
 | Event Trigger | Handler | Event | Tags |
