@@ -1,3 +1,8 @@
+---
+name: workflow-ci
+description: "Push to remote, trigger GitHub Actions, monitor, and fix CI failures."
+---
+
 # CI Push & Monitor
 
 Commit changes, push to a remote branch, trigger GitHub Actions, monitor execution, and handle failures.
@@ -15,7 +20,7 @@ git log --oneline -10
 
 ### 2. Craft Commit Message
 
-Use `commit.md` conventions to create a proper Conventional Commits message.
+Use `workflow-commit` skill conventions to create a proper Conventional Commits message.
 
 ### 3. Commit Changes
 

@@ -1,3 +1,8 @@
+---
+name: workflow-open-pr
+description: "Create branch, push, and open a GitHub PR from local commits."
+---
+
 # Open PR
 
 Create a branch, push, and open a GitHub pull request from local commits.
@@ -45,7 +50,9 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 ## Summary
 <1-3 bullet points summarizing all commits>
 
-Generated with [Claude Code](https://claude.com/claude-code)
+## Test plan (Optional)
+<bullet points summarizing added or changed tests>
+
 EOF
 )"
 ```

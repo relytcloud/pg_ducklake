@@ -9,12 +9,16 @@ Its C++ code should use `namespace pgducklake`.
 - header files in `include/`
 - implement files in `src/`
   - `src/pgducklake.cpp`: `_PG_init`, extension bootstrap
-  - `src/pgducklake_duckdb.cpp`: DuckDB bridge, static extension load
+  - `src/pgducklake_duckdb.cpp`: DuckDB bridge, deferred static extension load
   - `src/pgducklake_metadata_manager.cpp`: custom DuckLake metadata manager
+  - `src/pgducklake_ddl.cpp`: create/drop event triggers, DuckDDL synchronization
+  - `src/pgducklake_table_am.cpp`: table access method registration
 - regression tests in `test/regression/`
 - isolation tests in `test/isolation/`
 
 ## Build and Test Commands
+
+See `workflow-dev-env` skill for full dev environment setup (ccache, PostgreSQL from source, submodules, worktrees).
 
 `PG_CONFIG` is required. Usually a local pg is installed under workdir, e.g. `PG_CONFIG=$(pwd)/pg-17/bin/pg_config`, to avoid conflicts with other worktrees. If neither local pg nor global pg is found, stop and ask user.
 

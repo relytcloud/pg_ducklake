@@ -1,3 +1,9 @@
+---
+name: workflow-dev-env
+description: "Dev environment setup: build tools, PostgreSQL, submodules, worktrees. Always import on EnterWorktree/ExitWorktree."
+user-invocable: true
+---
+
 # pg_ducklake Dev Environment
 
 Interactive playbook -- follow steps in order, detect current state, skip what is

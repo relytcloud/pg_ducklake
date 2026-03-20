@@ -1,3 +1,8 @@
+---
+name: workflow-commit
+description: "Commit message conventions (Conventional Commits). Consult before every git commit."
+---
+
 # Commit Message Format
 
 How to craft commit messages for the pg_ducklake repository.
