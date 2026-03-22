@@ -294,7 +294,9 @@ static bool TryDetectDirectInsertPattern(Query *parse,
   // Check 4: Target table must use ducklake access method
   static Oid ducklake_am_oid = InvalidOid;
   if (!OidIsValid(ducklake_am_oid))
-    ducklake_am_oid = get_am_oid("ducklake", false);
+    ducklake_am_oid = get_am_oid("ducklake", true);
+  if (!OidIsValid(ducklake_am_oid))
+    return false;
   Relation target_rel = relation_open(target_oid, AccessShareLock);
   Oid am_oid = target_rel->rd_rel->relam;
 
