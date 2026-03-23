@@ -12,6 +12,22 @@ description: "Code style, import order, submodule policy, and docs conventions. 
 - Only include comments that are essential to understanding functionality or convey non-obvious information
 - **ASCII only** in all source files, SQL tests, and expected output -- no emojis, no Unicode dashes/quotes (use `-`, `--`, `'`, `"`)
 
+## Lifecycle Scope Decision Guide
+
+When adding new state, ask:
+
+1. **Is it a C++ static variable or static class member?** Register in
+   `_PG_init()` (backend process). It survives DuckDB recycle.
+
+2. **Does it depend on the DuckDB instance?** Register on `db.instance`
+   in `ducklake_load_extension()` (DuckDB instance). It will be
+   re-created on recycle automatically.
+
+3. **Is it SQL catalog state?** Put it in the extension SQL script
+   (PG extension). It is created by `CREATE EXTENSION`.
+
+Maintain @scope in the header comment.
+
 ## C/C++
 
 - Avoid using `extern "C"` to reference symbols from the same library. Instead, place it at the header file.
@@ -73,9 +89,25 @@ README.md
 
 Every new doc file must be linked from `docs/README.md`. Keep synced with code:
 
-- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--0.1.0.sql`, update `docs/sql_objects.md`.
+- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--*.sql`, update `docs/sql_objects.md`.
 - In reference docs, order TOC tables alphabetically; keep detailed descriptions in logical order.
 
 ## Miscellaneous
 
 - When modifying multiple files, run file modification tasks in parallel whenever possible, instead of processing them sequentially
+- Prefer additive changes to extension lifecycle.
+
+### Mixed-write guard
+
+`pg_duckdb` tracks command IDs to block mixed PostgreSQL/DuckDB writes in one transaction. DuckLake metadata flows can look like mixed writes even when they are internal extension operations.
+
+`UnsafeCommandIdGuard` synchronizes pg_duckdb's expected command ID around these operations.
+
+Use it in code paths where internal SPI writes or DDL-triggered DuckDB writes would otherwise trip detection.
+
+Known use sites:
+
+- metadata query execution path (@src/pgducklake_metadata_manager.cpp)
+- create/drop trigger paths (@src/pgducklake_ddl.cpp)
+
+Do not remove guard usage without verifying transaction-safety and mixed-write behavior end-to-end.

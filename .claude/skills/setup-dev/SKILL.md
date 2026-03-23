@@ -1,10 +1,10 @@
 ---
-name: workflow-dev-env
+name: setup-dev
 description: "Dev environment setup: build tools, PostgreSQL, submodules, worktrees. Always import on EnterWorktree/ExitWorktree."
 user-invocable: true
 ---
 
-# pg_ducklake Dev Environment
+# Setup Dev Environment
 
 Interactive playbook -- follow steps in order, detect current state, skip what is
 already done, and present options to the user via `AskUserQuestion`.
@@ -150,68 +150,52 @@ This is all that is needed. The Makefile also auto-inits submodules on
 **Time**: 5-10 min on first run (duckdb submodule is large even with
 shallow clone).
 
-### New git worktree
+### Submodule worktrees (automated via hooks)
 
-Git submodules do NOT auto-populate in worktrees. After
-`git worktree add <path> <branch>`, the `third_party/` dirs are empty.
+`git worktree add` on a submodule gitdir silently overwrites
+`core.worktree` to point at the new worktree instead of the main one.
+Stale worktree entries also break `submodule foreach --recursive`.
 
-Use `git worktree add` on each submodule's git repo (under
-`.git/modules/`) to create a working tree at the new worktree's path.
-This shares the same object store -- zero network, zero extra disk,
-instant checkout. Works regardless of shallow/depth settings.
+Two hooks in `.claude/settings.json` handle this automatically:
 
-```bash
-MAIN=$(git worktree list --porcelain | awk 'NR==1{print $2}')
-WT=$(git rev-parse --show-toplevel)
+- **PostToolUse `EnterWorktree`** (`.claude/hooks/worktree-setup.sh`):
+  repairs broken gitdirs, then creates submodule worktrees with
+  `core.worktree` preservation.
+- **PreToolUse `ExitWorktree`** (`.claude/hooks/worktree-cleanup.sh`):
+  removes submodule worktree entries pointing to the current worktree,
+  then repairs any `core.worktree` that got corrupted. Only runs when
+  action is `"remove"`.
 
-git -C "$MAIN" submodule foreach --recursive --quiet \
-    'echo "$toplevel/$sm_path" "$sha1"' | while read abs_path commit; do
-    rel_path="${abs_path#$MAIN/}"
-    gitdir=$(git -C "$abs_path" rev-parse --git-dir)
-    case "$gitdir" in /*) ;; *) gitdir="$abs_path/$gitdir" ;; esac
-    rm -rf "$WT/$rel_path"
-    git -C "$gitdir" worktree add --detach "$WT/$rel_path" "$commit"
-done
-```
-
-No hardcoded submodule names -- works for any depth and any number of
-submodules. `foreach --recursive` visits parents before children.
-
-If the main worktree's submodules are not initialized, fall back to
-`git submodule update --init --recursive --depth=1` (slow, downloads
-from remote).
-
-### Removing a worktree
-
-Remove submodule worktrees first (reverse of setup), then the root.
-This avoids stale entries -- no pruning needed.
-
-```bash
-MAIN=$(git worktree list --porcelain | awk 'NR==1{print $2}')
-WT=<worktree-to-remove>
-
-# Remove submodule worktrees (children before parents via tac)
-git -C "$MAIN" submodule foreach --recursive --quiet \
-    'echo "$toplevel/$sm_path"' | tac | while read abs_path; do
-    rel_path="${abs_path#$MAIN/}"
-    gitdir=$(git -C "$abs_path" rev-parse --git-dir)
-    case "$gitdir" in /*) ;; *) gitdir="$abs_path/$gitdir" ;; esac
-    git -C "$gitdir" worktree remove "$WT/$rel_path" --force 2>/dev/null
-done
-
-# Remove the root worktree
-git worktree remove "$WT" --force
-```
+If the main worktree's submodules are not initialized, the setup hook
+has nothing to iterate. Fall back to
+`git submodule update --init --recursive --depth=1` in the main
+worktree first (slow, downloads from remote).
 
 
 ### PG install for new worktree
 
 The PG source worktrees at `~/.dev/pg-<VER>` already have compiled
-object files from the initial build. Just repeat Step 3's "Build and
-install" with the new worktree path -- ccache makes recompilation
-near-instant, only the install step does real work.
+object files from the initial build. Reconfigure with the new prefix
+and rebuild. **`make clean` is required** because PG bakes the
+`--prefix` path into binaries as rpaths — without it, old objects
+with the previous worktree's rpath get reused and executables fail
+at runtime with "Library not loaded".
 
-**Time**: ~1-2 min per version (ccache hits).
+```bash
+WT=$(git rev-parse --show-toplevel)
+NCPU=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+for VER in 14 18; do
+    pushd ~/.dev/pg-$VER
+    make clean
+    ./configure --prefix="$WT/pg-$VER" \
+        --without-icu --without-readline --without-libxml
+    make -j"$NCPU" && make install
+    popd
+done
+```
+
+**Time**: ~2-5 min per version (ccache hits on recompilation).
 
 ---
 

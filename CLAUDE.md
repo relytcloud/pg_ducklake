@@ -72,20 +72,6 @@ Each source file declares its scopes in the header comment:
 
 These tags are the source of truth for per-file classification.
 
-#### Decision guide
-
-When adding new state, ask:
-
-1. **Is it a C++ static variable or static class member?** Register in
-   `_PG_init()` (backend process). It survives DuckDB recycle.
-
-2. **Does it depend on the DuckDB instance?** Register on `db.instance`
-   in `ducklake_load_extension()` (DuckDB instance). It will be
-   re-created on recycle automatically.
-
-3. **Is it SQL catalog state?** Put it in the extension SQL script
-   (PG extension). It is created by `CREATE EXTENSION`.
-
 ### DDL path
 
 DDL is executed by PostgreSQL, then `ducklake_<ddl>_trigger` is called to handle DDL operations (see @src/pgducklake_ddl.cpp).
@@ -96,31 +82,9 @@ Event triggers check events and synchronize corresponding DuckDB objects in `PGD
 DML containing ducklake objects is caught by `pg_duckdb` hooks (see `DuckdbInitHooks` in @third_party/pg_duckdb/src/pgduckdb_hooks.cpp).
 SQL is parsed and converted to DuckDB SQL by `DuckdbPlannerHook`, then passed to DuckDB for execution. Ducklake tables are converted to `pgducklake.<schema_name>.<table_name>` (`RegisterDuckdbTableAm`).
 
-### Mixed-write guard
-
-`pg_duckdb` tracks command IDs to block mixed PostgreSQL/DuckDB writes in one transaction. DuckLake metadata flows can look like mixed writes even when they are internal extension operations.
-
-`UnsafeCommandIdGuard` synchronizes pg_duckdb's expected command ID around these operations.
-
-Use it in code paths where internal SPI writes or DDL-triggered DuckDB writes would otherwise trip detection.
-
-Known use sites:
-
-- metadata query execution path (@src/pgducklake_metadata_manager.cpp)
-- create/drop trigger paths (@src/pgducklake_ddl.cpp)
-
-Do not remove guard usage without verifying transaction-safety and mixed-write behavior end-to-end.
-
-### Architecture guardrails
-
-- Keep `pgducklake_duckdb.cpp` PostgreSQL-header-free.
-- Keep metadata query routing through SPI unless intentionally redesigning it.
-- Prefer additive changes to extension lifecycle.
-- When adding static state, verify which lifecycle scope it belongs to using the decision guide above.
-
 ## Build and Test Commands
 
-See `workflow-dev-env` skill for full dev environment setup (ccache, PostgreSQL from source, submodules, worktrees). See `workflow-commit`, `pr`, and `fix-ci` skills for git/CI workflows.
+See `setup-dev` skill for full dev environment setup (ccache, PostgreSQL from source, submodules, worktrees). See `commit-message-format`, `pr`, and `fix-ci` skills for git/CI workflows.
 
 Supported PostgreSQL versions: 14, 15, 16, 17, 18.
 
@@ -145,27 +109,9 @@ Tests live in `test/regression/` (SQL regression) and `test/isolation/` (concurr
 
 ## Docs
 
-All docs are reachable from one of two entrypoints:
-
-### AI docs tree (`CLAUDE.md` entrypoint)
-
-```
-CLAUDE.md
-  +-- .claude/skills/*          AI workflow guidance
-  +-- src/*.cpp header comments  per-file purpose and usage
-  +-- test/regression/           self-documenting test cases
-  +-- test/isolation/            concurrency test cases
-```
-
-### Human docs tree (`README.md` entrypoint)
-
-```
-README.md
-  +-- docs/README.md      index of all human docs
-  +-- docs/*.md           all SQL objects, functions, and procedures
-```
+See `coding-rules` skill for the full docs tree and style guide.
 
 ## Miscellaneous
 
-- When exploring multiple files, run in parallel whenever possible, instead of processing them sequentially
+- When exploring multiple files, run in parallel whenever possible, instead of processing them sequentially.
 - **Never `cd` into subdirectories** in Bash commands — it changes the working directory for subsequent calls. Use subshells (`(cd third_party/pg_duckdb && git ...)`) or `pushd`/`popd` (`pushd third_party/pg_duckdb; git ...; popd`) to keep the working directory at the project root.

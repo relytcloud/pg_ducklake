@@ -1,5 +1,5 @@
 ---
-name: workflow-commit
+name: commit-message-format
 description: "Commit message conventions (Conventional Commits). Consult before every git commit."
 ---
 
