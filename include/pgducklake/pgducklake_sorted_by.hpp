@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "pgducklake/pgducklake_sync.hpp"
+
 #include <string>
 #include <vector>
 
@@ -18,8 +20,6 @@ extern "C" {
 }
 
 namespace pgducklake {
-
-extern bool syncing_from_metadata;
 
 /* When true, the snapshot trigger skips sort-key sync because set_sort/
  * reset_sort will handle the pg_class index directly after the DuckDB call. */
@@ -54,5 +54,9 @@ void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates,
 /* Single-table helpers (thin wrappers around SyncSortedIndexes). */
 void CreateSortedIndexForTable(Oid relid, const char *sort_spec);
 void DropSortedIndexForTable(Oid relid);
+
+/* Sync sort keys from DuckLake metadata for the given snapshot.
+ * Registered as a SyncHandler with the snapshot trigger framework. */
+void SyncSortKeys(const char *snapshot_id);
 
 } // namespace pgducklake
