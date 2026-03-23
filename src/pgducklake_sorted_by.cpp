@@ -4,10 +4,8 @@
  * @scope extension: ducklake_sorted index AM, procs ducklake.set_sort
  *   and ducklake.reset_sort
  * @scope backend: sort_synced_from_pg guard bool
- * @scope duckdb-instance: sync sorted indexes between DuckDB and pg_class
- *   TODO(#99): register SyncSortKeys as a sync handler with
- *   pgducklake_sync.cpp's registration mechanism. All sorted index logic
- *   stays in this file.
+ * @scope duckdb-instance: sync sorted indexes between DuckDB and pg_class.
+ *   SyncSortKeys is registered as a sync handler with pgducklake_sync.cpp.
  *
  * Provides a minimal IndexAmRoutine so that CREATE INDEX ... USING
  * ducklake_sorted registers a real pg_class entry. The index stores no data
@@ -16,8 +14,8 @@
  *
  * Also contains: ducklake.set_sort/reset_sort SQL procedures,
  * HandleCreateSortedIndex, HandleDropSortedIndex, FindSortedIndexDrops,
- * and pg_class sync helpers called from pgducklake_hooks.cpp and
- * pgducklake_ddl.cpp.
+ * SyncSortKeys, and pg_class sync helpers called from pgducklake_hooks.cpp
+ * and pgducklake_sync.cpp.
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
@@ -25,11 +23,15 @@
 
 #include <duckdb/common/error_data.hpp> /* must precede postgres.h (FATAL macro) */
 
+#include "pgducklake/pgducklake_table.hpp"
+
 #include "pgducklake/pgducklake_sorted_by.hpp"
 #include "pgducklake/utility/cpp_wrapper.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 #include <string>
+
+#include <duckdb/common/string_util.hpp>
 
 extern "C" {
 #include "postgres.h"
@@ -54,8 +56,6 @@ extern "C" {
 #include "utils/syscache.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
-
-void EnsureDuckLakeTable(Oid relid);
 
 /* ================================================================
  * Index AM routines
@@ -619,6 +619,142 @@ void HandleDropSortedIndex(const std::vector<SortedIndexDrop> &drops) {
                              error_msg ? error_msg : "unknown error")));
   }
   PopActiveSnapshot();
+}
+
+/*
+ * Sync sort keys from DuckLake metadata: create/drop ducklake_sorted
+ * pg_class indexes to match sort_info changes in this snapshot.
+ * Caller must have an active SPI connection with syncing_from_metadata = true.
+ */
+void SyncSortKeys(const char *sid) {
+  /* Skip sort-key sync when sort was set from PostgreSQL (set_sort/
+   * CREATE INDEX already handled the pg_class index; re-running here
+   * would deadlock). */
+  if (sort_synced_from_pg)
+    return;
+
+  /* New sort keys set */
+  std::string query = duckdb::StringUtil::Format(R"(
+		SELECT s.schema_name, t.table_name,
+		       se.expression, se.sort_direction, se.null_order
+		FROM ducklake.ducklake_sort_info si
+		JOIN ducklake.ducklake_sort_expression se USING (sort_id)
+		JOIN ducklake.ducklake_table t ON si.table_id = t.table_id
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		WHERE si.begin_snapshot = %s
+		  AND t.end_snapshot IS NULL
+		  AND s.end_snapshot IS NULL
+		ORDER BY t.table_id, se.sort_key_index
+		)",
+                                                 sid);
+
+  int ret = SPI_exec(query.c_str(), 0);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  /* Collect (relid, sort_spec) pairs from SPI results, then batch-execute. */
+  std::vector<SortedIndexCreate> sort_creates;
+
+  if (SPI_processed > 0) {
+    struct SortKeyInfo {
+      std::string schema_name, table_name, expression, direction, null_order;
+    };
+    std::vector<SortKeyInfo> sort_keys;
+    for (uint64_t i = 0; i < SPI_processed; ++i) {
+      HeapTuple tup = SPI_tuptable->vals[i];
+      TupleDesc td = SPI_tuptable->tupdesc;
+      SortKeyInfo sk;
+      char *v;
+      v = SPI_getvalue(tup, td, 1);
+      sk.schema_name = v ? v : "";
+      v = SPI_getvalue(tup, td, 2);
+      sk.table_name = v ? v : "";
+      v = SPI_getvalue(tup, td, 3);
+      sk.expression = v ? v : "";
+      v = SPI_getvalue(tup, td, 4);
+      sk.direction = v ? v : "ASC";
+      v = SPI_getvalue(tup, td, 5);
+      sk.null_order = v ? v : "";
+      sort_keys.push_back(std::move(sk));
+    }
+
+    /* Group by table and build sort spec */
+    std::string prev_schema, prev_table, idx_cols;
+    auto flush = [&]() {
+      if (idx_cols.empty())
+        return;
+      Oid nsp_oid = get_namespace_oid(prev_schema.c_str(), true);
+      if (!OidIsValid(nsp_oid))
+        return;
+      Oid relid = get_relname_relid(prev_table.c_str(), nsp_oid);
+      if (!OidIsValid(relid))
+        return;
+      sort_creates.push_back({relid, std::move(idx_cols)});
+      idx_cols.clear();
+    };
+
+    for (auto &sk : sort_keys) {
+      if (sk.schema_name != prev_schema || sk.table_name != prev_table) {
+        flush();
+        prev_schema = sk.schema_name;
+        prev_table = sk.table_name;
+      }
+
+      if (!idx_cols.empty())
+        idx_cols += ", ";
+      idx_cols += sk.expression;
+      idx_cols += " ";
+      idx_cols += sk.direction;
+      if (!sk.null_order.empty()) {
+        if (sk.null_order == "NULLS_FIRST")
+          idx_cols += " NULLS FIRST";
+        else if (sk.null_order == "NULLS_LAST")
+          idx_cols += " NULLS LAST";
+      }
+    }
+    flush();
+  }
+
+  /* Sort keys reset */
+  query = duckdb::StringUtil::Format(R"(
+		SELECT DISTINCT s.schema_name, t.table_name
+		FROM ducklake.ducklake_sort_info si
+		JOIN ducklake.ducklake_table t ON si.table_id = t.table_id
+		JOIN ducklake.ducklake_schema s ON t.schema_id = s.schema_id
+		WHERE si.end_snapshot = %s
+		  AND t.end_snapshot IS NULL
+		  AND s.end_snapshot IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM ducklake.ducklake_sort_info si2
+		    WHERE si2.table_id = si.table_id
+		      AND si2.begin_snapshot = %s
+		  )
+		)",
+                                     sid, sid);
+
+  ret = SPI_exec(query.c_str(), 0);
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: %s", SPI_result_code_string(ret));
+
+  std::vector<Oid> sort_resets;
+  if (SPI_processed > 0) {
+    for (uint64_t i = 0; i < SPI_processed; ++i) {
+      HeapTuple tup = SPI_tuptable->vals[i];
+      TupleDesc td = SPI_tuptable->tupdesc;
+      char *schema = SPI_getvalue(tup, td, 1);
+      char *table = SPI_getvalue(tup, td, 2);
+      if (!schema || !table)
+        continue;
+      Oid nsp_oid = get_namespace_oid(schema, true);
+      if (!OidIsValid(nsp_oid))
+        continue;
+      Oid relid = get_relname_relid(table, nsp_oid);
+      if (OidIsValid(relid))
+        sort_resets.push_back(relid);
+    }
+  }
+
+  SyncSortedIndexes(sort_creates, sort_resets);
 }
 
 } // namespace pgducklake

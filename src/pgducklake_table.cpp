@@ -1,29 +1,88 @@
 /*
- * pgducklake_table_am.cpp -- Table access method surface for DuckLake tables.
+ * pgducklake_table.cpp -- Table lifecycle: AM handler + DDL event triggers.
  *
- * @scope extension: ducklake table AM handler and callbacks
- *   TODO(#99): merge table DDL triggers (create/drop/alter) from
- *   pgducklake_ddl.cpp here to form pgducklake_table.cpp.
+ * @scope extension: ducklake table AM handler, DDL event triggers
+ *   (ducklake_create_table_trigger, ducklake_drop_table_trigger,
+ *   ducklake_alter_table_trigger), EnsureDuckLakeTable
  *
- * Provides a PostgreSQL TableAM implementation used for routing and compatibility,
- * delegating unsupported paths and integrating VACUUM hooks where needed.
+ * Provides the PostgreSQL TableAM implementation for DuckLake tables and
+ * the DDL event triggers that synchronize table CREATE/DROP/ALTER from
+ * PostgreSQL to DuckDB.
  */
 
+#include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_duckdb.hpp"
+#include "pgducklake/pgducklake_duckdb_query.hpp"
+#include "pgducklake/pgducklake_guc.hpp"
+#include "pgducklake/pgducklake_sync.hpp"
+
+#include <duckdb/common/error_data.hpp> /* must precede postgres.h (FATAL macro) */
+
+#include "pgducklake/utility/cpp_wrapper.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
+
+#include <string>
+#include <vector>
+
+#include <duckdb/common/string_util.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 
 extern "C" {
 #include "postgres.h"
 
 #include "access/heapam.h"
+#include "access/relation.h"
 #include "access/tableam.h"
 #include "catalog/index.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_am.h"
+#include "commands/defrem.h"
+#include "commands/event_trigger.h"
+#include "commands/extension.h"
 #include "commands/vacuum.h"
+#include "executor/spi.h"
 #include "executor/tuptable.h"
+#include "fmgr.h"
+#include "nodes/value.h"
+#include "utils/builtins.h"
+#include "utils/elog.h"
+#include "utils/guc.h"
+#include "utils/lsyscache.h"
+#include "utils/rel.h"
+#include "utils/syscache.h"
+
+#include "pgduckdb/pgduckdb_ruleutils.h"
 
 // Defined in pgducklake_vacuum.cpp
 extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
                                BufferAccessStrategy bstrategy);
 }
+
+/* ================================================================
+ * Variant type OID cache (used by create/alter table triggers)
+ * ================================================================ */
+
+namespace pgducklake {
+
+static Oid variant_type_oid = InvalidOid;
+
+static Oid GetVariantTypeOid() {
+  if (!OidIsValid(variant_type_oid)) {
+    Oid nsp_oid = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
+    if (OidIsValid(nsp_oid)) {
+      variant_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
+                                         CStringGetDatum("variant"),
+                                         ObjectIdGetDatum(nsp_oid));
+    }
+  }
+  return variant_type_oid;
+}
+
+} // namespace pgducklake
+
+/* ================================================================
+ * Table Access Method callbacks
+ * ================================================================ */
 
 extern "C" {
 
@@ -500,4 +559,378 @@ Datum ducklake_am_handler(FunctionCallInfo /*funcinfo*/) {
   RegisterDuckdbTableAm("pgducklake", &ducklake_methods);
   PG_RETURN_POINTER(&ducklake_methods);
 }
+
+/* ================================================================
+ * DDL event triggers
+ * ================================================================ */
+
+DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
+  if (pgducklake::syncing_from_metadata)
+    PG_RETURN_NULL();
+
+  if (!CALLED_AS_EVENT_TRIGGER(fcinfo)) /* internal error */
+    elog(ERROR, "not fired by event trigger manager");
+
+  EventTriggerData *trigger_data = (EventTriggerData *)fcinfo->context;
+  Node *parsetree = trigger_data->parsetree;
+
+  SPI_connect();
+
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
+                  PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
+                  PGC_S_SESSION);
+
+  int ret = SPI_exec(R"(
+		SELECT DISTINCT objid AS relid, pg_class.relpersistence = 't' AS is_temporary
+		FROM pg_catalog.pg_event_trigger_ddl_commands() cmds
+		JOIN pg_catalog.pg_class
+		ON cmds.objid = pg_class.oid
+		WHERE cmds.object_type = 'table'
+		AND pg_class.relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake')
+		)",
+                     0);
+
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+
+  /* if we selected a row it was a duckdb table */
+  auto is_ducklake_table = SPI_processed > 0;
+  if (!is_ducklake_table) {
+    /* Reject variant columns on non-ducklake tables */
+    Oid variant_oid = pgducklake::GetVariantTypeOid();
+    if (OidIsValid(variant_oid)) {
+      StringInfoData check_sql;
+      initStringInfo(&check_sql);
+      appendStringInfo(&check_sql,
+          "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
+          "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
+          "WHERE cmds.object_type = 'table' "
+          "AND a.attnum > 0 AND NOT a.attisdropped "
+          "AND a.atttypid = %u LIMIT 1",
+          variant_oid);
+      ret = SPI_exec(check_sql.data, 1);
+      pfree(check_sql.data);
+      if (ret == SPI_OK_SELECT && SPI_processed > 0)
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("ducklake.variant type can only be used with "
+                        "ducklake access method")));
+    }
+    AtEOXact_GUC(false, save_nestlevel);
+    SPI_finish();
+    PG_RETURN_NULL();
+  }
+
+  if (SPI_processed != 1) {
+    elog(ERROR, "Expected single table to be created, but found %llu",
+         static_cast<unsigned long long>(SPI_processed));
+  }
+
+  if (!IsA(parsetree, CreateStmt) && !IsA(parsetree, CreateTableAsStmt)) {
+    ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+                    errmsg("Cannot create a DuckLake table this way, use "
+                           "CREATE TABLE or CREATE TABLE AS")));
+  }
+
+  HeapTuple tuple = SPI_tuptable->vals[0];
+  bool isnull;
+  Datum relid_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+  if (isnull) {
+    elog(ERROR, "Expected relid to be returned, but found NULL");
+  }
+
+  Datum is_temporary_datum =
+      SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
+  if (isnull) {
+    elog(ERROR, "Expected temporary boolean to be returned, but found NULL");
+  }
+
+  Oid relid = DatumGetObjectId(relid_datum);
+  bool is_temporary = DatumGetBool(is_temporary_datum);
+
+  if (is_temporary) {
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("temporary tables are not supported with ducklake "
+                           "access method")));
+  }
+
+  AtEOXact_GUC(false, save_nestlevel);
+  SPI_finish();
+
+  // Generate CREATE TABLE DDL for DuckDB
+  std::string create_table_ddl(pgduckdb_get_tabledef(relid));
+  elog(DEBUG1, "Creating DuckLake table: %s", create_table_ddl.c_str());
+
+  // Execute CREATE TABLE in DuckDB via raw_query
+  const char *error_msg = nullptr;
+  int result =
+      pgducklake::ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to create DuckLake table: %s",
+                           error_msg ? error_msg : "unknown error")));
+  }
+
+  // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
+  if (IsA(parsetree, CreateTableAsStmt) && !pgducklake::ctas_skip_data) {
+    auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
+    auto ctas_query = (Query *)ctas_stmt->query;
+    const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
+    std::string insert_string = std::string("INSERT INTO ") +
+                                pgduckdb_relation_name(relid) + " " +
+                                ctas_query_string;
+
+    elog(DEBUG1, "CTAS data population: %s", insert_string.c_str());
+
+    const char *insert_error_msg = nullptr;
+    int insert_result = pgducklake::ExecuteDuckDBQuery(insert_string.c_str(),
+                                                       &insert_error_msg);
+    if (insert_result != 0) {
+      ereport(ERROR,
+              (errcode(ERRCODE_INTERNAL_ERROR),
+               errmsg("failed to populate DuckLake table via CTAS: %s",
+                      insert_error_msg ? insert_error_msg : "unknown error")));
+    }
+  }
+
+  PG_RETURN_NULL();
 }
+
+DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
+  if (pgducklake::syncing_from_metadata)
+    PG_RETURN_NULL();
+
+  if (!CALLED_AS_EVENT_TRIGGER(fcinfo)) /* internal error */
+    elog(ERROR, "not fired by event trigger manager");
+
+  SPI_connect();
+
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
+                  PGC_S_SESSION);
+
+  // Check if any tables were dropped
+  int ret = SPI_exec(R"(
+		SELECT 1
+		FROM pg_catalog.pg_event_trigger_dropped_objects()
+		WHERE object_type = 'table'
+	)",
+                     0);
+
+  if (ret != SPI_OK_SELECT) {
+    elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+  }
+
+  if (SPI_processed == 0) {
+    AtEOXact_GUC(false, save_nestlevel);
+    SPI_finish();
+    PG_RETURN_NULL();
+  }
+
+  /*
+   * Drop inlined data/delete tables associated with the dropped DuckLake
+   * tables.  These PostgreSQL tables live in the ducklake schema and block
+   * DROP EXTENSION if left behind.
+   */
+  ret = SPI_exec(R"(
+		SELECT idt.table_name, del.relname
+		FROM pg_catalog.pg_event_trigger_dropped_objects() cmds
+		JOIN ducklake.ducklake_table AS tbl
+		  ON cmds.object_name = tbl.table_name
+		JOIN ducklake.ducklake_schema AS schema
+		  ON cmds.schema_name = schema.schema_name
+		  AND tbl.schema_id = schema.schema_id
+		LEFT JOIN ducklake.ducklake_inlined_data_tables idt
+		  ON idt.table_id = tbl.table_id
+		LEFT JOIN pg_catalog.pg_class del
+		  ON del.relname = 'ducklake_inlined_delete_' || tbl.table_id
+		  AND del.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace
+		                          WHERE nspname = 'ducklake')
+		WHERE cmds.object_type = 'table'
+		  AND tbl.end_snapshot IS NULL
+		  AND schema.end_snapshot IS NULL
+		)",
+                 0);
+
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    std::string drop_sql;
+    for (uint64_t proc = 0; proc < SPI_processed; ++proc) {
+      HeapTuple tuple = SPI_tuptable->vals[proc];
+      char *inlined_data_table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
+      char *inlined_delete_table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
+      if (inlined_data_table_name) {
+        drop_sql += duckdb::StringUtil::Format(
+            "DROP TABLE ducklake.%s;",
+            duckdb::SQLIdentifier(inlined_data_table_name));
+      }
+      if (inlined_delete_table_name) {
+        drop_sql += duckdb::StringUtil::Format(
+            "DROP TABLE ducklake.%s;",
+            duckdb::SQLIdentifier(inlined_delete_table_name));
+      }
+    }
+    if (!drop_sql.empty()) {
+      SPI_exec(drop_sql.c_str(), 0);
+    }
+  }
+
+  /*
+   * Query DuckLake metadata to find tables that need to be dropped.
+   * We can't use pg_class here since the tables are already dropped.
+   */
+  ret = SPI_exec(R"(
+		SELECT cmds.schema_name, cmds.object_name
+		FROM pg_catalog.pg_event_trigger_dropped_objects() cmds
+		JOIN ducklake.ducklake_table AS tbl
+		  ON cmds.object_name = tbl.table_name
+		JOIN ducklake.ducklake_schema AS schema
+		  ON cmds.schema_name = schema.schema_name
+		  AND tbl.schema_id = schema.schema_id
+		WHERE cmds.object_type = 'table'
+		  AND tbl.end_snapshot IS NULL
+		  AND schema.end_snapshot IS NULL
+		)",
+                 0);
+
+  if (ret != SPI_OK_SELECT) {
+    elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+  }
+
+  // Drop corresponding DuckDB tables
+  for (uint64_t proc = 0; proc < SPI_processed; ++proc) {
+    HeapTuple tuple = SPI_tuptable->vals[proc];
+
+    char *schema_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
+    char *table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
+
+    std::string drop_ddl = duckdb::StringUtil::Format(
+        "DROP TABLE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG ".%s.%s", schema_name,
+        table_name);
+
+    elog(DEBUG1, "Dropping DuckLake table: %s", drop_ddl.c_str());
+
+    const char *error_msg = nullptr;
+    int result = pgducklake::ExecuteDuckDBQuery(drop_ddl.c_str(), &error_msg);
+    if (result != 0) {
+      // Log warning but don't fail - table might already be gone
+      elog(WARNING, "failed to drop DuckLake table %s.%s: %s", schema_name,
+           table_name, error_msg ? error_msg : "unknown error");
+    }
+  }
+
+  AtEOXact_GUC(false, save_nestlevel);
+  SPI_finish();
+
+  PG_RETURN_NULL();
+}
+
+void EnsureDuckLakeTable(Oid relid) {
+  static Oid ducklake_am_oid = InvalidOid;
+  if (!OidIsValid(ducklake_am_oid))
+    ducklake_am_oid = get_am_oid("ducklake", false);
+
+  Relation rel = relation_open(relid, AccessShareLock);
+  Oid am_oid = rel->rd_rel->relam;
+  relation_close(rel, AccessShareLock);
+
+  if (am_oid != ducklake_am_oid)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("table \"%s\" is not a DuckLake table",
+                           get_rel_name(relid))));
+}
+
+DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
+  if (pgducklake::syncing_from_metadata)
+    PG_RETURN_NULL();
+
+  if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
+    elog(ERROR, "not fired by event trigger manager");
+
+  EventTriggerData *trigger_data = (EventTriggerData *)fcinfo->context;
+  Node *parsetree = trigger_data->parsetree;
+
+  SPI_connect();
+
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
+                  PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
+                  PGC_S_SESSION);
+
+  int ret = SPI_exec(R"(
+		SELECT DISTINCT objid AS relid
+		FROM pg_catalog.pg_event_trigger_ddl_commands() cmds
+		JOIN pg_catalog.pg_class
+		ON cmds.objid = pg_class.oid
+		WHERE cmds.object_type IN ('table', 'table column')
+		AND pg_class.relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake')
+		)",
+                     0);
+
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+
+  if (SPI_processed == 0) {
+    /* Reject variant columns added to non-ducklake tables */
+    Oid variant_oid = pgducklake::GetVariantTypeOid();
+    if (OidIsValid(variant_oid)) {
+      StringInfoData check_sql;
+      initStringInfo(&check_sql);
+      appendStringInfo(&check_sql,
+          "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
+          "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
+          "WHERE cmds.object_type IN ('table', 'table column') "
+          "AND a.attnum > 0 AND NOT a.attisdropped "
+          "AND a.atttypid = %u LIMIT 1",
+          variant_oid);
+      ret = SPI_exec(check_sql.data, 1);
+      pfree(check_sql.data);
+      if (ret == SPI_OK_SELECT && SPI_processed > 0)
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("ducklake.variant type can only be used with "
+                        "ducklake access method")));
+    }
+    AtEOXact_GUC(false, save_nestlevel);
+    SPI_finish();
+    PG_RETURN_NULL();
+  }
+
+  HeapTuple tuple = SPI_tuptable->vals[0];
+  bool isnull;
+  Datum relid_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+  if (isnull)
+    elog(ERROR, "Expected relid to be returned, but found NULL");
+
+  Oid relid = DatumGetObjectId(relid_datum);
+
+  AtEOXact_GUC(false, save_nestlevel);
+  SPI_finish();
+
+  /* Generate DDL using pg_duckdb's ruleutils functions */
+  char *ddl_str;
+  if (IsA(parsetree, RenameStmt)) {
+    ddl_str = pgduckdb_get_rename_relationdef(relid, (RenameStmt *)parsetree);
+  } else if (IsA(parsetree, AlterTableStmt)) {
+    ddl_str = pgduckdb_get_alter_tabledef(relid, (AlterTableStmt *)parsetree);
+  } else {
+    elog(ERROR, "Unexpected parsetree type in ALTER TABLE trigger: %d",
+         nodeTag(parsetree));
+  }
+
+  elog(DEBUG1, "ALTER TABLE DDL for DuckLake: %s", ddl_str);
+
+  const char *error_msg = nullptr;
+  int result = pgducklake::ExecuteDuckDBQuery(ddl_str, &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to alter DuckLake table: %s",
+                           error_msg ? error_msg : "unknown error")));
+  }
+
+  PG_RETURN_NULL();
+}
+
+} // extern "C"
