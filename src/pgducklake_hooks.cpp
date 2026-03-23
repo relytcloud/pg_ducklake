@@ -141,7 +141,7 @@ static Node *RewriteVariantOpMutator(Node *node, void *ctx_ptr) {
 #else
     return (Node *)query_tree_mutator(
         (Query *)node,
-        (Node * (*)(Node *, void *))((void *)RewriteVariantOpMutator),
+        (Node * (*)())((void *)RewriteVariantOpMutator),
         ctx_ptr, 0);
 #endif
   }
@@ -183,11 +183,11 @@ static Node *RewriteVariantOpMutator(Node *node, void *ctx_ptr) {
 #else
     arg1 = expression_tree_mutator(
         arg1,
-        (Node * (*)(Node *, void *))((void *)RewriteVariantOpMutator),
+        (Node * (*)())((void *)RewriteVariantOpMutator),
         ctx_ptr);
     arg2 = expression_tree_mutator(
         arg2,
-        (Node * (*)(Node *, void *))((void *)RewriteVariantOpMutator),
+        (Node * (*)())((void *)RewriteVariantOpMutator),
         ctx_ptr);
 #endif
 
@@ -222,7 +222,7 @@ default_mutate:
 #else
   return expression_tree_mutator(
       node,
-      (Node * (*)(Node *, void *))((void *)RewriteVariantOpMutator),
+      (Node * (*)())((void *)RewriteVariantOpMutator),
       ctx_ptr);
 #endif
 }
@@ -249,7 +249,7 @@ static Query *RewriteVariantOperators(Query *parse) {
 #else
   return (Query *)query_tree_mutator(
       parse,
-      (Node * (*)(Node *, void *))((void *)RewriteVariantOpMutator), &ctx, 0);
+      (Node * (*)())((void *)RewriteVariantOpMutator), &ctx, 0);
 #endif
 }
 
