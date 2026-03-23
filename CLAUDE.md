@@ -91,8 +91,11 @@ Supported PostgreSQL versions: 14, 15, 16, 17, 18.
 `PG_CONFIG` is required. Usually a local pg is installed under workdir, e.g. `PG_CONFIG=$(pwd)/pg-18/bin/pg_config`, to avoid conflicts with other worktrees. If neither local pg nor global pg is found, stop and ask user.
 
 ```bash
-git submodule update --init --recursive
-PG_CONFIG=<pg_config> make install
+# macOS add:
+# LIBRARY_PATH="$(brew --prefix)/lib:$LIBRARY_PATH"
+
+NCPU=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+PG_CONFIG=<pg_config> make -j"$NCPU" && make install
 PG_CONFIG=<pg_config> make installcheck # build, install, and runs both regression + isolation
 
 # Run single regression test
@@ -100,9 +103,6 @@ PG_CONFIG=<pg_config> make check-regression TEST=basic
 
 # Run single isolation test
 PG_CONFIG=<pg_config> make check-isolation TEST=concurrent_writes
-
-# macOS: if linker errors, add:
-# LIBRARY_PATH="$(brew --prefix)/lib:$LIBRARY_PATH"
 ```
 
 Tests live in `test/regression/` (SQL regression) and `test/isolation/` (concurrency specs). Use regression and isolation tests to verify functionality as possible.
