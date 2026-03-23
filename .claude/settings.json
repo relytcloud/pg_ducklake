@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git worktree list --porcelain | awk 'NR==1{print $2}')/.claude/hooks/worktree-setup.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "ExitWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git worktree list --porcelain | awk 'NR==1{print $2}')/.claude/hooks/worktree-cleanup.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
