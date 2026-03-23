@@ -7,6 +7,8 @@
  *
  * Planner hook:
  * - rewrites regclass overloads of ducklake functions into text-arg versions
+ * - rewrites variant -> / ->> operators into variant_extract() FuncExpr nodes
+ *   so pg_duckdb deparses them as function calls, not operator syntax
  * - delegates INSERT UNNEST planning optimization to pgducklake_direct_insert
  *
  * Utility hook:
@@ -51,10 +53,194 @@ extern "C" {
 #include "pgduckdb/pgduckdb_ruleutils.h"
 }
 
+/* Include after PG headers so Oid is defined. */
+#include "pgducklake/pgducklake_variant.hpp"
+
 namespace {
 
 planner_hook_type prev_planner_hook = NULL;
 ProcessUtility_hook_type prev_process_utility_hook = NULL;
+
+/* Cached OID for variant_extract(variant, text). */
+static Oid variant_extract_text_funcoid = InvalidOid;
+
+static Oid GetVariantExtractTextFuncOid(Oid variant_type_oid) {
+  if (!OidIsValid(variant_extract_text_funcoid)) {
+    List *func_name = list_make2(makeString(pstrdup(PGDUCKLAKE_PG_SCHEMA)),
+                                 makeString(pstrdup("pg_variant_extract")));
+    Oid text_args[2] = {variant_type_oid, TEXTOID};
+    variant_extract_text_funcoid =
+        LookupFuncName(func_name, 2, text_args, true);
+  }
+  return variant_extract_text_funcoid;
+}
+
+/* Context passed through the variant-op mutator so we avoid per-node
+ * GetVariantTypeOid() calls and can detect whether any rewrite occurred. */
+struct VariantOpMutatorCtx {
+  Oid variant_type_oid;
+};
+
+/*
+ * Pre-scan: check if the query tree contains any OpExpr with a variant
+ * left-arg.  Returns true (stop walking) as soon as one is found.
+ * This avoids the full deep-copy of query_tree_mutator for the common
+ * case where no variant operators are present.
+ */
+static bool HasVariantOpWalker(Node *node, void *ctx_ptr) {
+  if (node == NULL)
+    return false;
+
+  if (IsA(node, OpExpr)) {
+    OpExpr *op = (OpExpr *)node;
+    if (list_length(op->args) == 2) {
+      auto *ctx = (VariantOpMutatorCtx *)ctx_ptr;
+      Node *arg1 = (Node *)linitial(op->args);
+      if (exprType(arg1) == ctx->variant_type_oid)
+        return true; /* found one -- stop walking */
+    }
+  }
+
+  if (IsA(node, Query)) {
+#if PG_VERSION_NUM >= 160000
+    return query_tree_walker((Query *)node, HasVariantOpWalker, ctx_ptr, 0);
+#else
+    return query_tree_walker((Query *)node,
+                             (bool (*)())((void *)HasVariantOpWalker),
+                             ctx_ptr, 0);
+#endif
+  }
+
+#if PG_VERSION_NUM >= 160000
+  return expression_tree_walker(node, HasVariantOpWalker, ctx_ptr);
+#else
+  return expression_tree_walker(
+      node, (bool (*)())((void *)HasVariantOpWalker), ctx_ptr);
+#endif
+}
+
+/*
+ * Rewrite variant -> and ->> OpExpr nodes to variant_extract() FuncExpr.
+ *
+ * DuckDB has no -> operator for VARIANT, so we convert:
+ *   v -> 'key'   =>  variant_extract(v, 'key')           (returns variant)
+ *   v ->> 'key'  =>  CAST(variant_extract(v, 'key') AS text)
+ *
+ * Uses expression_tree_mutator because we need to replace nodes (OpExpr
+ * becomes FuncExpr), not just modify them in place.
+ */
+static Node *RewriteVariantOpMutator(Node *node, void *ctx_ptr) {
+  if (node == NULL)
+    return NULL;
+
+  if (IsA(node, Query)) {
+#if PG_VERSION_NUM >= 160000
+    return (Node *)query_tree_mutator((Query *)node,
+                                      RewriteVariantOpMutator, ctx_ptr, 0);
+#else
+    return (Node *)query_tree_mutator(
+        (Query *)node,
+        (Node * (*)())((void *)RewriteVariantOpMutator),
+        ctx_ptr, 0);
+#endif
+  }
+
+  if (!IsA(node, OpExpr))
+    goto default_mutate;
+
+  {
+    auto *ctx = (VariantOpMutatorCtx *)ctx_ptr;
+    OpExpr *op = (OpExpr *)node;
+    if (list_length(op->args) != 2)
+      goto default_mutate;
+
+    Node *arg1 = (Node *)linitial(op->args);
+    if (exprType(arg1) != ctx->variant_type_oid)
+      goto default_mutate;
+
+    char *op_name = get_opname(op->opno);
+    if (!op_name)
+      goto default_mutate;
+
+    if (strcmp(op_name, "->") != 0 && strcmp(op_name, "->>") != 0)
+      goto default_mutate;
+
+    Oid extract_funcid =
+        GetVariantExtractTextFuncOid(ctx->variant_type_oid);
+    if (!OidIsValid(extract_funcid))
+      goto default_mutate;
+
+    Node *arg2 = (Node *)lsecond(op->args);
+    if (exprType(arg2) != TEXTOID)
+      goto default_mutate;
+
+    /* Recurse into children first */
+#if PG_VERSION_NUM >= 160000
+    arg1 = expression_tree_mutator(arg1, RewriteVariantOpMutator, ctx_ptr);
+    arg2 = expression_tree_mutator(arg2, RewriteVariantOpMutator, ctx_ptr);
+#else
+    arg1 = expression_tree_mutator(
+        arg1,
+        (Node * (*)())((void *)RewriteVariantOpMutator),
+        ctx_ptr);
+    arg2 = expression_tree_mutator(
+        arg2,
+        (Node * (*)())((void *)RewriteVariantOpMutator),
+        ctx_ptr);
+#endif
+
+    /* Build FuncExpr for variant_extract(v, key) -> text.
+     * In DuckDB, a scalar macro expands this to
+     * json_extract_string(v::VARCHAR, key). */
+    FuncExpr *func = makeNode(FuncExpr);
+    func->funcid = extract_funcid;
+    func->funcresulttype = TEXTOID;
+    func->funcretset = false;
+    func->funcvariadic = false;
+    func->funcformat = COERCE_EXPLICIT_CALL;
+    func->funccollid = InvalidOid;
+    func->inputcollid = op->inputcollid;
+    func->args = list_make2(arg1, arg2);
+    func->location = op->location;
+    return (Node *)func;
+  }
+
+default_mutate:
+#if PG_VERSION_NUM >= 160000
+  return expression_tree_mutator(node, RewriteVariantOpMutator, ctx_ptr);
+#else
+  return expression_tree_mutator(
+      node,
+      (Node * (*)())((void *)RewriteVariantOpMutator),
+      ctx_ptr);
+#endif
+}
+
+static Query *RewriteVariantOperators(Query *parse) {
+  Oid variant_oid = pgducklake::GetVariantTypeOid();
+  if (!OidIsValid(variant_oid))
+    return parse;
+
+  /* Fast pre-scan: skip the expensive deep-copy mutator if no variant
+   * operators are present (the common case for most queries). */
+  VariantOpMutatorCtx ctx = {variant_oid};
+#if PG_VERSION_NUM >= 160000
+  if (!query_tree_walker(parse, HasVariantOpWalker, &ctx, 0))
+    return parse;
+#else
+  if (!query_tree_walker(parse,
+                         (bool (*)())((void *)HasVariantOpWalker), &ctx, 0))
+    return parse;
+#endif
+
+#if PG_VERSION_NUM >= 160000
+  return (Query *)query_tree_mutator(parse, RewriteVariantOpMutator, &ctx, 0);
+#else
+  return (Query *)query_tree_mutator(
+      parse,
+      (Node * (*)())((void *)RewriteVariantOpMutator), &ctx, 0);
+#endif
+}
 
 /*
  * Rewrite a single FuncExpr from regclass to text-arg form.
@@ -187,6 +373,8 @@ PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
   }
 
   if (pgduckdb::DuckdbIsInitialized()) {
+    /* Rewrite variant -> / ->> operators to variant_extract() FuncExpr */
+    parse = RewriteVariantOperators(parse);
     /* Rewrite regclass overloads before pg_duckdb sees the query */
     RewriteRegclassFunctions(parse);
     /* ATTACH databases for any ducklake FDW tables before pg_duckdb plans */

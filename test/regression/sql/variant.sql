@@ -28,7 +28,27 @@ INSERT INTO variant_test VALUES
 SELECT * FROM variant_test ORDER BY id;
 
 -- ============================================================
--- 3. Variant column on non-ducklake table must fail
+-- 3. Variant field extraction with -> and ->> operators
+-- ============================================================
+
+-- Extract by key (returns text)
+SELECT v -> 'name' FROM variant_test WHERE id = 4;
+SELECT v -> 'age' FROM variant_test WHERE id = 4;
+
+-- ->> is equivalent to -> (both return text)
+SELECT v ->> 'name' FROM variant_test WHERE id = 4;
+
+-- Function call syntax
+SELECT ducklake.pg_variant_extract(v, 'name') FROM variant_test WHERE id = 4;
+
+-- Missing key returns NULL
+SELECT v -> 'nonexistent' FROM variant_test WHERE id = 4;
+
+-- NULL variant returns NULL
+SELECT v -> 'key' FROM variant_test WHERE id = 8;
+
+-- ============================================================
+-- 4. Variant column on non-ducklake table must fail (error cases)
 -- ============================================================
 CREATE TABLE variant_heap (v ducklake.variant);
 
@@ -38,7 +58,7 @@ ALTER TABLE regular_heap ADD COLUMN v ducklake.variant;
 DROP TABLE regular_heap;
 
 -- ============================================================
--- 4. Metadata sync: variant column synced from DuckLake metadata
+-- 5. Metadata sync: variant column synced from DuckLake metadata
 -- ============================================================
 -- Get current metadata state
 SELECT snapshot_id AS cur_snap, next_catalog_id AS cur_cat_id,

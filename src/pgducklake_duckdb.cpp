@@ -107,6 +107,7 @@ void ducklake_load_extension(duckdb::DuckDB &db) {
   db.LoadStaticExtension<duckdb::DucklakeExtension>();
   pgducklake::RegisterTimeTravelFunction(*db.instance);
   pgducklake::RegisterWrapperMacros(*db.instance);
+  pgducklake::RegisterScalarMacros(*db.instance);
   pgducklake::RegisterCleanupFunction(*db.instance);
   pgducklake::RegisterFlushInlinedDataFunction(*db.instance);
 

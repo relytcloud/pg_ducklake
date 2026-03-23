@@ -17,6 +17,7 @@ namespace pgducklake {
 
 void RegisterDuckdbOnlyFunctions();
 void RegisterWrapperMacros(duckdb::DatabaseInstance &db);
+void RegisterScalarMacros(duckdb::DatabaseInstance &db);
 void RegisterCleanupFunction(duckdb::DatabaseInstance &db);
 void RegisterFlushInlinedDataFunction(duckdb::DatabaseInstance &db);
 
