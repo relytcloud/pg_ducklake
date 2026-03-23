@@ -1,6 +1,7 @@
 ---
-name: workflow-open-pr
+name: pr
 description: "Create branch, push, and open a GitHub PR from local commits."
+user-invocable: true
 ---
 
 # Open PR

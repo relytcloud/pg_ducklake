@@ -1,6 +1,7 @@
 ---
-name: workflow-ci
+name: fix-ci
 description: "Push to remote, trigger GitHub Actions, monitor, and fix CI failures."
+user-invocable: true
 ---
 
 # CI Push & Monitor
