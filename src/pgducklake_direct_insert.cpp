@@ -708,6 +708,10 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
 
   state->finished = true;
 
+  // Propagate row count to PostgreSQL executor so the completion tag
+  // (e.g. "INSERT 0 N") reports the correct number of inserted rows.
+  node->ss.ps.state->es_processed = state->rows_inserted;
+
   // Create the snapshot record immediately while we still have an active
   // PostgreSQL snapshot. This makes the inserted rows visible to subsequent
   // DuckLake queries.
