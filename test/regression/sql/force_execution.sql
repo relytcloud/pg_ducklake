@@ -1,0 +1,24 @@
+-- Regression: force_execution must not deadlock on first query (#76).
+-- DuckDB initialization runs ATTACH which holds the ClientContext mutex;
+-- SPI metadata reads must bypass the planner hook to avoid re-locking it.
+SET duckdb.force_execution TO true;
+
+CREATE TABLE fe_t (a int, b int) USING ducklake;
+INSERT INTO fe_t VALUES (1, 10), (2, 20);
+
+-- The original reproducer was EXPLAIN, but its output is volatile (DuckDB plan
+-- formatting changes across versions).  A plain SELECT exercises the same
+-- DuckDB initialization path that triggered the deadlock.
+SELECT * FROM fe_t ORDER BY a;
+
+-- Hybrid scan (heap + ducklake) under force_execution.
+CREATE TABLE fe_heap (id int);
+INSERT INTO fe_heap VALUES (1);
+SELECT (SELECT count(*) FROM fe_heap) AS heap_count,
+       (SELECT count(*) FROM fe_t)    AS lake_count;
+
+-- Reset before cleanup to avoid noisy DuckDB warnings on event triggers.
+RESET duckdb.force_execution;
+
+DROP TABLE fe_heap;
+DROP TABLE fe_t;

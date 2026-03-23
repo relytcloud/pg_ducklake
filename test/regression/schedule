@@ -19,6 +19,7 @@ test: vacuum
 test: partition
 test: sorted_table
 test: hybrid_scan
+test: force_execution
 test: time_travel
 test: snapshots
 test: data_change_feed
