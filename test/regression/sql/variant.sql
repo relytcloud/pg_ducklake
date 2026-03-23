@@ -31,18 +31,21 @@ SELECT * FROM variant_test ORDER BY id;
 -- 3. Variant field extraction with -> and ->> operators
 -- ============================================================
 
--- Extract by key (returns variant -- opaque binary in PG)
+-- Extract by key (returns text)
 SELECT v -> 'name' FROM variant_test WHERE id = 4;
+SELECT v -> 'age' FROM variant_test WHERE id = 4;
 
--- Extract as text via ->> (returns text)
+-- ->> is equivalent to -> (both return text)
 SELECT v ->> 'name' FROM variant_test WHERE id = 4;
 
--- Function call syntax (equivalent to -> operator)
-SELECT ducklake.variant_extract(v, 'name') FROM variant_test WHERE id = 4;
+-- Function call syntax
+SELECT ducklake.pg_variant_extract(v, 'name') FROM variant_test WHERE id = 4;
 
 -- Missing key returns NULL
 SELECT v -> 'nonexistent' FROM variant_test WHERE id = 4;
-SELECT v ->> 'nonexistent' FROM variant_test WHERE id = 4;
+
+-- NULL variant returns NULL
+SELECT v -> 'key' FROM variant_test WHERE id = 8;
 
 -- ============================================================
 -- 4. Variant column on non-ducklake table must fail (error cases)

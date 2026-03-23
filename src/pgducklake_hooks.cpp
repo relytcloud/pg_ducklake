@@ -42,7 +42,6 @@ extern "C" {
 #include "nodes/nodeFuncs.h"
 #include "nodes/parsenodes.h"
 #include "optimizer/planner.h"
-#include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
 #include "catalog/pg_proc.h"
 #include "tcop/utility.h"
@@ -68,7 +67,7 @@ static Oid variant_extract_text_funcoid = InvalidOid;
 static Oid GetVariantExtractTextFuncOid(Oid variant_type_oid) {
   if (!OidIsValid(variant_extract_text_funcoid)) {
     List *func_name = list_make2(makeString(pstrdup(PGDUCKLAKE_PG_SCHEMA)),
-                                 makeString(pstrdup("variant_extract")));
+                                 makeString(pstrdup("pg_variant_extract")));
     Oid text_args[2] = {variant_type_oid, TEXTOID};
     variant_extract_text_funcoid =
         LookupFuncName(func_name, 2, text_args, true);
@@ -163,8 +162,7 @@ static Node *RewriteVariantOpMutator(Node *node, void *ctx_ptr) {
     if (!op_name)
       goto default_mutate;
 
-    bool is_text_arrow = (strcmp(op_name, "->>") == 0);
-    if (strcmp(op_name, "->") != 0 && !is_text_arrow)
+    if (strcmp(op_name, "->") != 0 && strcmp(op_name, "->>") != 0)
       goto default_mutate;
 
     Oid extract_funcid =
@@ -191,10 +189,12 @@ static Node *RewriteVariantOpMutator(Node *node, void *ctx_ptr) {
         ctx_ptr);
 #endif
 
-    /* Build FuncExpr for variant_extract(v, key) */
+    /* Build FuncExpr for variant_extract(v, key) -> text.
+     * In DuckDB, a scalar macro expands this to
+     * json_extract_string(v::VARCHAR, key). */
     FuncExpr *func = makeNode(FuncExpr);
     func->funcid = extract_funcid;
-    func->funcresulttype = ctx->variant_type_oid;
+    func->funcresulttype = TEXTOID;
     func->funcretset = false;
     func->funcvariadic = false;
     func->funcformat = COERCE_EXPLICIT_CALL;
@@ -202,18 +202,7 @@ static Node *RewriteVariantOpMutator(Node *node, void *ctx_ptr) {
     func->inputcollid = op->inputcollid;
     func->args = list_make2(arg1, arg2);
     func->location = op->location;
-
-    if (!is_text_arrow)
-      return (Node *)func;
-
-    /* ->> : wrap with cast to text */
-    CoerceViaIO *coerce = makeNode(CoerceViaIO);
-    coerce->arg = (Expr *)func;
-    coerce->resulttype = TEXTOID;
-    coerce->resultcollid = InvalidOid;
-    coerce->coerceformat = COERCE_EXPLICIT_CAST;
-    coerce->location = -1;
-    return (Node *)coerce;
+    return (Node *)func;
   }
 
 default_mutate:
