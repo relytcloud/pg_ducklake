@@ -29,6 +29,7 @@ extern "C" {
 #include "fmgr.h"
 #include "utils/elog.h"
 #include "utils/guc.h"
+#include "utils/rel.h"
 #include "utils/timestamp.h"
 }
 
