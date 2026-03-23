@@ -61,27 +61,8 @@ extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
                                BufferAccessStrategy bstrategy);
 }
 
-/* ================================================================
- * Variant type OID cache (used by create/alter table triggers)
- * ================================================================ */
-
-namespace pgducklake {
-
-static Oid variant_type_oid = InvalidOid;
-
-static Oid GetVariantTypeOid() {
-  if (!OidIsValid(variant_type_oid)) {
-    Oid nsp_oid = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
-    if (OidIsValid(nsp_oid)) {
-      variant_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
-                                         CStringGetDatum("variant"),
-                                         ObjectIdGetDatum(nsp_oid));
-    }
-  }
-  return variant_type_oid;
-}
-
-} // namespace pgducklake
+/* Include after PG headers so Oid is defined. */
+#include "pgducklake/pgducklake_variant.hpp"
 
 /* ================================================================
  * Table Access Method callbacks

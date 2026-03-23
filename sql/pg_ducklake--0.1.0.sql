@@ -491,6 +491,26 @@ CREATE TYPE ducklake.variant (
     OUTPUT = ducklake._variant_out
 );
 
+-- Variant field extraction functions (DuckDB-only stubs).
+-- variant_extract returns variant; _variant_extract_text returns text.
+-- The planner hook rewrites -> / ->> operator calls to variant_extract()
+-- FuncExpr nodes before pg_duckdb deparses the query.
+CREATE FUNCTION ducklake.variant_extract(ducklake.variant, text)
+    RETURNS ducklake.variant
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake._variant_extract_text(ducklake.variant, text)
+    RETURNS text
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+
+-- Operators -> and ->> for variant field extraction (PG JSON-like syntax).
+-- Placed in pg_catalog so they are always in the search path.
+CREATE OPERATOR pg_catalog.-> (
+    LEFTARG = ducklake.variant, RIGHTARG = text,
+    FUNCTION = ducklake.variant_extract);
+CREATE OPERATOR pg_catalog.->> (
+    LEFTARG = ducklake.variant, RIGHTARG = text,
+    FUNCTION = ducklake._variant_extract_text);
+
 -- ============================================================
 -- Bootstrap
 -- ============================================================

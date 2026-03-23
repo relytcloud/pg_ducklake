@@ -77,6 +77,8 @@ void RegisterDuckdbOnlyFunctions() {
   // Maintenance functions
   pgduckdb::RegisterDuckdbOnlyFunction("cleanup_old_files");
   pgduckdb::RegisterDuckdbOnlyFunction("flush_inlined_data");
+  // Variant field extraction
+  pgduckdb::RegisterDuckdbOnlyFunction("variant_extract");
 }
 
 /*
