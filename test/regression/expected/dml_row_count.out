@@ -1,0 +1,28 @@
+-- Test DML completion tags report correct row counts (issue #7).
+-- \set QUIET off overrides pg_regress's -q flag so psql prints tags.
+\set QUIET off
+CREATE TABLE rc (id int, val text) USING ducklake;
+CREATE TABLE
+-- INSERT single row
+INSERT INTO rc VALUES (1, 'one');
+INSERT 0 1
+-- INSERT multiple rows
+INSERT INTO rc VALUES (2, 'two'), (3, 'three'), (4, 'four');
+INSERT 0 3
+-- UPDATE subset
+UPDATE rc SET val = 'updated' WHERE id <= 2;
+UPDATE 2
+-- DELETE single row
+DELETE FROM rc WHERE id = 4;
+DELETE 1
+-- Verify final state
+SELECT * FROM rc ORDER BY id;
+ id |   val   
+----+---------
+  1 | updated
+  2 | updated
+  3 | three
+(3 rows)
+
+DROP TABLE rc;
+DROP TABLE
