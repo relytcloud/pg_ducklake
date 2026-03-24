@@ -38,9 +38,7 @@ PG_MODULE_MAGIC;
 
 void _PG_init(void) {
   // Register metadata manager factory in DuckLake's process-global registry.
-  duckdb::DuckLakeMetadataManager::Register(
-      PGDUCKLAKE_DUCKDB_CATALOG,
-      pgducklake::PgDuckLakeMetadataManager::Create);
+  duckdb::DuckLakeMetadataManager::Register(PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
   // Register callback for deferred static extension loading
   pgduckdb::RegisterDuckdbLoadExtension(ducklake_load_extension);
   // Register pg_ducklake's DuckDB-only functions with pg_duckdb's metadata cache

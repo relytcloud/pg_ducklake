@@ -38,8 +38,7 @@ namespace pgducklake {
 
 // DuckDB has date starting from 1/1/1970 while PG starts from 1/1/2000
 constexpr int32_t DUCK_DATE_OFFSET = 10957;
-constexpr int64_t DUCK_TIMESTAMP_OFFSET =
-    static_cast<int64_t>(DUCK_DATE_OFFSET) * static_cast<int64_t>(86400000000);
+constexpr int64_t DUCK_TIMESTAMP_OFFSET = static_cast<int64_t>(DUCK_DATE_OFFSET) * static_cast<int64_t>(86400000000);
 
 //------------------------------------------------------------------------------
 // Detoasting
@@ -192,8 +191,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     char elemalign;
 
     get_typlenbyvalalign(elem_type, &elemlen, &elembyval, &elemalign);
-    deconstruct_array(arr, elem_type, elemlen, elembyval, elemalign, &elems,
-                      &nulls, &nelems);
+    deconstruct_array(arr, elem_type, elemlen, elembyval, elemalign, &elems, &nulls, &nelems);
 
     auto &list_entry = duckdb::ListVector::GetData(result)[offset];
     auto current_size = duckdb::ListVector::GetListSize(result);
@@ -207,8 +205,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
       if (nulls && nulls[i]) {
         duckdb::FlatVector::SetNull(child, current_size + i, true);
       } else {
-        ConvertPostgresToDuckValue(elem_type, elems[i], child,
-                                   current_size + i);
+        ConvertPostgresToDuckValue(elem_type, elems[i], child, current_size + i);
       }
     }
 
@@ -247,8 +244,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
 
   case NUMERICOID: {
     // Convert numeric to double
-    duckdb::FlatVector::GetData<double>(result)[offset] =
-        DatumGetFloat8(DirectFunctionCall1(numeric_float8, value));
+    duckdb::FlatVector::GetData<double>(result)[offset] = DatumGetFloat8(DirectFunctionCall1(numeric_float8, value));
     break;
   }
 
@@ -261,8 +257,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     char *str = VARDATA_ANY(txt);
     size_t len = VARSIZE_ANY_EXHDR(txt);
     duckdb::string_t duck_str(str, len);
-    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] =
-        duckdb::StringVector::AddString(result, duck_str);
+    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] = duckdb::StringVector::AddString(result, duck_str);
     break;
   }
 
@@ -270,8 +265,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     DateADT pg_date = DatumGetDateADT(value);
     // PostgreSQL dates are days since 2000-01-01
     // DuckDB dates are days since 1970-01-01
-    duckdb::FlatVector::GetData<duckdb::date_t>(result)[offset] =
-        duckdb::date_t(pg_date + DUCK_DATE_OFFSET);
+    duckdb::FlatVector::GetData<duckdb::date_t>(result)[offset] = duckdb::date_t(pg_date + DUCK_DATE_OFFSET);
     break;
   }
 
@@ -294,8 +288,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
   case TIMEOID: {
     // Both PG and DuckDB store time as microseconds since midnight
     TimeADT pg_time = DatumGetTimeADT(value);
-    duckdb::FlatVector::GetData<duckdb::dtime_t>(result)[offset] =
-        duckdb::dtime_t(pg_time);
+    duckdb::FlatVector::GetData<duckdb::dtime_t>(result)[offset] = duckdb::dtime_t(pg_time);
     break;
   }
 
@@ -303,10 +296,8 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     // PG TimeTzADT: { TimeADT time (usec); int32 zone (seconds west of UTC) }
     // DuckDB dtime_tz_t: packed time + offset (seconds east of UTC)
     TimeTzADT *pg_timetz = DatumGetTimeTzADTP(value);
-    duckdb::dtime_tz_t duck_timetz(duckdb::dtime_t(pg_timetz->time),
-                                   -pg_timetz->zone);
-    duckdb::FlatVector::GetData<duckdb::dtime_tz_t>(result)[offset] =
-        duck_timetz;
+    duckdb::dtime_tz_t duck_timetz(duckdb::dtime_t(pg_timetz->time), -pg_timetz->zone);
+    duckdb::FlatVector::GetData<duckdb::dtime_tz_t>(result)[offset] = duck_timetz;
     break;
   }
 
@@ -318,8 +309,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     duck_interval.months = pg_interval->month;
     duck_interval.days = pg_interval->day;
     duck_interval.micros = pg_interval->time;
-    duckdb::FlatVector::GetData<duckdb::interval_t>(result)[offset] =
-        duck_interval;
+    duckdb::FlatVector::GetData<duckdb::interval_t>(result)[offset] = duck_interval;
     break;
   }
 
@@ -336,8 +326,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     duckdb::uhugeint_t raw;
     raw.upper = upper;
     raw.lower = lower;
-    duckdb::FlatVector::GetData<duckdb::hugeint_t>(result)[offset] =
-        duckdb::UUID::FromUHugeint(raw);
+    duckdb::FlatVector::GetData<duckdb::hugeint_t>(result)[offset] = duckdb::UUID::FromUHugeint(raw);
     break;
   }
 
@@ -347,8 +336,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     char *str = VARDATA_ANY(txt);
     size_t len = VARSIZE_ANY_EXHDR(txt);
     duckdb::string_t duck_str(str, len);
-    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] =
-        duckdb::StringVector::AddString(result, duck_str);
+    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] = duckdb::StringVector::AddString(result, duck_str);
     break;
   }
   case JSONBOID: {
@@ -356,8 +344,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     Datum json_datum = DirectFunctionCall1(jsonb_out, value);
     char *json_str = DatumGetCString(json_datum);
     duckdb::string_t duck_str(json_str, strlen(json_str));
-    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] =
-        duckdb::StringVector::AddString(result, duck_str);
+    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] = duckdb::StringVector::AddString(result, duck_str);
     pfree(json_str);
     break;
   }
@@ -369,8 +356,7 @@ void ConvertPostgresToDuckValue(Oid attr_type, Datum value, duckdb::Vector &resu
     getTypeOutputInfo(attr_type, &typoutput, &typisvarlena);
     char *str = OidOutputFunctionCall(typoutput, value);
     duckdb::string_t duck_str(str, strlen(str));
-    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] =
-        duckdb::StringVector::AddString(result, duck_str);
+    duckdb::FlatVector::GetData<duckdb::string_t>(result)[offset] = duckdb::StringVector::AddString(result, duck_str);
     pfree(str);
     elog(WARNING, "Converting unsupported type OID %u to string", attr_type);
     break;

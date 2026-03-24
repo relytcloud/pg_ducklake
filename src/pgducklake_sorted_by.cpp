@@ -63,42 +63,32 @@ extern "C" {
 
 PG_FUNCTION_INFO_V1(ducklake_sorted_am_handler);
 
-static IndexBuildResult *sorted_ambuild(Relation heap, Relation index,
-                                        IndexInfo *indexInfo) {
+static IndexBuildResult *sorted_ambuild(Relation heap, Relation index, IndexInfo *indexInfo) {
   IndexBuildResult *result = (IndexBuildResult *)palloc0(sizeof(IndexBuildResult));
   result->heap_tuples = 0;
   result->index_tuples = 0;
   return result;
 }
 
-static void sorted_ambuildempty(Relation index) {}
+static void sorted_ambuildempty(Relation index) {
+}
 
-static bool sorted_aminsert(Relation rel, Datum *values, bool *isnull,
-                            ItemPointer ht_ctid, Relation heapRel,
-                            IndexUniqueCheck checkUnique,
-                            bool indexUnchanged,
-                            IndexInfo *indexInfo) {
+static bool sorted_aminsert(Relation rel, Datum *values, bool *isnull, ItemPointer ht_ctid, Relation heapRel,
+                            IndexUniqueCheck checkUnique, bool indexUnchanged, IndexInfo *indexInfo) {
   return false;
 }
 
-static IndexBulkDeleteResult *sorted_ambulkdelete(IndexVacuumInfo *info,
-                                                  IndexBulkDeleteResult *stats,
-                                                  IndexBulkDeleteCallback callback,
-                                                  void *callback_state) {
+static IndexBulkDeleteResult *sorted_ambulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
+                                                  IndexBulkDeleteCallback callback, void *callback_state) {
   return stats;
 }
 
-static IndexBulkDeleteResult *sorted_amvacuumcleanup(IndexVacuumInfo *info,
-                                                     IndexBulkDeleteResult *stats) {
+static IndexBulkDeleteResult *sorted_amvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats) {
   return stats;
 }
 
-static void sorted_amcostestimate(PlannerInfo *root, IndexPath *path,
-                                  double loop_count,
-                                  Cost *indexStartupCost,
-                                  Cost *indexTotalCost,
-                                  Selectivity *indexSelectivity,
-                                  double *indexCorrelation,
+static void sorted_amcostestimate(PlannerInfo *root, IndexPath *path, double loop_count, Cost *indexStartupCost,
+                                  Cost *indexTotalCost, Selectivity *indexSelectivity, double *indexCorrelation,
                                   double *indexPages) {
   *indexStartupCost = 1.0e10;
   *indexTotalCost = 1.0e10;
@@ -119,10 +109,11 @@ static IndexScanDesc sorted_ambeginscan(Relation rel, int nkeys, int norderbys) 
   return RelationGetIndexScan(rel, nkeys, norderbys);
 }
 
-static void sorted_amrescan(IndexScanDesc scan, ScanKey keys, int nkeys,
-                            ScanKey orderbys, int norderbys) {}
+static void sorted_amrescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys) {
+}
 
-static void sorted_amendscan(IndexScanDesc scan) {}
+static void sorted_amendscan(IndexScanDesc scan) {
+}
 
 Datum ducklake_sorted_am_handler(PG_FUNCTION_ARGS) {
   IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
@@ -199,8 +190,7 @@ DECLARE_PG_FUNCTION(ducklake_set_sort) {
   int nelems;
   Datum *elems;
   bool *nulls;
-  deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT, &elems, &nulls,
-                    &nelems);
+  deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT, &elems, &nulls, &nelems);
 
   if (nelems == 0)
     elog(ERROR, "sorted_by cannot be empty");
@@ -214,9 +204,7 @@ DECLARE_PG_FUNCTION(ducklake_set_sort) {
     spec += text_to_cstring(DatumGetTextPP(elems[i]));
   }
 
-  std::string query = std::string("ALTER TABLE ") +
-                       pgduckdb_relation_name(relid) +
-                       " SET SORTED BY (" + spec + ")";
+  std::string query = std::string("ALTER TABLE ") + pgduckdb_relation_name(relid) + " SET SORTED BY (" + spec + ")";
 
   pgducklake::sort_synced_from_pg = true;
   const char *error_msg = nullptr;
@@ -224,8 +212,7 @@ DECLARE_PG_FUNCTION(ducklake_set_sort) {
   pgducklake::sort_synced_from_pg = false;
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to set sort order: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to set sort order: %s", error_msg ? error_msg : "unknown error")));
 
   /* Sync pg_class: drop old ducklake_sorted index, create new one. */
   SPI_connect();
@@ -244,9 +231,7 @@ DECLARE_PG_FUNCTION(ducklake_reset_sort) {
   Oid relid = PG_GETARG_OID(0);
   EnsureDuckLakeTable(relid);
 
-  std::string query = std::string("ALTER TABLE ") +
-                       pgduckdb_relation_name(relid) +
-                       " RESET SORTED BY";
+  std::string query = std::string("ALTER TABLE ") + pgduckdb_relation_name(relid) + " RESET SORTED BY";
 
   pgducklake::sort_synced_from_pg = true;
   const char *error_msg = nullptr;
@@ -254,8 +239,7 @@ DECLARE_PG_FUNCTION(ducklake_reset_sort) {
   pgducklake::sort_synced_from_pg = false;
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to reset sort order: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to reset sort order: %s", error_msg ? error_msg : "unknown error")));
 
   /* Drop any ducklake_sorted index on this table */
   SPI_connect();
@@ -378,34 +362,30 @@ std::string NodeToSQL(Node *node) {
     return result;
   }
   default:
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("unsupported expression type in index key")));
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("unsupported expression type in index key")));
     return "";
   }
 }
 
 } // anonymous namespace
 
-void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
-                             bool read_only_tree, ProcessUtilityContext context,
-                             ParamListInfo params,
-                             struct QueryEnvironment *query_env,
-                             DestReceiver *dest, QueryCompletion *qc,
-                             ProcessUtility_hook_type prev_hook) {
+void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string, bool read_only_tree,
+                             ProcessUtilityContext context, ParamListInfo params, struct QueryEnvironment *query_env,
+                             DestReceiver *dest, QueryCompletion *qc, ProcessUtility_hook_type prev_hook) {
   IndexStmt *stmt = castNode(IndexStmt, pstmt->utilityStmt);
 
   if (stmt->concurrent)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("CONCURRENTLY is not supported for ducklake_sorted indexes")));
   if (stmt->unique)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("UNIQUE is not supported for ducklake_sorted indexes")));
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("UNIQUE is not supported for ducklake_sorted indexes")));
   if (stmt->whereClause)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("WHERE clause is not supported for ducklake_sorted indexes")));
   if (list_length(stmt->indexIncludingParams) > 0)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("INCLUDE is not supported for ducklake_sorted indexes")));
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("INCLUDE is not supported for ducklake_sorted indexes")));
   if (stmt->tableSpace)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("TABLESPACE is not supported for ducklake_sorted indexes")));
@@ -417,9 +397,8 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
   relation_close(rel, AccessShareLock);
 
   if (rel_am != ducklake_am_oid)
-    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-                    errmsg("table \"%s\" is not a DuckLake table",
-                           get_rel_name(relid))));
+    ereport(ERROR,
+            (errcode(ERRCODE_WRONG_OBJECT_TYPE), errmsg("table \"%s\" is not a DuckLake table", get_rel_name(relid))));
 
   std::string sort_spec;
   ListCell *lc;
@@ -428,11 +407,10 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
     IndexElem *elem = (IndexElem *)lfirst(lc);
 
     if (elem->collation != NIL)
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("COLLATE is not supported for ducklake_sorted indexes")));
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("COLLATE is not supported for ducklake_sorted indexes")));
     if (elem->opclass != NIL) {
-      if (list_length(elem->opclass) != 2 ||
-          strcmp(strVal(linitial(elem->opclass)), PGDUCKLAKE_PG_SCHEMA) != 0)
+      if (list_length(elem->opclass) != 2 || strcmp(strVal(linitial(elem->opclass)), PGDUCKLAKE_PG_SCHEMA) != 0)
         ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                         errmsg("custom opclass is not supported for ducklake_sorted indexes")));
     }
@@ -446,8 +424,7 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
     else if (elem->expr)
       sort_spec += NodeToSQL(elem->expr);
     else
-      ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-                      errmsg("index key must be a column or expression")));
+      ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION), errmsg("index key must be a column or expression")));
 
     if (elem->ordering == SORTBY_DESC)
       sort_spec += " DESC";
@@ -460,23 +437,20 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
       sort_spec += " NULLS LAST";
   }
 
-  prev_hook(pstmt, query_string, read_only_tree, context,
-            params, query_env, dest, qc);
+  prev_hook(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
 
   if (syncing_from_metadata)
     return;
 
-  std::string query = std::string("ALTER TABLE ") +
-                       pgduckdb_relation_name(relid) +
-                       " SET SORTED BY (" + sort_spec + ")";
+  std::string query =
+      std::string("ALTER TABLE ") + pgduckdb_relation_name(relid) + " SET SORTED BY (" + sort_spec + ")";
 
   elog(DEBUG1, "ducklake_sorted: %s", query.c_str());
 
   PushActiveSnapshot(GetTransactionSnapshot());
   if (!pgduckdb::DuckdbEnsureCacheValid()) {
     PopActiveSnapshot();
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("pg_duckdb is not available")));
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("pg_duckdb is not available")));
   }
 
   const char *error_msg = nullptr;
@@ -484,8 +458,7 @@ void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
   PopActiveSnapshot();
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to set sort order: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to set sort order: %s", error_msg ? error_msg : "unknown error")));
 }
 
 std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop) {
@@ -529,8 +502,7 @@ std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop) {
  * Drops old sorted indexes on all affected tables, then creates new ones.
  * Caller must have an active SPI connection and syncing_from_metadata = true.
  */
-void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates,
-                       const std::vector<Oid> &resets) {
+void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates, const std::vector<Oid> &resets) {
   Oid sorted_am_oid = get_am_oid(PGDUCKLAKE_SORTED_AM, true);
   if (!OidIsValid(sorted_am_oid))
     return;
@@ -548,15 +520,13 @@ void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates,
     if (ret == SPI_OK_SELECT) {
       for (uint64_t j = 0; j < SPI_processed; ++j) {
         bool isnull;
-        Oid idx_oid = DatumGetObjectId(SPI_getbinval(
-            SPI_tuptable->vals[j], SPI_tuptable->tupdesc, 1, &isnull));
+        Oid idx_oid = DatumGetObjectId(SPI_getbinval(SPI_tuptable->vals[j], SPI_tuptable->tupdesc, 1, &isnull));
         if (!isnull)
           idx_oids.push_back(idx_oid);
       }
     }
     for (Oid idx_oid : idx_oids) {
-      char *drop_sql = psprintf("DROP INDEX %s",
-                                quote_identifier(get_rel_name(idx_oid)));
+      char *drop_sql = psprintf("DROP INDEX %s", quote_identifier(get_rel_name(idx_oid)));
       SPI_exec(drop_sql, 0);
     }
   };
@@ -566,15 +536,12 @@ void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates,
 
     char *schema_name = get_namespace_name(get_rel_namespace(action.relid));
     char *table_name = get_rel_name(action.relid);
-    char *sql = psprintf("CREATE INDEX ON %s.%s USING ducklake_sorted (%s)",
-                         quote_identifier(schema_name),
-                         quote_identifier(table_name),
-                         action.sort_spec.c_str());
+    char *sql = psprintf("CREATE INDEX ON %s.%s USING ducklake_sorted (%s)", quote_identifier(schema_name),
+                         quote_identifier(table_name), action.sort_spec.c_str());
     elog(DEBUG1, "Sorted index sync: %s", sql);
     int ret = SPI_exec(sql, 0);
     if (ret != SPI_OK_UTILITY)
-      elog(ERROR, "SPI_exec CREATE INDEX failed: %s",
-           SPI_result_code_string(ret));
+      elog(ERROR, "SPI_exec CREATE INDEX failed: %s", SPI_result_code_string(ret));
   }
 
   for (Oid relid : resets)
@@ -601,22 +568,18 @@ void HandleDropSortedIndex(const std::vector<SortedIndexDrop> &drops) {
   PushActiveSnapshot(GetTransactionSnapshot());
   if (!pgduckdb::DuckdbEnsureCacheValid()) {
     PopActiveSnapshot();
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("pg_duckdb is not available")));
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("pg_duckdb is not available")));
   }
 
   for (auto &drop : drops) {
-    std::string query = std::string("ALTER TABLE ") +
-                         pgduckdb_relation_name(drop.table_oid) +
-                         " RESET SORTED BY";
+    std::string query = std::string("ALTER TABLE ") + pgduckdb_relation_name(drop.table_oid) + " RESET SORTED BY";
     elog(DEBUG1, "ducklake_sorted drop: %s", query.c_str());
 
     const char *error_msg = nullptr;
     int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
     if (result != 0)
       ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                      errmsg("failed to reset sort order: %s",
-                             error_msg ? error_msg : "unknown error")));
+                      errmsg("failed to reset sort order: %s", error_msg ? error_msg : "unknown error")));
   }
   PopActiveSnapshot();
 }

@@ -21,22 +21,18 @@ extern "C" {
 #include "utils/rel.h"
 }
 
-extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
-                                   BufferAccessStrategy bstrategy) {
+extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params, BufferAccessStrategy bstrategy) {
   const char *relname = NameStr(onerel->rd_rel->relname);
-  const char *schema_name =
-      get_namespace_name_or_temp(onerel->rd_rel->relnamespace);
+  const char *schema_name = get_namespace_name_or_temp(onerel->rd_rel->relnamespace);
 
   if (!schema_name) {
-    elog(ERROR, "cache lookup failed for namespace %u",
-         onerel->rd_rel->relnamespace);
+    elog(ERROR, "cache lookup failed for namespace %u", onerel->rd_rel->relnamespace);
   }
 
   bool verbose = params->options & VACOPT_VERBOSE;
 
   if (verbose) {
-    ereport(INFO, (errmsg("vacuuming ducklake table \"%s.%s\"", schema_name,
-                          relname)));
+    ereport(INFO, (errmsg("vacuuming ducklake table \"%s.%s\"", schema_name, relname)));
   }
 
   std::string db_name(PGDUCKLAKE_DUCKDB_CATALOG);
@@ -48,21 +44,17 @@ extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
    * The delete threshold is configurable via ducklake.vacuum_delete_threshold
    * GUC. Default is 0.1 (10%), more aggressive than DuckLake's default.
    */
-  std::string rewrite_query =
-      "SELECT * FROM ducklake_rewrite_data_files(" +
-      duckdb::KeywordHelper::WriteQuoted(db_name, '\'') + ", " +
-      duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
-      "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
-      ", delete_threshold => " +
-      std::to_string(pgducklake::vacuum_delete_threshold) + ")";
+  std::string rewrite_query = "SELECT * FROM ducklake_rewrite_data_files(" +
+                              duckdb::KeywordHelper::WriteQuoted(db_name, '\'') + ", " +
+                              duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
+                              "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
+                              ", delete_threshold => " + std::to_string(pgducklake::vacuum_delete_threshold) + ")";
 
   const char *error_msg = nullptr;
-  int result =
-      pgducklake::ExecuteDuckDBQuery(rewrite_query.c_str(), &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(rewrite_query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to rewrite data files: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to rewrite data files: %s", error_msg ? error_msg : "unknown error")));
   }
 
   if (verbose) {
@@ -70,18 +62,15 @@ extern "C" void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
   }
 
   /* 2. Merge adjacent small files to optimize scan performance */
-  std::string merge_query =
-      "SELECT * FROM ducklake_merge_adjacent_files(" +
-      duckdb::KeywordHelper::WriteQuoted(db_name, '\'') + ", " +
-      duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
-      "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') +
-      ")";
+  std::string merge_query = "SELECT * FROM ducklake_merge_adjacent_files(" +
+                            duckdb::KeywordHelper::WriteQuoted(db_name, '\'') + ", " +
+                            duckdb::KeywordHelper::WriteQuoted(relname_str, '\'') + ", " +
+                            "schema=" + duckdb::KeywordHelper::WriteQuoted(schema_name_str, '\'') + ")";
 
   result = pgducklake::ExecuteDuckDBQuery(merge_query.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to merge adjacent files: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to merge adjacent files: %s", error_msg ? error_msg : "unknown error")));
   }
 
   if (verbose) {

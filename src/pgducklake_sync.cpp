@@ -73,16 +73,14 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
 
   /* Extract snapshot_id from the NEW row */
   bool isnull;
-  int64 snapshot_id = DatumGetInt64(SPI_getbinval(
-      trigdata->tg_trigtuple, trigdata->tg_relation->rd_att, 1, &isnull));
+  int64 snapshot_id = DatumGetInt64(SPI_getbinval(trigdata->tg_trigtuple, trigdata->tg_relation->rd_att, 1, &isnull));
   if (isnull)
     elog(ERROR, "snapshot_id is NULL");
 
   SPI_connect();
 
   auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
-                  PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
 
   pgducklake::syncing_from_metadata = true;
 

@@ -44,8 +44,7 @@ DECLARE_PG_FUNCTION(ducklake_set_partition) {
   int nelems;
   Datum *elems;
   bool *nulls;
-  deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT, &elems, &nulls,
-                    &nelems);
+  deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT, &elems, &nulls, &nelems);
 
   if (nelems == 0)
     elog(ERROR, "partition_by cannot be empty");
@@ -59,16 +58,14 @@ DECLARE_PG_FUNCTION(ducklake_set_partition) {
     spec += text_to_cstring(DatumGetTextPP(elems[i]));
   }
 
-  std::string query = std::string("ALTER TABLE ") +
-                       pgduckdb_relation_name(relid) +
-                       " SET PARTITIONED BY (" + spec + ")";
+  std::string query =
+      std::string("ALTER TABLE ") + pgduckdb_relation_name(relid) + " SET PARTITIONED BY (" + spec + ")";
 
   const char *error_msg = nullptr;
   int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to set partition: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to set partition: %s", error_msg ? error_msg : "unknown error")));
 
   PG_RETURN_VOID();
 }
@@ -80,16 +77,13 @@ DECLARE_PG_FUNCTION(ducklake_reset_partition) {
   Oid relid = PG_GETARG_OID(0);
   EnsureDuckLakeTable(relid);
 
-  std::string query = std::string("ALTER TABLE ") +
-                       pgduckdb_relation_name(relid) +
-                       " RESET PARTITIONED BY";
+  std::string query = std::string("ALTER TABLE ") + pgduckdb_relation_name(relid) + " RESET PARTITIONED BY";
 
   const char *error_msg = nullptr;
   int result = pgducklake::ExecuteDuckDBQuery(query.c_str(), &error_msg);
   if (result != 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to reset partition: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to reset partition: %s", error_msg ? error_msg : "unknown error")));
 
   PG_RETURN_VOID();
 }

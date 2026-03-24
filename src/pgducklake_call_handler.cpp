@@ -75,9 +75,8 @@ void HandleDuckdbCall(CallStmt *call, const char *query_string) {
     Node *arg = (Node *)lfirst(lc);
 
     if (!IsA(arg, Const))
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("non-constant arguments are not supported in "
-                             "DuckDB-routed procedures")));
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("non-constant arguments are not supported in "
+                                                                     "DuckDB-routed procedures")));
 
     Const *c = (Const *)arg;
 
@@ -90,13 +89,10 @@ void HandleDuckdbCall(CallStmt *call, const char *query_string) {
       if (!schema_name)
         elog(ERROR, "could not find namespace for relation with OID %u", relid);
 
-      named_params +=
-          ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
-      named_params +=
-          ", schema => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
+      named_params += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
+      named_params += ", schema => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
     } else {
-      positional_args.push_back(
-          DatumToSqlLiteral(c->constvalue, c->consttype, c->constisnull));
+      positional_args.push_back(DatumToSqlLiteral(c->constvalue, c->consttype, c->constisnull));
     }
   }
 
@@ -107,9 +103,8 @@ void HandleDuckdbCall(CallStmt *call, const char *query_string) {
     args_joined += positional_args[i];
   }
 
-  std::string query = "CALL " PGDUCKLAKE_DUCKDB_CATALOG "." +
-                       duckdb::KeywordHelper::WriteOptionallyQuoted(proc_name) +
-                       "(" + args_joined + named_params + ")";
+  std::string query = "CALL " PGDUCKLAKE_DUCKDB_CATALOG "." + duckdb::KeywordHelper::WriteOptionallyQuoted(proc_name) +
+                      "(" + args_joined + named_params + ")";
 
   elog(DEBUG2, "[PGDuckLake] Executing CALL: %s", query.c_str());
 
@@ -119,16 +114,14 @@ void HandleDuckdbCall(CallStmt *call, const char *query_string) {
   PushActiveSnapshot(GetTransactionSnapshot());
   if (!pgduckdb::DuckdbEnsureCacheValid()) {
     PopActiveSnapshot();
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("pg_duckdb is not available")));
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("pg_duckdb is not available")));
   }
 
   const char *error_msg = nullptr;
   int result = ExecuteDuckDBQuery(query.c_str(), &error_msg);
   PopActiveSnapshot();
   if (result != 0)
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("%s", error_msg ? error_msg : "unknown error")));
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("%s", error_msg ? error_msg : "unknown error")));
 }
 
 } // namespace pgducklake

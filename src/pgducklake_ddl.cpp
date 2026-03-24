@@ -28,16 +28,13 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
   elog(LOG, "ducklake_initialize() called");
 
   if (!creating_extension) {
-    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("ducklake_initialize() can only be called during "
-                           "CREATE EXTENSION")));
+    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("ducklake_initialize() can only be called during "
+                                                                     "CREATE EXTENSION")));
   }
 
   if (pgducklake::PgDuckLakeMetadataManager::IsInitialized()) {
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_DUPLICATE_SCHEMA),
-         errmsg("DuckLake reserved schema \"ducklake\" is already in use")));
+    ereport(ERROR,
+            (errcode(ERRCODE_DUPLICATE_SCHEMA), errmsg("DuckLake reserved schema \"ducklake\" is already in use")));
   }
 
   // Force DuckDB initialization (no-op if already alive).
@@ -50,10 +47,8 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
   const char *init_errmsg = nullptr;
   int ret = pgducklake::ExecuteDuckDBQuery("SELECT 1", &init_errmsg);
   if (ret != 0) {
-    ereport(ERROR,
-            (errcode(ERRCODE_INTERNAL_ERROR),
-             errmsg("failed to initialize DuckDB: %s",
-                    init_errmsg ? init_errmsg : "unknown error")));
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to initialize DuckDB: %s", init_errmsg ? init_errmsg : "unknown error")));
   }
 
   if (duckdb_already_initialized) {
@@ -64,8 +59,7 @@ DECLARE_PG_FUNCTION(ducklake_initialize) {
 }
 
 DECLARE_PG_FUNCTION(ducklake_only_procedure) {
-  char *proc_name = DatumGetCString(
-      DirectFunctionCall1(regprocout, ObjectIdGetDatum(fcinfo->flinfo->fn_oid)));
+  char *proc_name = DatumGetCString(DirectFunctionCall1(regprocout, ObjectIdGetDatum(fcinfo->flinfo->fn_oid)));
   elog(ERROR, "Procedure '%s' only works with DuckDB execution", proc_name);
 }
 

@@ -82,13 +82,11 @@ struct DirectInsertScanState {
 
 // Custom scan methods
 static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan);
-static void DirectInsert_BeginCustomScan(CustomScanState *node, EState *estate,
-                                         int eflags);
+static void DirectInsert_BeginCustomScan(CustomScanState *node, EState *estate, int eflags);
 static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node);
 static void DirectInsert_EndCustomScan(CustomScanState *node);
 static void DirectInsert_ReScanCustomScan(CustomScanState *node);
-static void DirectInsert_ExplainCustomScan(CustomScanState *node,
-                                           List *ancestors, ExplainState *es);
+static void DirectInsert_ExplainCustomScan(CustomScanState *node, List *ancestors, ExplainState *es);
 
 static CustomExecMethods direct_insert_exec_methods = {
     .CustomName = "DuckLakeDirectInsert",
@@ -112,14 +110,10 @@ static CustomScanMethods direct_insert_scan_methods = {
 };
 
 // Helper functions
-static bool TryDetectDirectInsertPattern(Query *parse,
-                                         ParamListInfo bound_params,
-                                         DirectInsertContext *context_out);
+static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_params, DirectInsertContext *context_out);
 static bool IsUnnestOfParam(Node *node, int *param_id_out, Oid *param_type_out);
-static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids,
-                                 int *expected_row_count_out);
-static PlannedStmt *CreateDirectInsertPlan(Query *parse,
-                                           DirectInsertContext *context);
+static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids, int *expected_row_count_out);
+static PlannedStmt *CreateDirectInsertPlan(Query *parse, DirectInsertContext *context);
 static void DirectInsertIntoInlinedTable(DirectInsertScanState *state);
 
 /*
@@ -134,33 +128,26 @@ static Oid DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
   // Nested types stored as VARCHAR in the inlined table -- bail out,
   // these cannot appear in the UNNEST($param) pattern.
   // DuckDB ToString() uses mixed case: "STRUCT(...)", "MAP(...)", "INTEGER[]".
-  if (pg_strncasecmp(duckdb_type, "STRUCT", 6) == 0 ||
-      pg_strncasecmp(duckdb_type, "MAP", 3) == 0 ||
+  if (pg_strncasecmp(duckdb_type, "STRUCT", 6) == 0 || pg_strncasecmp(duckdb_type, "MAP", 3) == 0 ||
       strchr(duckdb_type, '[') != NULL) {
     return InvalidOid;
   }
 
   // VARIANT and GEOMETRY do not support inlining at all
-  if (pg_strcasecmp(duckdb_type, "VARIANT") == 0 ||
-      pg_strcasecmp(duckdb_type, "GEOMETRY") == 0) {
+  if (pg_strcasecmp(duckdb_type, "VARIANT") == 0 || pg_strcasecmp(duckdb_type, "GEOMETRY") == 0) {
     return InvalidOid;
   }
 
   // VARCHAR and BLOB are stored as BYTEA
-  if (pg_strcasecmp(duckdb_type, "VARCHAR") == 0 ||
-      pg_strcasecmp(duckdb_type, "BLOB") == 0) {
+  if (pg_strcasecmp(duckdb_type, "VARCHAR") == 0 || pg_strcasecmp(duckdb_type, "BLOB") == 0) {
     return BYTEAOID;
   }
 
   // Scalar types with wider DuckDB range are stored as VARCHAR
-  if (pg_strcasecmp(duckdb_type, "UBIGINT") == 0 ||
-      pg_strcasecmp(duckdb_type, "HUGEINT") == 0 ||
-      pg_strcasecmp(duckdb_type, "UHUGEINT") == 0 ||
-      pg_strcasecmp(duckdb_type, "DATE") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP WITH TIME ZONE") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP_S") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP_MS") == 0 ||
+  if (pg_strcasecmp(duckdb_type, "UBIGINT") == 0 || pg_strcasecmp(duckdb_type, "HUGEINT") == 0 ||
+      pg_strcasecmp(duckdb_type, "UHUGEINT") == 0 || pg_strcasecmp(duckdb_type, "DATE") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP WITH TIME ZONE") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP_S") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP_MS") == 0 ||
       pg_strcasecmp(duckdb_type, "TIMESTAMP_NS") == 0) {
     return VARCHAROID;
   }
@@ -174,8 +161,7 @@ static Oid DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
  * inlined data table for each user column.  Returns false on bail-out
  * (nested types, missing metadata, column count mismatch).
  */
-static bool GetInlinedColumnTypes(uint64_t table_id, List *param_infos,
-                                  List **inlined_col_types_out) {
+static bool GetInlinedColumnTypes(uint64_t table_id, List *param_infos, List **inlined_col_types_out) {
   int ret;
   int num_cols = list_length(param_infos);
 
@@ -213,8 +199,7 @@ ORDER BY column_order)",
   ListCell *lc = list_head(param_infos);
   for (int i = 0; i < num_cols; i++) {
     bool isnull;
-    Datum type_datum =
-        SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
+    Datum type_datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
     if (isnull) {
       SPI_finish();
       return false;
@@ -249,23 +234,19 @@ void RegisterDirectInsertNode() {
   RegisterCustomScanMethods(&direct_insert_scan_methods);
 }
 
-PlannedStmt *TryCreateDirectInsertPlan(Query *parse,
-                                       ParamListInfo bound_params) {
+PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params) {
   DirectInsertContext context = {};
   if (TryDetectDirectInsertPattern(parse, bound_params, &context)) {
     ereport(DEBUG1, (errmsg("DuckLake direct insert: optimization enabled for "
                             "INSERT UNNEST pattern, "
                             "table_id=%lu, expected_rows=%d",
-                            (unsigned long)context.table_id,
-                            context.expected_row_count)));
+                            (unsigned long)context.table_id, context.expected_row_count)));
     return CreateDirectInsertPlan(parse, &context);
   }
   return nullptr;
 }
 
-static bool TryDetectDirectInsertPattern(Query *parse,
-                                         ParamListInfo bound_params,
-                                         DirectInsertContext *context_out) {
+static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_params, DirectInsertContext *context_out) {
   // Check 1: Must be INSERT command
   if (parse->commandType != CMD_INSERT) {
     return false;
@@ -278,13 +259,11 @@ static bool TryDetectDirectInsertPattern(Query *parse,
   }
 
   // Check 3: Must have a single result relation
-  if (parse->resultRelation == 0 ||
-      list_length(parse->rtable) < parse->resultRelation) {
+  if (parse->resultRelation == 0 || list_length(parse->rtable) < parse->resultRelation) {
     return false;
   }
 
-  RangeTblEntry *target_rte =
-      (RangeTblEntry *)list_nth(parse->rtable, parse->resultRelation - 1);
+  RangeTblEntry *target_rte = (RangeTblEntry *)list_nth(parse->rtable, parse->resultRelation - 1);
   if (target_rte->rtekind != RTE_RELATION) {
     return false;
   }
@@ -307,15 +286,13 @@ static bool TryDetectDirectInsertPattern(Query *parse,
 
   // Check 5: Must have data inlining enabled
   uint64_t table_id, schema_version;
-  if (!pgducklake::GetTableInliningInfo(target_oid, &table_id,
-                                        &schema_version)) {
+  if (!pgducklake::GetTableInliningInfo(target_oid, &table_id, &schema_version)) {
     relation_close(target_rel, AccessShareLock);
     return false;
   }
 
   // Check 6: Must have SELECT query as source
-  if (!parse->jointree || !parse->jointree->fromlist ||
-      list_length(parse->jointree->fromlist) != 1) {
+  if (!parse->jointree || !parse->jointree->fromlist || list_length(parse->jointree->fromlist) != 1) {
     relation_close(target_rel, AccessShareLock);
     return false;
   }
@@ -328,8 +305,7 @@ static bool TryDetectDirectInsertPattern(Query *parse,
   }
 
   int from_rtindex = ((RangeTblRef *)from_node)->rtindex;
-  RangeTblEntry *from_rte =
-      (RangeTblEntry *)list_nth(parse->rtable, from_rtindex - 1);
+  RangeTblEntry *from_rte = (RangeTblEntry *)list_nth(parse->rtable, from_rtindex - 1);
 
   // Check if it's a subquery RTE
   Query *subquery = NULL;
@@ -389,8 +365,7 @@ static bool TryDetectDirectInsertPattern(Query *parse,
       return false;
     }
     Form_pg_attribute attr = TupleDescAttr(tupdesc, attno);
-    target_col_names =
-        lappend(target_col_names, pstrdup(NameStr(attr->attname)));
+    target_col_names = lappend(target_col_names, pstrdup(NameStr(attr->attname)));
     target_col_types = lappend_oid(target_col_types, element_type);
     attno++;
   }
@@ -430,8 +405,7 @@ static bool TryDetectDirectInsertPattern(Query *parse,
   return true;
 }
 
-static bool IsUnnestOfParam(Node *node, int *param_id_out,
-                            Oid *param_type_out) {
+static bool IsUnnestOfParam(Node *node, int *param_id_out, Oid *param_type_out) {
   if (!node) {
     return false;
   }
@@ -470,8 +444,7 @@ static bool IsUnnestOfParam(Node *node, int *param_id_out,
   return false;
 }
 
-static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids,
-                                 int *expected_row_count_out) {
+static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids, int *expected_row_count_out) {
   if (!bound_params) {
     return false;
   }
@@ -523,8 +496,7 @@ static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids,
   return true;
 }
 
-static PlannedStmt *CreateDirectInsertPlan(Query *parse,
-                                           DirectInsertContext *context) {
+static PlannedStmt *CreateDirectInsertPlan(Query *parse, DirectInsertContext *context) {
   PlannedStmt *pstmt = makeNode(PlannedStmt);
   pstmt->commandType = CMD_INSERT;
   pstmt->hasReturning = false;
@@ -552,24 +524,15 @@ static PlannedStmt *CreateDirectInsertPlan(Query *parse,
   // Use makeInteger/makeString for all values to create a homogeneous pointer
   // list
   List *custom_private = NIL;
-  custom_private =
-      lappend(custom_private, makeInteger((int)context->target_table_oid));
-  custom_private = lappend(custom_private,
-                           makeInteger((int)(context->table_id & 0xFFFFFFFF)));
-  custom_private =
-      lappend(custom_private,
-              makeInteger((int)((context->table_id >> 32) & 0xFFFFFFFF)));
-  custom_private = lappend(
-      custom_private, makeInteger((int)(context->schema_version & 0xFFFFFFFF)));
-  custom_private =
-      lappend(custom_private,
-              makeInteger((int)((context->schema_version >> 32) & 0xFFFFFFFF)));
-  custom_private =
-      lappend(custom_private, makeInteger(context->expected_row_count));
+  custom_private = lappend(custom_private, makeInteger((int)context->target_table_oid));
+  custom_private = lappend(custom_private, makeInteger((int)(context->table_id & 0xFFFFFFFF)));
+  custom_private = lappend(custom_private, makeInteger((int)((context->table_id >> 32) & 0xFFFFFFFF)));
+  custom_private = lappend(custom_private, makeInteger((int)(context->schema_version & 0xFFFFFFFF)));
+  custom_private = lappend(custom_private, makeInteger((int)((context->schema_version >> 32) & 0xFFFFFFFF)));
+  custom_private = lappend(custom_private, makeInteger(context->expected_row_count));
 
   // Encode param IDs
-  custom_private =
-      lappend(custom_private, makeInteger(list_length(context->param_infos)));
+  custom_private = lappend(custom_private, makeInteger(list_length(context->param_infos)));
   ListCell *lc;
   foreach (lc, context->param_infos) {
     ParamInfo *pinfo = (ParamInfo *)lfirst(lc);
@@ -577,16 +540,14 @@ static PlannedStmt *CreateDirectInsertPlan(Query *parse,
   }
 
   // Encode column names (as makeString nodes)
-  custom_private = lappend(custom_private,
-                           makeInteger(list_length(context->target_col_names)));
+  custom_private = lappend(custom_private, makeInteger(list_length(context->target_col_names)));
   foreach (lc, context->target_col_names) {
     char *colname = (char *)lfirst(lc);
     custom_private = lappend(custom_private, makeString(pstrdup(colname)));
   }
 
   // Encode column types (as integers)
-  custom_private = lappend(custom_private,
-                           makeInteger(list_length(context->target_col_types)));
+  custom_private = lappend(custom_private, makeInteger(list_length(context->target_col_types)));
   foreach (lc, context->target_col_types) {
     Oid coltype = lfirst_oid(lc);
     custom_private = lappend(custom_private, makeInteger((int)coltype));
@@ -600,8 +561,7 @@ static PlannedStmt *CreateDirectInsertPlan(Query *parse,
 }
 
 static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan) {
-  DirectInsertScanState *state =
-      (DirectInsertScanState *)palloc0(sizeof(DirectInsertScanState));
+  DirectInsertScanState *state = (DirectInsertScanState *)palloc0(sizeof(DirectInsertScanState));
   NodeSetTag(state, T_CustomScanState);
   state->css.methods = &direct_insert_exec_methods;
 
@@ -622,8 +582,7 @@ static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan) {
   lc = lnext(custom_private, lc);
   uint32_t schema_version_high = (uint32_t)intVal(lfirst(lc));
   lc = lnext(custom_private, lc);
-  state->schema_version =
-      ((uint64_t)schema_version_high << 32) | schema_version_low;
+  state->schema_version = ((uint64_t)schema_version_high << 32) | schema_version_low;
 
   state->expected_row_count = intVal(lfirst(lc));
   lc = lnext(custom_private, lc);
@@ -644,8 +603,7 @@ static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan) {
   for (int i = 0; i < num_cols; i++) {
     Node *node = (Node *)lfirst(lc);
     char *colname = strVal(node);
-    state->column_names =
-        lappend(state->column_names, makeString(pstrdup(colname)));
+    state->column_names = lappend(state->column_names, makeString(pstrdup(colname)));
     lc = lnext(custom_private, lc);
   }
 
@@ -654,8 +612,7 @@ static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan) {
   lc = lnext(custom_private, lc);
   state->column_types = NIL;
   for (int i = 0; i < num_types; i++) {
-    state->column_types =
-        lappend_oid(state->column_types, (Oid)intVal(lfirst(lc)));
+    state->column_types = lappend_oid(state->column_types, (Oid)intVal(lfirst(lc)));
     lc = lnext(custom_private, lc);
   }
 
@@ -665,35 +622,29 @@ static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan) {
   return (Node *)state;
 }
 
-static void DirectInsert_BeginCustomScan(CustomScanState *node, EState *estate,
-                                         int eflags) {
+static void DirectInsert_BeginCustomScan(CustomScanState *node, EState *estate, int eflags) {
   DirectInsertScanState *state = (DirectInsertScanState *)node;
 
   state->bound_params = estate->es_param_list_info;
   if (!state->bound_params) {
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("direct insert: no bound parameters found")));
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("direct insert: no bound parameters found")));
   }
 
   StringInfoData buf;
   initStringInfo(&buf);
-  appendStringInfo(&buf, "ducklake.ducklake_inlined_data_%llu_%llu",
-                   (unsigned long long)state->table_id,
+  appendStringInfo(&buf, "ducklake.ducklake_inlined_data_%llu_%llu", (unsigned long long)state->table_id,
                    (unsigned long long)state->schema_version);
   state->inlined_table_name = buf.data;
 
   // Query next snapshot ID from DuckLake metadata tables
   // This will be used as the begin_snapshot for the inserted rows
   state->begin_snapshot = pgducklake::GetNextSnapshotId();
-  state->next_row_id =
-      pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
+  state->next_row_id = pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
 
-  ereport(DEBUG1,
-          (errmsg("DuckLake direct insert: initialized scan state, table=%s, "
-                  "predicted_snapshot=%llu, next_row_id=%lu",
-                  state->inlined_table_name,
-                  (unsigned long long)state->begin_snapshot,
-                  (unsigned long)state->next_row_id)));
+  ereport(DEBUG1, (errmsg("DuckLake direct insert: initialized scan state, table=%s, "
+                          "predicted_snapshot=%llu, next_row_id=%lu",
+                          state->inlined_table_name, (unsigned long long)state->begin_snapshot,
+                          (unsigned long)state->next_row_id)));
 }
 
 static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
@@ -715,8 +666,7 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
   // Create the snapshot record immediately while we still have an active
   // PostgreSQL snapshot. This makes the inserted rows visible to subsequent
   // DuckLake queries.
-  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot,
-                                            state->schema_version);
+  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->schema_version);
 
   // Update command counter for RETURNING clause (if any)
   CommandCounterIncrement();
@@ -729,12 +679,10 @@ static void DirectInsert_EndCustomScan(CustomScanState *node) {
 }
 
 static void DirectInsert_ReScanCustomScan(CustomScanState *node) {
-  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  errmsg("direct insert does not support rescan")));
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("direct insert does not support rescan")));
 }
 
-static void DirectInsert_ExplainCustomScan(CustomScanState *node,
-                                           List *ancestors, ExplainState *es) {
+static void DirectInsert_ExplainCustomScan(CustomScanState *node, List *ancestors, ExplainState *es) {
   DirectInsertScanState *state = (DirectInsertScanState *)node;
 
   ExplainPropertyText("Custom Scan", "DuckLakeDirectInsert", es);
@@ -750,8 +698,7 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
 
   // Connect to SPI
   if ((ret = SPI_connect()) < 0) {
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("SPI_connect failed: %d", ret)));
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed: %d", ret)));
   }
 
   // Extract arrays from parameters
@@ -766,8 +713,7 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
     ParamExternData *pdata = &state->bound_params->params[param_id - 1];
 
     if (pdata->isnull) {
-      ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-                      errmsg("parameter $%d is null", param_id)));
+      ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("parameter $%d is null", param_id)));
     }
 
     arrays[param_idx] = DatumGetArrayTypeP(pdata->value);
@@ -780,17 +726,14 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
   for (int i = 1; i < num_params; i++) {
     int len = ArrayGetNItems(ARR_NDIM(arrays[i]), ARR_DIMS(arrays[i]));
     if (len != arr_length) {
-      ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-                      errmsg("array length mismatch")));
+      ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), errmsg("array length mismatch")));
     }
   }
 
   // Build INSERT statement
   StringInfoData query;
   initStringInfo(&query);
-  appendStringInfo(&query,
-                   "INSERT INTO %s (row_id, begin_snapshot, end_snapshot",
-                   state->inlined_table_name);
+  appendStringInfo(&query, "INSERT INTO %s (row_id, begin_snapshot, end_snapshot", state->inlined_table_name);
 
   param_idx = 0;
   foreach (lc, state->column_names) {
@@ -827,8 +770,7 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
   // Prepare statement
   SPIPlanPtr plan = SPI_prepare(query.data, num_params + 2, param_types);
   if (!plan) {
-    ereport(ERROR,
-            (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_prepare failed")));
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_prepare failed")));
   }
 
   // Insert rows
@@ -850,13 +792,11 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
 
   for (int i = 0; i < num_params; i++) {
     int nelems;
-    get_typlenbyvalalign(element_types[i], &typlen[i], &typbyval[i],
-                         &typalign[i]);
-    deconstruct_array(arrays[i], element_types[i], typlen[i], typbyval[i],
-                      typalign[i], &elem_values[i], &elem_nulls[i], &nelems);
+    get_typlenbyvalalign(element_types[i], &typlen[i], &typbyval[i], &typalign[i]);
+    deconstruct_array(arrays[i], element_types[i], typlen[i], typbyval[i], typalign[i], &elem_values[i], &elem_nulls[i],
+                      &nelems);
 
-    if ((inlined_types[i] == TEXTOID || inlined_types[i] == VARCHAROID) &&
-        inlined_types[i] != element_types[i]) {
+    if ((inlined_types[i] == TEXTOID || inlined_types[i] == VARCHAROID) && inlined_types[i] != element_types[i]) {
       bool typisvarlena;
       getTypeOutputInfo(element_types[i], &typoutput[i], &typisvarlena);
       needs_text_conv[i] = true;
@@ -890,8 +830,7 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
     // Execute INSERT
     ret = SPI_execute_plan(plan, values, nulls, false, 0);
     if (ret != SPI_OK_INSERT) {
-      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                      errmsg("SPI_execute_plan failed: %d", ret)));
+      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_execute_plan failed: %d", ret)));
     }
 
     state->rows_inserted++;
@@ -899,10 +838,8 @@ static void DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
 
   SPI_finish();
 
-  ereport(
-      DEBUG1,
-      (errmsg("DuckLake direct insert: successfully inserted %lld rows into %s",
-              (long long)state->rows_inserted, state->inlined_table_name)));
+  ereport(DEBUG1, (errmsg("DuckLake direct insert: successfully inserted %lld rows into %s",
+                          (long long)state->rows_inserted, state->inlined_table_name)));
 }
 
 } // namespace pgducklake

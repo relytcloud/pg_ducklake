@@ -57,8 +57,7 @@ extern "C" {
 #include "pgduckdb/pgduckdb_ruleutils.h"
 
 // Defined in pgducklake_vacuum.cpp
-extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params,
-                               BufferAccessStrategy bstrategy);
+extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params, BufferAccessStrategy bstrategy);
 }
 
 /* ================================================================
@@ -73,9 +72,8 @@ static Oid GetVariantTypeOid() {
   if (!OidIsValid(variant_type_oid)) {
     Oid nsp_oid = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
     if (OidIsValid(nsp_oid)) {
-      variant_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
-                                         CStringGetDatum("variant"),
-                                         ObjectIdGetDatum(nsp_oid));
+      variant_type_oid =
+          GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid, CStringGetDatum("variant"), ObjectIdGetDatum(nsp_oid));
     }
   }
   return variant_type_oid;
@@ -89,9 +87,8 @@ static Oid GetVariantTypeOid() {
 
 extern "C" {
 
-#define NOT_IMPLEMENTED()                                                      \
-  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),                      \
-                  errmsg("ducklake does not implement %s", __func__)))
+#define NOT_IMPLEMENTED()                                                                                              \
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake does not implement %s", __func__)))
 
 PG_FUNCTION_INFO_V1(ducklake_am_handler);
 
@@ -121,10 +118,8 @@ typedef struct DuckdbScanDescData {
 } DuckdbScanDescData;
 typedef struct DuckdbScanDescData *DuckdbScanDesc;
 
-static TableScanDesc duckdb_scan_begin(Relation relation, Snapshot snapshot,
-                                       int nkeys, ScanKey /*key*/,
-                                       ParallelTableScanDesc parallel_scan,
-                                       uint32 flags) {
+static TableScanDesc duckdb_scan_begin(Relation relation, Snapshot snapshot, int nkeys, ScanKey /*key*/,
+                                       ParallelTableScanDesc parallel_scan, uint32 flags) {
   DuckdbScanDesc scan = (DuckdbScanDesc)palloc(sizeof(DuckdbScanDescData));
 
   scan->rs_base.rs_rd = relation;
@@ -142,15 +137,12 @@ static void duckdb_scan_end(TableScanDesc sscan) {
   pfree(scan);
 }
 
-static void duckdb_scan_rescan(TableScanDesc /*sscan*/, ScanKey /*key*/,
-                               bool /*set_params*/, bool /*allow_strat*/,
+static void duckdb_scan_rescan(TableScanDesc /*sscan*/, ScanKey /*key*/, bool /*set_params*/, bool /*allow_strat*/,
                                bool /*allow_sync*/, bool /*allow_pagemode*/) {
   NOT_IMPLEMENTED();
 }
 
-static bool duckdb_scan_getnextslot(TableScanDesc /*sscan*/,
-                                    ScanDirection /*direction*/,
-                                    TupleTableSlot *slot) {
+static bool duckdb_scan_getnextslot(TableScanDesc /*sscan*/, ScanDirection /*direction*/, TupleTableSlot *slot) {
   /* If we are executing ALTER TABLE we return empty tuple */
   if (pgduckdb::DuckdbIsAlterTableInProgress()) {
     ExecClearTuple(slot);
@@ -176,11 +168,8 @@ static void duckdb_index_fetch_end(IndexFetchTableData * /*scan*/) {
   NOT_IMPLEMENTED();
 }
 
-static bool duckdb_index_fetch_tuple(struct IndexFetchTableData * /*scan*/,
-                                     ItemPointer /*tid*/, Snapshot /*snapshot*/,
-                                     TupleTableSlot * /*slot*/,
-                                     bool * /*call_again*/,
-                                     bool * /*all_dead*/) {
+static bool duckdb_index_fetch_tuple(struct IndexFetchTableData * /*scan*/, ItemPointer /*tid*/, Snapshot /*snapshot*/,
+                                     TupleTableSlot * /*slot*/, bool * /*call_again*/, bool * /*all_dead*/) {
   NOT_IMPLEMENTED();
 }
 
@@ -190,30 +179,24 @@ static bool duckdb_index_fetch_tuple(struct IndexFetchTableData * /*scan*/,
  * ------------------------------------------------------------------------
  */
 
-static bool duckdb_fetch_row_version(Relation /*relation*/, ItemPointer /*tid*/,
-                                     Snapshot /*snapshot*/,
+static bool duckdb_fetch_row_version(Relation /*relation*/, ItemPointer /*tid*/, Snapshot /*snapshot*/,
                                      TupleTableSlot * /*slot*/) {
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_get_latest_tid(TableScanDesc /*sscan*/,
-                                  ItemPointer /*tid*/) {
+static void duckdb_get_latest_tid(TableScanDesc /*sscan*/, ItemPointer /*tid*/) {
   NOT_IMPLEMENTED();
 }
 
-static bool duckdb_tuple_tid_valid(TableScanDesc /*scan*/,
-                                   ItemPointer /*tid*/) {
+static bool duckdb_tuple_tid_valid(TableScanDesc /*scan*/, ItemPointer /*tid*/) {
   NOT_IMPLEMENTED();
 }
 
-static bool duckdb_tuple_satisfies_snapshot(Relation /*rel*/,
-                                            TupleTableSlot * /*slot*/,
-                                            Snapshot /*snapshot*/) {
+static bool duckdb_tuple_satisfies_snapshot(Relation /*rel*/, TupleTableSlot * /*slot*/, Snapshot /*snapshot*/) {
   NOT_IMPLEMENTED();
 }
 
-static TransactionId
-duckdb_index_delete_tuples(Relation /*rel*/, TM_IndexDeleteOp * /*delstate*/) {
+static TransactionId duckdb_index_delete_tuples(Relation /*rel*/, TM_IndexDeleteOp * /*delstate*/) {
   NOT_IMPLEMENTED();
 }
 
@@ -222,74 +205,57 @@ duckdb_index_delete_tuples(Relation /*rel*/, TM_IndexDeleteOp * /*delstate*/) {
  * ----------------------------------------------------------------------------
  */
 
-static void duckdb_tuple_insert(Relation /*relation*/,
-                                TupleTableSlot * /*slot*/, CommandId /*cid*/,
-                                int /*options*/, BulkInsertState /*bistate*/) {
+static void duckdb_tuple_insert(Relation /*relation*/, TupleTableSlot * /*slot*/, CommandId /*cid*/, int /*options*/,
+                                BulkInsertState /*bistate*/) {
   /* No-op: CTAS data population is handled by the DDL event trigger via DuckDB.
    * Normal INSERTs are routed through pg_duckdb's execution path, not the table
    * AM. */
 }
 
-static void duckdb_tuple_insert_speculative(Relation /*relation*/,
-                                            TupleTableSlot * /*slot*/,
-                                            CommandId /*cid*/, int /*options*/,
-                                            BulkInsertState /*bistate*/,
-                                            uint32 /*specToken*/) {
+static void duckdb_tuple_insert_speculative(Relation /*relation*/, TupleTableSlot * /*slot*/, CommandId /*cid*/,
+                                            int /*options*/, BulkInsertState /*bistate*/, uint32 /*specToken*/) {
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_tuple_complete_speculative(Relation /*relation*/,
-                                              TupleTableSlot * /*slot*/,
-                                              uint32 /*spekToken*/,
+static void duckdb_tuple_complete_speculative(Relation /*relation*/, TupleTableSlot * /*slot*/, uint32 /*spekToken*/,
                                               bool /*succeeded*/) {
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_multi_insert(Relation /*relation*/,
-                                TupleTableSlot ** /*slots*/, int /*ntuples*/,
-                                CommandId /*cid*/, int /*options*/,
-                                BulkInsertState /*bistate*/) {
+static void duckdb_multi_insert(Relation /*relation*/, TupleTableSlot ** /*slots*/, int /*ntuples*/, CommandId /*cid*/,
+                                int /*options*/, BulkInsertState /*bistate*/) {
   /* No-op: see duckdb_tuple_insert */
 }
 
-static TM_Result duckdb_tuple_delete(Relation /*relation*/, ItemPointer /*tid*/,
-                                     CommandId /*cid*/, Snapshot /*snapshot*/,
-                                     Snapshot /*crosscheck*/, bool /*wait*/,
-                                     TM_FailureData * /*tmfd*/,
-                                     bool /*changingPart*/) {
+static TM_Result duckdb_tuple_delete(Relation /*relation*/, ItemPointer /*tid*/, CommandId /*cid*/,
+                                     Snapshot /*snapshot*/, Snapshot /*crosscheck*/, bool /*wait*/,
+                                     TM_FailureData * /*tmfd*/, bool /*changingPart*/) {
   NOT_IMPLEMENTED();
 }
 
 #if PG_VERSION_NUM >= 160000
 
-static TM_Result duckdb_tuple_update(
-    Relation /*relation*/, ItemPointer /*otid*/, TupleTableSlot * /*slot*/,
-    CommandId /*cid*/, Snapshot /*snapshot*/, Snapshot /*crosscheck*/,
-    bool /*wait*/, TM_FailureData * /*tmfd*/, LockTupleMode * /*lockmode*/,
-    TU_UpdateIndexes * /*update_indexes*/) {
+static TM_Result duckdb_tuple_update(Relation /*relation*/, ItemPointer /*otid*/, TupleTableSlot * /*slot*/,
+                                     CommandId /*cid*/, Snapshot /*snapshot*/, Snapshot /*crosscheck*/, bool /*wait*/,
+                                     TM_FailureData * /*tmfd*/, LockTupleMode * /*lockmode*/,
+                                     TU_UpdateIndexes * /*update_indexes*/) {
   NOT_IMPLEMENTED();
 }
 
 #else
 
-static TM_Result duckdb_tuple_update(Relation /*rel*/, ItemPointer /*otid*/,
-                                     TupleTableSlot * /*slot*/,
-                                     CommandId /*cid*/, Snapshot /*snapshot*/,
-                                     Snapshot /*crosscheck*/, bool /*wait*/,
-                                     TM_FailureData * /*tmfd*/,
-                                     LockTupleMode * /*lockmode*/,
+static TM_Result duckdb_tuple_update(Relation /*rel*/, ItemPointer /*otid*/, TupleTableSlot * /*slot*/,
+                                     CommandId /*cid*/, Snapshot /*snapshot*/, Snapshot /*crosscheck*/, bool /*wait*/,
+                                     TM_FailureData * /*tmfd*/, LockTupleMode * /*lockmode*/,
                                      bool * /*update_indexes*/) {
   NOT_IMPLEMENTED();
 }
 
 #endif
 
-static TM_Result duckdb_tuple_lock(Relation /*relation*/, ItemPointer /*tid*/,
-                                   Snapshot /*snapshot*/,
-                                   TupleTableSlot * /*slot*/, CommandId /*cid*/,
-                                   LockTupleMode /*mode*/,
-                                   LockWaitPolicy /*wait_policy*/,
-                                   uint8 /*flags*/, TM_FailureData * /*tmfd*/) {
+static TM_Result duckdb_tuple_lock(Relation /*relation*/, ItemPointer /*tid*/, Snapshot /*snapshot*/,
+                                   TupleTableSlot * /*slot*/, CommandId /*cid*/, LockTupleMode /*mode*/,
+                                   LockWaitPolicy /*wait_policy*/, uint8 /*flags*/, TM_FailureData * /*tmfd*/) {
   NOT_IMPLEMENTED();
 }
 
@@ -304,100 +270,85 @@ static void duckdb_finish_bulk_insert(Relation /*relation*/, int /*options*/) {
 
 #if PG_VERSION_NUM >= 160000
 
-static void duckdb_relation_set_new_filelocator(
-    Relation /*rel*/, const RelFileLocator * /*newrnode*/, char /*persistence*/,
-    TransactionId * /*freezeXid*/, MultiXactId * /*minmulti*/) {
+static void duckdb_relation_set_new_filelocator(Relation /*rel*/, const RelFileLocator * /*newrnode*/,
+                                                char /*persistence*/, TransactionId * /*freezeXid*/,
+                                                MultiXactId * /*minmulti*/) {
   /* nothing to do, the table will be created in DuckDB later by the
    * duckdb_create_table_trigger event trigger */
 }
 
 #else
 
-static void duckdb_relation_set_new_filenode(Relation /*rel*/,
-                                             const RelFileNode * /*newrnode*/,
-                                             char /*persistence*/,
-                                             TransactionId * /*freezeXid*/,
-                                             MultiXactId * /*minmulti*/) {
+static void duckdb_relation_set_new_filenode(Relation /*rel*/, const RelFileNode * /*newrnode*/, char /*persistence*/,
+                                             TransactionId * /*freezeXid*/, MultiXactId * /*minmulti*/) {
   /* nothing to do, the table will be created in DuckDB later by the
    * duckdb_create_table_trigger event trigger */
 }
 
 #endif
 
-static void duckdb_relation_nontransactional_truncate(Relation rel) {}
+static void duckdb_relation_nontransactional_truncate(Relation rel) {
+}
 
 #if PG_VERSION_NUM >= 160000
 
-static void duckdb_copy_data(Relation /*rel*/,
-                             const RelFileLocator * /*newrnode*/) {
+static void duckdb_copy_data(Relation /*rel*/, const RelFileLocator * /*newrnode*/) {
   NOT_IMPLEMENTED();
 }
 
 #else
 
-static void duckdb_copy_data(Relation /*rel*/,
-                             const RelFileNode * /*newrnode*/) {
+static void duckdb_copy_data(Relation /*rel*/, const RelFileNode * /*newrnode*/) {
   NOT_IMPLEMENTED();
 }
 
 #endif
 
-static void duckdb_copy_for_cluster(
-    Relation /*OldTable*/, Relation /*NewTable*/, Relation /*OldIndex*/,
-    bool /*use_sort*/, TransactionId /*OldestXmin*/,
-    TransactionId * /*xid_cutoff*/, MultiXactId * /*multi_cutoff*/,
-    double * /*num_tuples*/, double * /*tups_vacuumed*/,
-    double * /*tups_recently_dead*/) {
+static void duckdb_copy_for_cluster(Relation /*OldTable*/, Relation /*NewTable*/, Relation /*OldIndex*/,
+                                    bool /*use_sort*/, TransactionId /*OldestXmin*/, TransactionId * /*xid_cutoff*/,
+                                    MultiXactId * /*multi_cutoff*/, double * /*num_tuples*/, double * /*tups_vacuumed*/,
+                                    double * /*tups_recently_dead*/) {
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_vacuum(Relation onerel, VacuumParams *params,
-                          BufferAccessStrategy bstrategy) {
+static void duckdb_vacuum(Relation onerel, VacuumParams *params, BufferAccessStrategy bstrategy) {
   ducklake_do_vacuum(onerel, params, bstrategy);
 }
 
 #if PG_VERSION_NUM >= 170000
 
-static bool duckdb_scan_analyze_next_block(TableScanDesc /*scan*/,
-                                           ReadStream * /*stream*/) {
+static bool duckdb_scan_analyze_next_block(TableScanDesc /*scan*/, ReadStream * /*stream*/) {
   /* no data in postgres, so no point to analyze next block */
   return false;
 }
 
 #else
 
-static bool duckdb_scan_analyze_next_block(TableScanDesc /*scan*/,
-                                           BlockNumber /*blockno*/,
+static bool duckdb_scan_analyze_next_block(TableScanDesc /*scan*/, BlockNumber /*blockno*/,
                                            BufferAccessStrategy /*bstrategy*/) {
   /* no data in postgres, so no point to analyze next block */
   return false;
 }
 #endif
 
-static bool duckdb_scan_analyze_next_tuple(TableScanDesc /*scan*/,
-                                           TransactionId /*OldestXmin*/,
-                                           double * /*liverows*/,
-                                           double * /*deadrows*/,
-                                           TupleTableSlot * /*slot*/) {
+static bool duckdb_scan_analyze_next_tuple(TableScanDesc /*scan*/, TransactionId /*OldestXmin*/, double * /*liverows*/,
+                                           double * /*deadrows*/, TupleTableSlot * /*slot*/) {
   NOT_IMPLEMENTED();
 }
 
-static double duckdb_index_build_range_scan(
-    Relation /*tableRelation*/, Relation /*indexRelation*/,
-    IndexInfo * /*indexInfo*/, bool /*allow_sync*/, bool /*anyvisible*/,
-    bool /*progress*/, BlockNumber /*start_blockno*/, BlockNumber /*numblocks*/,
-    IndexBuildCallback /*callback*/, void * /*callback_state*/,
-    TableScanDesc /*scan*/) {
+static double duckdb_index_build_range_scan(Relation /*tableRelation*/, Relation /*indexRelation*/,
+                                            IndexInfo * /*indexInfo*/, bool /*allow_sync*/, bool /*anyvisible*/,
+                                            bool /*progress*/, BlockNumber /*start_blockno*/, BlockNumber /*numblocks*/,
+                                            IndexBuildCallback /*callback*/, void * /*callback_state*/,
+                                            TableScanDesc /*scan*/) {
   if (pgduckdb::DuckdbIsAlterTableInProgress()) {
     return 0;
   }
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_index_validate_scan(Relation /*tableRelation*/,
-                                       Relation /*indexRelation*/,
-                                       IndexInfo * /*indexInfo*/,
-                                       Snapshot /*snapshot*/,
+static void duckdb_index_validate_scan(Relation /*tableRelation*/, Relation /*indexRelation*/,
+                                       IndexInfo * /*indexInfo*/, Snapshot /*snapshot*/,
                                        ValidateIndexState * /*state*/) {
   NOT_IMPLEMENTED();
 }
@@ -407,8 +358,7 @@ static void duckdb_index_validate_scan(Relation /*tableRelation*/,
  * ------------------------------------------------------------------------
  */
 
-static uint64 duckdb_relation_size(Relation /*rel*/,
-                                   ForkNumber /*forkNumber*/) {
+static uint64 duckdb_relation_size(Relation /*rel*/, ForkNumber /*forkNumber*/) {
   /*
    * For now we just return 0. We should probably want return something more
    * useful in the future though.
@@ -430,8 +380,7 @@ static bool duckdb_relation_needs_toast_table(Relation /*rel*/) {
  * ------------------------------------------------------------------------
  */
 
-static void duckdb_estimate_rel_size(Relation /*rel*/, int32 *attr_widths,
-                                     BlockNumber *pages, double *tuples,
+static void duckdb_estimate_rel_size(Relation /*rel*/, int32 *attr_widths, BlockNumber *pages, double *tuples,
                                      double *allvisfrac) {
   /* no data available */
   if (attr_widths)
@@ -451,36 +400,29 @@ static void duckdb_estimate_rel_size(Relation /*rel*/, int32 *attr_widths,
 
 #if PG_VERSION_NUM >= 180000
 
-static bool duckdb_scan_bitmap_next_tuple(TableScanDesc /*scan*/,
-                                          TupleTableSlot * /*slot*/,
-                                          bool * /*recheck*/,
-                                          uint64 * /*lossy_pages*/,
-                                          uint64 * /*exact_pages*/) {
+static bool duckdb_scan_bitmap_next_tuple(TableScanDesc /*scan*/, TupleTableSlot * /*slot*/, bool * /*recheck*/,
+                                          uint64 * /*lossy_pages*/, uint64 * /*exact_pages*/) {
   NOT_IMPLEMENTED();
 }
 
 #else
 
-static bool duckdb_scan_bitmap_next_block(TableScanDesc /*scan*/,
-                                          TBMIterateResult * /*tbmres*/) {
+static bool duckdb_scan_bitmap_next_block(TableScanDesc /*scan*/, TBMIterateResult * /*tbmres*/) {
   NOT_IMPLEMENTED();
 }
 
-static bool duckdb_scan_bitmap_next_tuple(TableScanDesc /*scan*/,
-                                          TBMIterateResult * /*tbmres*/,
+static bool duckdb_scan_bitmap_next_tuple(TableScanDesc /*scan*/, TBMIterateResult * /*tbmres*/,
                                           TupleTableSlot * /*slot*/) {
   NOT_IMPLEMENTED();
 }
 
 #endif
 
-static bool duckdb_scan_sample_next_block(TableScanDesc /*scan*/,
-                                          SampleScanState * /*scanstate*/) {
+static bool duckdb_scan_sample_next_block(TableScanDesc /*scan*/, SampleScanState * /*scanstate*/) {
   NOT_IMPLEMENTED();
 }
 
-static bool duckdb_scan_sample_next_tuple(TableScanDesc /*scan*/,
-                                          SampleScanState * /*scanstate*/,
+static bool duckdb_scan_sample_next_tuple(TableScanDesc /*scan*/, SampleScanState * /*scanstate*/,
                                           TupleTableSlot * /*slot*/) {
   NOT_IMPLEMENTED();
 }
@@ -490,73 +432,72 @@ static bool duckdb_scan_sample_next_tuple(TableScanDesc /*scan*/,
  * ------------------------------------------------------------------------
  */
 
-static const TableAmRoutine ducklake_methods = {
-    .type = T_TableAmRoutine,
+static const TableAmRoutine ducklake_methods = {.type = T_TableAmRoutine,
 
-    .slot_callbacks = ducklake_slot_callbacks,
+                                                .slot_callbacks = ducklake_slot_callbacks,
 
-    .scan_begin = duckdb_scan_begin,
-    .scan_end = duckdb_scan_end,
-    .scan_rescan = duckdb_scan_rescan,
-    .scan_getnextslot = duckdb_scan_getnextslot,
+                                                .scan_begin = duckdb_scan_begin,
+                                                .scan_end = duckdb_scan_end,
+                                                .scan_rescan = duckdb_scan_rescan,
+                                                .scan_getnextslot = duckdb_scan_getnextslot,
 
-    /* optional callbacks */
-    .scan_set_tidrange = NULL,
-    .scan_getnextslot_tidrange = NULL,
+                                                /* optional callbacks */
+                                                .scan_set_tidrange = NULL,
+                                                .scan_getnextslot_tidrange = NULL,
 
-    /* these are common helper functions */
-    .parallelscan_estimate = table_block_parallelscan_estimate,
-    .parallelscan_initialize = table_block_parallelscan_initialize,
-    .parallelscan_reinitialize = table_block_parallelscan_reinitialize,
+                                                /* these are common helper functions */
+                                                .parallelscan_estimate = table_block_parallelscan_estimate,
+                                                .parallelscan_initialize = table_block_parallelscan_initialize,
+                                                .parallelscan_reinitialize = table_block_parallelscan_reinitialize,
 
-    .index_fetch_begin = duckdb_index_fetch_begin,
-    .index_fetch_reset = duckdb_index_fetch_reset,
-    .index_fetch_end = duckdb_index_fetch_end,
-    .index_fetch_tuple = duckdb_index_fetch_tuple,
+                                                .index_fetch_begin = duckdb_index_fetch_begin,
+                                                .index_fetch_reset = duckdb_index_fetch_reset,
+                                                .index_fetch_end = duckdb_index_fetch_end,
+                                                .index_fetch_tuple = duckdb_index_fetch_tuple,
 
-    .tuple_fetch_row_version = duckdb_fetch_row_version,
-    .tuple_tid_valid = duckdb_tuple_tid_valid,
-    .tuple_get_latest_tid = duckdb_get_latest_tid,
-    .tuple_satisfies_snapshot = duckdb_tuple_satisfies_snapshot,
-    .index_delete_tuples = duckdb_index_delete_tuples,
+                                                .tuple_fetch_row_version = duckdb_fetch_row_version,
+                                                .tuple_tid_valid = duckdb_tuple_tid_valid,
+                                                .tuple_get_latest_tid = duckdb_get_latest_tid,
+                                                .tuple_satisfies_snapshot = duckdb_tuple_satisfies_snapshot,
+                                                .index_delete_tuples = duckdb_index_delete_tuples,
 
-    .tuple_insert = duckdb_tuple_insert,
-    .tuple_insert_speculative = duckdb_tuple_insert_speculative,
-    .tuple_complete_speculative = duckdb_tuple_complete_speculative,
-    .multi_insert = duckdb_multi_insert,
-    .tuple_delete = duckdb_tuple_delete,
-    .tuple_update = duckdb_tuple_update,
-    .tuple_lock = duckdb_tuple_lock,
-    .finish_bulk_insert = duckdb_finish_bulk_insert,
+                                                .tuple_insert = duckdb_tuple_insert,
+                                                .tuple_insert_speculative = duckdb_tuple_insert_speculative,
+                                                .tuple_complete_speculative = duckdb_tuple_complete_speculative,
+                                                .multi_insert = duckdb_multi_insert,
+                                                .tuple_delete = duckdb_tuple_delete,
+                                                .tuple_update = duckdb_tuple_update,
+                                                .tuple_lock = duckdb_tuple_lock,
+                                                .finish_bulk_insert = duckdb_finish_bulk_insert,
 
 #if PG_VERSION_NUM >= 160000
-    .relation_set_new_filelocator = duckdb_relation_set_new_filelocator,
+                                                .relation_set_new_filelocator = duckdb_relation_set_new_filelocator,
 #else
-    .relation_set_new_filenode = duckdb_relation_set_new_filenode,
+                                                .relation_set_new_filenode = duckdb_relation_set_new_filenode,
 #endif
-    .relation_nontransactional_truncate =
-        duckdb_relation_nontransactional_truncate,
-    .relation_copy_data = duckdb_copy_data,
-    .relation_copy_for_cluster = duckdb_copy_for_cluster,
-    .relation_vacuum = duckdb_vacuum,
-    .scan_analyze_next_block = duckdb_scan_analyze_next_block,
-    .scan_analyze_next_tuple = duckdb_scan_analyze_next_tuple,
-    .index_build_range_scan = duckdb_index_build_range_scan,
-    .index_validate_scan = duckdb_index_validate_scan,
+                                                .relation_nontransactional_truncate =
+                                                    duckdb_relation_nontransactional_truncate,
+                                                .relation_copy_data = duckdb_copy_data,
+                                                .relation_copy_for_cluster = duckdb_copy_for_cluster,
+                                                .relation_vacuum = duckdb_vacuum,
+                                                .scan_analyze_next_block = duckdb_scan_analyze_next_block,
+                                                .scan_analyze_next_tuple = duckdb_scan_analyze_next_tuple,
+                                                .index_build_range_scan = duckdb_index_build_range_scan,
+                                                .index_validate_scan = duckdb_index_validate_scan,
 
-    .relation_size = duckdb_relation_size,
-    .relation_needs_toast_table = duckdb_relation_needs_toast_table,
-    /* can be null because relation_needs_toast_table returns false */
-    .relation_toast_am = NULL,
-    .relation_fetch_toast_slice = NULL,
+                                                .relation_size = duckdb_relation_size,
+                                                .relation_needs_toast_table = duckdb_relation_needs_toast_table,
+                                                /* can be null because relation_needs_toast_table returns false */
+                                                .relation_toast_am = NULL,
+                                                .relation_fetch_toast_slice = NULL,
 
-    .relation_estimate_size = duckdb_estimate_rel_size,
+                                                .relation_estimate_size = duckdb_estimate_rel_size,
 #if PG_VERSION_NUM < 180000
-    .scan_bitmap_next_block = duckdb_scan_bitmap_next_block,
+                                                .scan_bitmap_next_block = duckdb_scan_bitmap_next_block,
 #endif
-    .scan_bitmap_next_tuple = duckdb_scan_bitmap_next_tuple,
-    .scan_sample_next_block = duckdb_scan_sample_next_block,
-    .scan_sample_next_tuple = duckdb_scan_sample_next_tuple};
+                                                .scan_bitmap_next_tuple = duckdb_scan_bitmap_next_tuple,
+                                                .scan_sample_next_block = duckdb_scan_sample_next_block,
+                                                .scan_sample_next_tuple = duckdb_scan_sample_next_tuple};
 
 Datum ducklake_am_handler(FunctionCallInfo /*funcinfo*/) {
   RegisterDuckdbTableAm("pgducklake", &ducklake_methods);
@@ -580,10 +521,8 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   SPI_connect();
 
   auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
-                  PGC_S_SESSION);
-  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
-                  PGC_S_SESSION);
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET, PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
 
   int ret = SPI_exec(R"(
 		SELECT DISTINCT objid AS relid, pg_class.relpersistence = 't' AS is_temporary
@@ -607,19 +546,17 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
       StringInfoData check_sql;
       initStringInfo(&check_sql);
       appendStringInfo(&check_sql,
-          "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
-          "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
-          "WHERE cmds.object_type = 'table' "
-          "AND a.attnum > 0 AND NOT a.attisdropped "
-          "AND a.atttypid = %u LIMIT 1",
-          variant_oid);
+                       "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
+                       "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
+                       "WHERE cmds.object_type = 'table' "
+                       "AND a.attnum > 0 AND NOT a.attisdropped "
+                       "AND a.atttypid = %u LIMIT 1",
+                       variant_oid);
       ret = SPI_exec(check_sql.data, 1);
       pfree(check_sql.data);
       if (ret == SPI_OK_SELECT && SPI_processed > 0)
-        ereport(ERROR,
-                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                 errmsg("ducklake.variant type can only be used with "
-                        "ducklake access method")));
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake.variant type can only be used with "
+                                                                       "ducklake access method")));
     }
     AtEOXact_GUC(false, save_nestlevel);
     SPI_finish();
@@ -627,14 +564,12 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   }
 
   if (SPI_processed != 1) {
-    elog(ERROR, "Expected single table to be created, but found %llu",
-         static_cast<unsigned long long>(SPI_processed));
+    elog(ERROR, "Expected single table to be created, but found %llu", static_cast<unsigned long long>(SPI_processed));
   }
 
   if (!IsA(parsetree, CreateStmt) && !IsA(parsetree, CreateTableAsStmt)) {
-    ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-                    errmsg("Cannot create a DuckLake table this way, use "
-                           "CREATE TABLE or CREATE TABLE AS")));
+    ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION), errmsg("Cannot create a DuckLake table this way, use "
+                                                                      "CREATE TABLE or CREATE TABLE AS")));
   }
 
   HeapTuple tuple = SPI_tuptable->vals[0];
@@ -644,8 +579,7 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
     elog(ERROR, "Expected relid to be returned, but found NULL");
   }
 
-  Datum is_temporary_datum =
-      SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
+  Datum is_temporary_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
   if (isnull) {
     elog(ERROR, "Expected temporary boolean to be returned, but found NULL");
   }
@@ -654,9 +588,8 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   bool is_temporary = DatumGetBool(is_temporary_datum);
 
   if (is_temporary) {
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("temporary tables are not supported with ducklake "
-                           "access method")));
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("temporary tables are not supported with ducklake "
+                                                                   "access method")));
   }
 
   AtEOXact_GUC(false, save_nestlevel);
@@ -668,12 +601,10 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 
   // Execute CREATE TABLE in DuckDB via raw_query
   const char *error_msg = nullptr;
-  int result =
-      pgducklake::ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
+  int result = pgducklake::ExecuteDuckDBQuery(create_table_ddl.c_str(), &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to create DuckLake table: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to create DuckLake table: %s", error_msg ? error_msg : "unknown error")));
   }
 
   // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
@@ -681,20 +612,15 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
     auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);
     auto ctas_query = (Query *)ctas_stmt->query;
     const char *ctas_query_string = pgduckdb_get_querydef(ctas_query);
-    std::string insert_string = std::string("INSERT INTO ") +
-                                pgduckdb_relation_name(relid) + " " +
-                                ctas_query_string;
+    std::string insert_string = std::string("INSERT INTO ") + pgduckdb_relation_name(relid) + " " + ctas_query_string;
 
     elog(DEBUG1, "CTAS data population: %s", insert_string.c_str());
 
     const char *insert_error_msg = nullptr;
-    int insert_result = pgducklake::ExecuteDuckDBQuery(insert_string.c_str(),
-                                                       &insert_error_msg);
+    int insert_result = pgducklake::ExecuteDuckDBQuery(insert_string.c_str(), &insert_error_msg);
     if (insert_result != 0) {
-      ereport(ERROR,
-              (errcode(ERRCODE_INTERNAL_ERROR),
-               errmsg("failed to populate DuckLake table via CTAS: %s",
-                      insert_error_msg ? insert_error_msg : "unknown error")));
+      ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("failed to populate DuckLake table via CTAS: %s",
+                                                              insert_error_msg ? insert_error_msg : "unknown error")));
     }
   }
 
@@ -711,8 +637,7 @@ DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
   SPI_connect();
 
   auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
-                  PGC_S_SESSION);
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET, PGC_S_SESSION);
 
   // Check if any tables were dropped
   int ret = SPI_exec(R"(
@@ -764,14 +689,12 @@ DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
       char *inlined_data_table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
       char *inlined_delete_table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
       if (inlined_data_table_name) {
-        drop_sql += duckdb::StringUtil::Format(
-            "DROP TABLE ducklake.%s;",
-            duckdb::SQLIdentifier(inlined_data_table_name));
+        drop_sql +=
+            duckdb::StringUtil::Format("DROP TABLE ducklake.%s;", duckdb::SQLIdentifier(inlined_data_table_name));
       }
       if (inlined_delete_table_name) {
-        drop_sql += duckdb::StringUtil::Format(
-            "DROP TABLE ducklake.%s;",
-            duckdb::SQLIdentifier(inlined_delete_table_name));
+        drop_sql +=
+            duckdb::StringUtil::Format("DROP TABLE ducklake.%s;", duckdb::SQLIdentifier(inlined_delete_table_name));
       }
     }
     if (!drop_sql.empty()) {
@@ -808,9 +731,8 @@ DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
     char *schema_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 1);
     char *table_name = SPI_getvalue(tuple, SPI_tuptable->tupdesc, 2);
 
-    std::string drop_ddl = duckdb::StringUtil::Format(
-        "DROP TABLE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG ".%s.%s", schema_name,
-        table_name);
+    std::string drop_ddl =
+        duckdb::StringUtil::Format("DROP TABLE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG ".%s.%s", schema_name, table_name);
 
     elog(DEBUG1, "Dropping DuckLake table: %s", drop_ddl.c_str());
 
@@ -818,8 +740,8 @@ DECLARE_PG_FUNCTION(ducklake_drop_table_trigger) {
     int result = pgducklake::ExecuteDuckDBQuery(drop_ddl.c_str(), &error_msg);
     if (result != 0) {
       // Log warning but don't fail - table might already be gone
-      elog(WARNING, "failed to drop DuckLake table %s.%s: %s", schema_name,
-           table_name, error_msg ? error_msg : "unknown error");
+      elog(WARNING, "failed to drop DuckLake table %s.%s: %s", schema_name, table_name,
+           error_msg ? error_msg : "unknown error");
     }
   }
 
@@ -839,9 +761,8 @@ void EnsureDuckLakeTable(Oid relid) {
   relation_close(rel, AccessShareLock);
 
   if (am_oid != ducklake_am_oid)
-    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-                    errmsg("table \"%s\" is not a DuckLake table",
-                           get_rel_name(relid))));
+    ereport(ERROR,
+            (errcode(ERRCODE_WRONG_OBJECT_TYPE), errmsg("table \"%s\" is not a DuckLake table", get_rel_name(relid))));
 }
 
 DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
@@ -857,10 +778,8 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
   SPI_connect();
 
   auto save_nestlevel = NewGUCNestLevel();
-  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET,
-                  PGC_S_SESSION);
-  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET,
-                  PGC_S_SESSION);
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET, PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
 
   int ret = SPI_exec(R"(
 		SELECT DISTINCT objid AS relid
@@ -882,19 +801,17 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
       StringInfoData check_sql;
       initStringInfo(&check_sql);
       appendStringInfo(&check_sql,
-          "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
-          "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
-          "WHERE cmds.object_type IN ('table', 'table column') "
-          "AND a.attnum > 0 AND NOT a.attisdropped "
-          "AND a.atttypid = %u LIMIT 1",
-          variant_oid);
+                       "SELECT 1 FROM pg_catalog.pg_event_trigger_ddl_commands() cmds "
+                       "JOIN pg_catalog.pg_attribute a ON cmds.objid = a.attrelid "
+                       "WHERE cmds.object_type IN ('table', 'table column') "
+                       "AND a.attnum > 0 AND NOT a.attisdropped "
+                       "AND a.atttypid = %u LIMIT 1",
+                       variant_oid);
       ret = SPI_exec(check_sql.data, 1);
       pfree(check_sql.data);
       if (ret == SPI_OK_SELECT && SPI_processed > 0)
-        ereport(ERROR,
-                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                 errmsg("ducklake.variant type can only be used with "
-                        "ducklake access method")));
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake.variant type can only be used with "
+                                                                       "ducklake access method")));
     }
     AtEOXact_GUC(false, save_nestlevel);
     SPI_finish();
@@ -919,8 +836,7 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
   } else if (IsA(parsetree, AlterTableStmt)) {
     ddl_str = pgduckdb_get_alter_tabledef(relid, (AlterTableStmt *)parsetree);
   } else {
-    elog(ERROR, "Unexpected parsetree type in ALTER TABLE trigger: %d",
-         nodeTag(parsetree));
+    elog(ERROR, "Unexpected parsetree type in ALTER TABLE trigger: %d", nodeTag(parsetree));
   }
 
   elog(DEBUG1, "ALTER TABLE DDL for DuckLake: %s", ddl_str);
@@ -929,8 +845,7 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
   int result = pgducklake::ExecuteDuckDBQuery(ddl_str, &error_msg);
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("failed to alter DuckLake table: %s",
-                           error_msg ? error_msg : "unknown error")));
+                    errmsg("failed to alter DuckLake table: %s", error_msg ? error_msg : "unknown error")));
   }
 
   PG_RETURN_NULL();
@@ -1098,8 +1013,7 @@ void SyncNewTables(const char *sid) {
       elog(DEBUG1, "Metadata sync: %s", ddl.c_str());
       ret = SPI_exec(ddl.c_str(), 0);
       if (ret != SPI_OK_UTILITY)
-        elog(ERROR, "SPI_exec CREATE TABLE failed: %s",
-             SPI_result_code_string(ret));
+        elog(ERROR, "SPI_exec CREATE TABLE failed: %s", SPI_result_code_string(ret));
     }
     ddl.clear();
     skip_table = false;
@@ -1111,8 +1025,7 @@ void SyncNewTables(const char *sid) {
 
       /* Skip if table already exists in pg_class */
       Oid nsp_oid = get_namespace_oid(ci.schema_name.c_str(), true);
-      if (OidIsValid(nsp_oid) &&
-          OidIsValid(get_relname_relid(ci.table_name.c_str(), nsp_oid))) {
+      if (OidIsValid(nsp_oid) && OidIsValid(get_relname_relid(ci.table_name.c_str(), nsp_oid))) {
         skip_table = true;
         prev_schema = ci.schema_name;
         prev_table = ci.table_name;
@@ -1125,8 +1038,7 @@ void SyncNewTables(const char *sid) {
         cs += quote_identifier(ci.schema_name.c_str());
         ret = SPI_exec(cs.c_str(), 0);
         if (ret != SPI_OK_UTILITY)
-          elog(ERROR, "SPI_exec CREATE SCHEMA failed: %s",
-               SPI_result_code_string(ret));
+          elog(ERROR, "SPI_exec CREATE SCHEMA failed: %s", SPI_result_code_string(ret));
       }
 
       ddl = "CREATE TABLE ";
@@ -1202,8 +1114,7 @@ void SyncDroppedTables(const char *sid) {
     elog(DEBUG1, "Metadata sync: %s", drop_ddl.c_str());
     ret = SPI_exec(drop_ddl.c_str(), 0);
     if (ret != SPI_OK_UTILITY)
-      elog(ERROR, "SPI_exec DROP TABLE failed: %s",
-           SPI_result_code_string(ret));
+      elog(ERROR, "SPI_exec DROP TABLE failed: %s", SPI_result_code_string(ret));
   }
 }
 

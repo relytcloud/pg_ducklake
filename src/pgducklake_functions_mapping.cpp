@@ -20,8 +20,7 @@ extern "C" {
 extern "C" {
 
 DECLARE_PG_FUNCTION(ducklake_function_mapping) {
-  ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                  errmsg("regclass function was not rewritten by planner hook"),
+  ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("regclass function was not rewritten by planner hook"),
                   errhint("Use the (schema_name text, table_name text) form "
                           "for dynamic table references.")));
   PG_RETURN_NULL();

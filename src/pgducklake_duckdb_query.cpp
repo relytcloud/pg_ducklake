@@ -30,8 +30,7 @@ namespace pgducklake {
 static Oid GetRawQueryFuncOid() {
   static Oid cached = InvalidOid;
   if (!OidIsValid(cached)) {
-    List *funcname = list_make2(makeString(pstrdup("duckdb")),
-                                makeString(pstrdup("raw_query")));
+    List *funcname = list_make2(makeString(pstrdup("duckdb")), makeString(pstrdup("raw_query")));
     Oid argtypes[] = {TEXTOID};
     cached = LookupFuncName(funcname, 1, argtypes, false);
     list_free(funcname);

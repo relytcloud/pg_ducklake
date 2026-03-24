@@ -70,8 +70,7 @@ static void DetachFrozenDB() {
 static void FreezeFail(const char *step, const char *error_msg) {
   DetachFrozenDB();
   ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                  errmsg("failed to freeze DuckLake at %s: %s", step,
-                         error_msg ? error_msg : "unknown error")));
+                  errmsg("failed to freeze DuckLake at %s: %s", step, error_msg ? error_msg : "unknown error")));
 }
 
 } // namespace pgducklake
@@ -91,18 +90,15 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
   // separate top-level PG statement so pg_duckdb's catalog cache refreshes
   // before the copy reads from pgduckdb.ducklake.*.
   std::string batch;
-  batch += duckdb::StringUtil::Format(
-      "ATTACH %s AS %s;\n",
-      duckdb::KeywordHelper::WriteQuoted(output_path).c_str(),
-      pgducklake::FROZEN_DB);
+  batch += duckdb::StringUtil::Format("ATTACH %s AS %s;\n", duckdb::KeywordHelper::WriteQuoted(output_path).c_str(),
+                                      pgducklake::FROZEN_DB);
 
   for (auto &table : pgducklake::metadata_tables) {
     bool empty = (strcmp(table, "ducklake_files_scheduled_for_deletion") == 0 ||
                   strcmp(table, "ducklake_inlined_data_tables") == 0);
-    batch += duckdb::StringUtil::Format(
-        "CREATE TABLE %s.main.%s AS SELECT * FROM pgduckdb." PGDUCKLAKE_PG_SCHEMA ".%s%s;\n",
-        pgducklake::FROZEN_DB, table, table,
-        empty ? " WHERE false" : "");
+    batch +=
+        duckdb::StringUtil::Format("CREATE TABLE %s.main.%s AS SELECT * FROM pgduckdb." PGDUCKLAKE_PG_SCHEMA ".%s%s;\n",
+                                   pgducklake::FROZEN_DB, table, table, empty ? " WHERE false" : "");
   }
 
   if (pgducklake::ExecuteDuckDBQuery(batch.c_str(), &error_msg) != 0)
@@ -113,5 +109,4 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
 
   PG_RETURN_VOID();
 }
-
 }

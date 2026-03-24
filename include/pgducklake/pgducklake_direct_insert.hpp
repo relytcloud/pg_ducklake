@@ -52,7 +52,6 @@ struct DirectInsertContext {
 
 void RegisterDirectInsertNode();
 
-PlannedStmt *TryCreateDirectInsertPlan(Query *parse,
-                                       ParamListInfo bound_params);
+PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params);
 
 } // namespace pgducklake

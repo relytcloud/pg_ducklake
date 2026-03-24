@@ -124,8 +124,7 @@ void RegisterWrapperMacros(DatabaseInstance &db) {
   auto &catalog = Catalog::GetSystemCatalog(db);
   auto transaction = CatalogTransaction::GetSystemTransaction(db);
   for (int i = 0; pg_ducklake_wrapper_macros[i].name != nullptr; i++) {
-    auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(
-        pg_ducklake_wrapper_macros[i]);
+    auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(pg_ducklake_wrapper_macros[i]);
     catalog.CreateFunction(transaction, *info);
   }
 }
@@ -141,15 +140,12 @@ void RegisterWrapperMacros(DatabaseInstance &db) {
  */
 static TableFunction LookupDuckLakeCleanupFunction(ClientContext &context) {
   auto &catalog = Catalog::GetSystemCatalog(context);
-  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(
-      context, DEFAULT_SCHEMA, "ducklake_cleanup_old_files");
-  return entry.functions.GetFunctionByArguments(
-      context, {LogicalType::VARCHAR});
+  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ducklake_cleanup_old_files");
+  return entry.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
 }
 
-static unique_ptr<FunctionData>
-CleanupNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
-                  vector<LogicalType> &return_types, vector<string> &names) {
+static unique_ptr<FunctionData> CleanupNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
+                                                  vector<LogicalType> &return_types, vector<string> &names) {
   input.inputs.clear();
   input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
@@ -160,41 +156,34 @@ CleanupNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
   return func.bind(context, input, return_types, names);
 }
 
-static unique_ptr<FunctionData>
-CleanupIntervalBind(ClientContext &context, TableFunctionBindInput &input,
-                    vector<LogicalType> &return_types, vector<string> &names) {
+static unique_ptr<FunctionData> CleanupIntervalBind(ClientContext &context, TableFunctionBindInput &input,
+                                                    vector<LogicalType> &return_types, vector<string> &names) {
   auto interval_val = input.inputs[0].GetValue<interval_t>();
   auto now = duckdb::Timestamp::GetCurrentTimestamp();
-  auto older_than =
-      duckdb::Interval::Add(now, duckdb::Interval::Invert(interval_val));
+  auto older_than = duckdb::Interval::Add(now, duckdb::Interval::Invert(interval_val));
 
   input.inputs.clear();
   input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
-  input.named_parameters["older_than"] =
-      duckdb::Value::TIMESTAMPTZ(timestamp_tz_t(older_than.value));
+  input.named_parameters["older_than"] = duckdb::Value::TIMESTAMPTZ(timestamp_tz_t(older_than.value));
 
   auto func = LookupDuckLakeCleanupFunction(context);
   input.table_function = func;
   return func.bind(context, input, return_types, names);
 }
 
-static unique_ptr<GlobalTableFunctionState>
-CleanupInit(ClientContext &, TableFunctionInitInput &) {
+static unique_ptr<GlobalTableFunctionState> CleanupInit(ClientContext &, TableFunctionInitInput &) {
   throw InternalException("CleanupInit should never be called");
 }
 
-static void CleanupExecute(ClientContext &, TableFunctionInput &,
-                           DataChunk &) {
+static void CleanupExecute(ClientContext &, TableFunctionInput &, DataChunk &) {
   throw InternalException("CleanupExecute should never be called");
 }
 
 void RegisterCleanupFunction(DatabaseInstance &db) {
   TableFunctionSet set("cleanup_old_files");
-  set.AddFunction(
-      TableFunction({}, CleanupExecute, CleanupNoArgsBind, CleanupInit));
-  set.AddFunction(TableFunction({LogicalType::INTERVAL}, CleanupExecute,
-                                CleanupIntervalBind, CleanupInit));
+  set.AddFunction(TableFunction({}, CleanupExecute, CleanupNoArgsBind, CleanupInit));
+  set.AddFunction(TableFunction({LogicalType::INTERVAL}, CleanupExecute, CleanupIntervalBind, CleanupInit));
 
   CreateTableFunctionInfo info(set);
   auto &catalog = Catalog::GetSystemCatalog(db);
@@ -212,15 +201,12 @@ void RegisterCleanupFunction(DatabaseInstance &db) {
  */
 static TableFunction LookupDuckLakeFlushFunction(ClientContext &context) {
   auto &catalog = Catalog::GetSystemCatalog(context);
-  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(
-      context, DEFAULT_SCHEMA, "ducklake_flush_inlined_data");
-  return entry.functions.GetFunctionByArguments(
-      context, {LogicalType::VARCHAR});
+  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ducklake_flush_inlined_data");
+  return entry.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
 }
 
-static unique_ptr<LogicalOperator>
-FlushNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
-                  idx_t bind_index, vector<string> &return_names) {
+static unique_ptr<LogicalOperator> FlushNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
+                                                     idx_t bind_index, vector<string> &return_names) {
   input.inputs.clear();
   input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
@@ -230,9 +216,8 @@ FlushNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
   return func.bind_operator(context, input, bind_index, return_names);
 }
 
-static unique_ptr<LogicalOperator>
-FlushTableArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
-                     idx_t bind_index, vector<string> &return_names) {
+static unique_ptr<LogicalOperator> FlushTableArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
+                                                        idx_t bind_index, vector<string> &return_names) {
   auto schema_name = input.inputs[0].GetValue<string>();
   auto table_name = input.inputs[1].GetValue<string>();
 
@@ -254,8 +239,7 @@ void RegisterFlushInlinedDataFunction(DatabaseInstance &db) {
   no_args.bind_operator = FlushNoArgsBindOp;
   set.AddFunction(no_args);
 
-  TableFunction table_args({LogicalType::VARCHAR, LogicalType::VARCHAR},
-                           nullptr, nullptr, nullptr);
+  TableFunction table_args({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, nullptr, nullptr);
   table_args.bind_operator = FlushTableArgsBindOp;
   set.AddFunction(table_args);
 

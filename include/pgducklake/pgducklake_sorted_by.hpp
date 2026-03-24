@@ -30,12 +30,9 @@ struct SortedIndexDrop {
   Oid table_oid;
 };
 
-void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string,
-                             bool read_only_tree, ProcessUtilityContext context,
-                             ParamListInfo params,
-                             struct QueryEnvironment *query_env,
-                             DestReceiver *dest, QueryCompletion *qc,
-                             ProcessUtility_hook_type prev_hook);
+void HandleCreateSortedIndex(PlannedStmt *pstmt, const char *query_string, bool read_only_tree,
+                             ProcessUtilityContext context, ParamListInfo params, struct QueryEnvironment *query_env,
+                             DestReceiver *dest, QueryCompletion *qc, ProcessUtility_hook_type prev_hook);
 
 std::vector<SortedIndexDrop> FindSortedIndexDrops(DropStmt *drop);
 void HandleDropSortedIndex(const std::vector<SortedIndexDrop> &drops);
@@ -48,8 +45,7 @@ struct SortedIndexCreate {
 /* Batch-sync ducklake_sorted pg_class indexes: create new ones and drop
  * reset ones.  Caller must have an active SPI connection with
  * syncing_from_metadata = true. */
-void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates,
-                       const std::vector<Oid> &resets);
+void SyncSortedIndexes(const std::vector<SortedIndexCreate> &creates, const std::vector<Oid> &resets);
 
 /* Single-table helpers (thin wrappers around SyncSortedIndexes). */
 void CreateSortedIndexForTable(Oid relid, const char *sort_spec);

@@ -33,8 +33,7 @@
 /* Forward-declare pg_duckdb type-mapping functions (from pgduckdb_types.hpp,
  * which cannot be included directly due to its cpp_only_file guard). */
 namespace pgduckdb {
-unsigned int GetPostgresDuckDBType(const duckdb::LogicalType &type,
-                                   bool throw_error = false);
+unsigned int GetPostgresDuckDBType(const duckdb::LogicalType &type, bool throw_error = false);
 int32_t GetPostgresDuckDBTypemod(const duckdb::LogicalType &type);
 } // namespace pgduckdb
 
@@ -81,16 +80,13 @@ struct DucklakeFdwOption {
   Oid context;
 };
 
-static const DucklakeFdwOption valid_server_options[] = {
-    {"dbname", ForeignServerRelationId},
-    {"metadata_schema", ForeignServerRelationId},
-    {"frozen_url", ForeignServerRelationId},
-    {nullptr, InvalidOid}};
+static const DucklakeFdwOption valid_server_options[] = {{"dbname", ForeignServerRelationId},
+                                                         {"metadata_schema", ForeignServerRelationId},
+                                                         {"frozen_url", ForeignServerRelationId},
+                                                         {nullptr, InvalidOid}};
 
 static const DucklakeFdwOption valid_table_options[] = {
-    {"schema_name", ForeignTableRelationId},
-    {"table_name", ForeignTableRelationId},
-    {nullptr, InvalidOid}};
+    {"schema_name", ForeignTableRelationId}, {"table_name", ForeignTableRelationId}, {nullptr, InvalidOid}};
 
 static bool IsValidOption(const char *name, Oid context) {
   for (auto *opt = valid_server_options; opt->optname; opt++) {
@@ -124,12 +120,10 @@ static Oid GetDucklakeFdwOid() {
   static Oid cached_oid = InvalidOid;
   if (cached_oid != InvalidOid)
     return cached_oid;
-  HeapTuple tup = SearchSysCache1(
-      FOREIGNDATAWRAPPERNAME, CStringGetDatum(FDW_NAME));
+  HeapTuple tup = SearchSysCache1(FOREIGNDATAWRAPPERNAME, CStringGetDatum(FDW_NAME));
   if (!HeapTupleIsValid(tup))
     return InvalidOid;
-  Form_pg_foreign_data_wrapper fdw =
-      (Form_pg_foreign_data_wrapper)GETSTRUCT(tup);
+  Form_pg_foreign_data_wrapper fdw = (Form_pg_foreign_data_wrapper)GETSTRUCT(tup);
   cached_oid = fdw->oid;
   ReleaseSysCache(tup);
   return cached_oid;
@@ -164,15 +158,12 @@ static duckdb::string GetDatabaseAlias(ForeignServer *server) {
   return duckdb::StringUtil::Format("fdw_db_%s", dbname);
 }
 
-static duckdb::string BuildAttachQuery(ForeignServer *server,
-                                       const char *db_alias,
-                                       bool if_not_exists) {
+static duckdb::string BuildAttachQuery(ForeignServer *server, const char *db_alias, bool if_not_exists) {
   const char *exists_clause = if_not_exists ? " IF NOT EXISTS" : "";
 
   if (IsFrozenServer(server)) {
     const char *url = GetOptionValue(server->options, "frozen_url");
-    return duckdb::StringUtil::Format(
-        "ATTACH%s 'ducklake:%s' AS \"%s\"", exists_clause, url, db_alias);
+    return duckdb::StringUtil::Format("ATTACH%s 'ducklake:%s' AS \"%s\"", exists_clause, url, db_alias);
   }
 
   const char *dbname = GetOptionValue(server->options, "dbname");
@@ -183,10 +174,9 @@ static duckdb::string BuildAttachQuery(ForeignServer *server,
     schema = "ducklake";
 
   const char *user = GetUserNameFromId(GetUserId(), false);
-  return duckdb::StringUtil::Format(
-      "ATTACH%s 'postgres:dbname=%s user=%s' "
-      "AS \"%s\" (TYPE DUCKLAKE, METADATA_SCHEMA '%s')",
-      exists_clause, dbname, user, db_alias, schema);
+  return duckdb::StringUtil::Format("ATTACH%s 'postgres:dbname=%s user=%s' "
+                                    "AS \"%s\" (TYPE DUCKLAKE, METADATA_SCHEMA '%s')",
+                                    exists_clause, dbname, user, db_alias, schema);
 }
 
 /* ----------------------------------------------------------------
@@ -206,20 +196,17 @@ static char *GetDucklakeForeignTableName(Oid relid) {
   if (server->fdwid != GetDucklakeFdwOid())
     return nullptr;
 
-  const char *schema_name =
-      GetOptionValue(ft->options, "schema_name");
+  const char *schema_name = GetOptionValue(ft->options, "schema_name");
   if (!schema_name)
     schema_name = "public";
 
-  const char *table_name =
-      GetOptionValue(ft->options, "table_name");
+  const char *table_name = GetOptionValue(ft->options, "table_name");
   if (!table_name)
     table_name = get_rel_name(relid);
 
   duckdb::string db_alias = GetDatabaseAlias(server);
 
-  return psprintf("%s.%s.%s", quote_identifier(db_alias.c_str()),
-                  quote_identifier(schema_name),
+  return psprintf("%s.%s.%s", quote_identifier(db_alias.c_str()), quote_identifier(schema_name),
                   quote_identifier(table_name));
 }
 
@@ -275,11 +262,8 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
 
   /* Block DML on FDW tables */
   if (query->commandType != CMD_SELECT && query->resultRelation > 0) {
-    RangeTblEntry *result_rte =
-        list_nth_node(RangeTblEntry, query->rtable,
-                      query->resultRelation - 1);
-    if (result_rte->relid != InvalidOid &&
-        IsDucklakeForeignTable(result_rte->relid)) {
+    RangeTblEntry *result_rte = list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1);
+    if (result_rte->relid != InvalidOid && IsDucklakeForeignTable(result_rte->relid)) {
       const char *op = "Unknown";
       switch (query->commandType) {
       case CMD_INSERT:
@@ -294,12 +278,10 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
       default:
         break;
       }
-      ereport(ERROR,
-              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-               errmsg("ducklake_fdw tables are read-only"),
-               errhint("%s is not supported on foreign tables "
-                       "created with ducklake_fdw.",
-                       op)));
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake_fdw tables are read-only"),
+                      errhint("%s is not supported on foreign tables "
+                              "created with ducklake_fdw.",
+                              op)));
     }
   }
 }
@@ -323,13 +305,11 @@ static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
   const char *server_name = stmt->servername;
   ForeignServer *server = GetForeignServerByName(server_name, false);
 
-  const char *schema_name =
-      GetOptionValue(stmt->options, "schema_name");
+  const char *schema_name = GetOptionValue(stmt->options, "schema_name");
   if (!schema_name)
     schema_name = "public";
 
-  const char *table_name =
-      GetOptionValue(stmt->options, "table_name");
+  const char *table_name = GetOptionValue(stmt->options, "table_name");
   if (!table_name)
     table_name = stmt->base.relation->relname;
 
@@ -341,20 +321,18 @@ static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
 
   auto attach_result = conn.Query(attach_query);
   if (attach_result->HasError()) {
-    elog(ERROR, "ducklake_fdw: column inference ATTACH failed: %s",
-         attach_result->GetError().c_str());
+    elog(ERROR, "ducklake_fdw: column inference ATTACH failed: %s", attach_result->GetError().c_str());
   }
 
   duckdb::string select_query = duckdb::StringUtil::Format(
-      "SELECT * FROM \"%s\".%s.%s LIMIT 0", probe_db,
-      duckdb::KeywordHelper::WriteOptionallyQuoted(schema_name).c_str(),
+      "SELECT * FROM \"%s\".%s.%s LIMIT 0", probe_db, duckdb::KeywordHelper::WriteOptionallyQuoted(schema_name).c_str(),
       duckdb::KeywordHelper::WriteOptionallyQuoted(table_name).c_str());
 
   auto prepared = conn.Prepare(select_query);
   if (prepared->HasError()) {
     conn.Query(duckdb::StringUtil::Format("DETACH \"%s\"", probe_db));
-    elog(ERROR, "ducklake_fdw: cannot read table \"%s\".\"%s\": %s",
-         schema_name, table_name, prepared->error.Message().c_str());
+    elog(ERROR, "ducklake_fdw: cannot read table \"%s\".\"%s\": %s", schema_name, table_name,
+         prepared->error.Message().c_str());
   }
 
   /* Build ColumnDef list from prepared statement types */
@@ -366,8 +344,7 @@ static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
     Oid pg_type = pgduckdb::GetPostgresDuckDBType(types[i]);
     int32_t typemod = pgduckdb::GetPostgresDuckDBTypemod(types[i]);
 
-    ColumnDef *col = makeColumnDef(names[i].c_str(), pg_type, typemod,
-                                   InvalidOid);
+    ColumnDef *col = makeColumnDef(names[i].c_str(), pg_type, typemod, InvalidOid);
     columns = lappend(columns, col);
   }
 
@@ -383,33 +360,24 @@ static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
 
 static ProcessUtility_hook_type prev_fdw_process_utility_hook = NULL;
 
-static void DucklakeFdwUtilityHook(PlannedStmt *pstmt,
-                                   const char *query_string,
-                                   bool read_only_tree,
-                                   ProcessUtilityContext context,
-                                   ParamListInfo params,
-                                   struct QueryEnvironment *query_env,
-                                   DestReceiver *dest,
-                                   QueryCompletion *qc) {
-  if (pstmt->utilityStmt &&
-      IsA(pstmt->utilityStmt, CreateForeignTableStmt)) {
-    auto *cft =
-        castNode(CreateForeignTableStmt, pstmt->utilityStmt);
+static void DucklakeFdwUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only_tree,
+                                   ProcessUtilityContext context, ParamListInfo params,
+                                   struct QueryEnvironment *query_env, DestReceiver *dest, QueryCompletion *qc) {
+  if (pstmt->utilityStmt && IsA(pstmt->utilityStmt, CreateForeignTableStmt)) {
+    auto *cft = castNode(CreateForeignTableStmt, pstmt->utilityStmt);
 
     /* Check if this is for our FDW */
     ForeignDataWrapper *fdw = GetForeignDataWrapperByName(FDW_NAME, true);
     if (fdw) {
-      ForeignServer *server =
-          GetForeignServerByName(cft->servername, true);
+      ForeignServer *server = GetForeignServerByName(cft->servername, true);
       if (server && server->fdwid == fdw->fdwid) {
         if (cft->base.tableElts != NIL) {
-          ereport(ERROR,
-                  (errcode(ERRCODE_SYNTAX_ERROR),
-                   errmsg("ducklake_fdw foreign tables do not "
-                          "accept column definitions"),
-                   errhint("Omit the column list; columns are "
-                           "automatically inferred from the "
-                           "remote DuckLake table.")));
+          ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+                          errmsg("ducklake_fdw foreign tables do not "
+                                 "accept column definitions"),
+                          errhint("Omit the column list; columns are "
+                                  "automatically inferred from the "
+                                  "remote DuckLake table.")));
         }
 
         /* Need a mutable copy for column inference */
@@ -424,62 +392,49 @@ static void DucklakeFdwUtilityHook(PlannedStmt *pstmt,
     }
   }
 
-  prev_fdw_process_utility_hook(pstmt, query_string, read_only_tree,
-                                context, params, query_env, dest, qc);
+  prev_fdw_process_utility_hook(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
 }
 
 /* ----------------------------------------------------------------
  * FDW handler: minimal callbacks (execution goes through DuckDB)
  * ---------------------------------------------------------------- */
 
-static void DucklakeGetForeignRelSize(PlannerInfo *root,
-                                      RelOptInfo *baserel,
-                                      Oid foreigntableid) {
+static void DucklakeGetForeignRelSize(PlannerInfo *root, RelOptInfo *baserel, Oid foreigntableid) {
   baserel->rows = 1000;
 }
 
-static void DucklakeGetForeignPaths(PlannerInfo *root,
-                                    RelOptInfo *baserel,
-                                    Oid foreigntableid) {
-  add_path(baserel,
-           (Path *)create_foreignscan_path(root, baserel, NULL,
-                                           baserel->rows,
+static void DucklakeGetForeignPaths(PlannerInfo *root, RelOptInfo *baserel, Oid foreigntableid) {
+  add_path(baserel, (Path *)create_foreignscan_path(root, baserel, NULL, baserel->rows,
 #if PG_VERSION_NUM >= 180000
-                                           0, /* disabled_nodes */
+                                                    0, /* disabled_nodes */
 #endif
-                                           10, 1000,
-                                           NIL, NULL, NULL,
+                                                    10, 1000, NIL, NULL, NULL,
 #if PG_VERSION_NUM >= 170000
-                                           NIL, /* fdw_restrictinfo */
+                                                    NIL, /* fdw_restrictinfo */
 #endif
-                                           NIL));
+                                                    NIL));
 }
 
-static ForeignScan *DucklakeGetForeignPlan(PlannerInfo *root,
-                                           RelOptInfo *baserel,
-                                           Oid foreigntableid,
-                                           ForeignPath *best_path,
-                                           List *tlist, List *scan_clauses,
-                                           Plan *outer_plan) {
+static ForeignScan *DucklakeGetForeignPlan(PlannerInfo *root, RelOptInfo *baserel, Oid foreigntableid,
+                                           ForeignPath *best_path, List *tlist, List *scan_clauses, Plan *outer_plan) {
   scan_clauses = extract_actual_clauses(scan_clauses, false);
-  return make_foreignscan(tlist, scan_clauses, baserel->relid, NIL, NIL,
-                          NIL, NIL, outer_plan);
+  return make_foreignscan(tlist, scan_clauses, baserel->relid, NIL, NIL, NIL, NIL, outer_plan);
 }
 
 static void DucklakeBeginForeignScan(ForeignScanState *node, int eflags) {
   elog(ERROR, "ducklake_fdw: direct scan should not be reached; "
-             "query should be routed through DuckDB");
+              "query should be routed through DuckDB");
 }
 
 static TupleTableSlot *DucklakeIterateForeignScan(ForeignScanState *node) {
   elog(ERROR, "ducklake_fdw: direct scan should not be reached; "
-             "query should be routed through DuckDB");
+              "query should be routed through DuckDB");
   return nullptr;
 }
 
 static void DucklakeReScanForeignScan(ForeignScanState *node) {
   elog(ERROR, "ducklake_fdw: direct scan should not be reached; "
-             "query should be routed through DuckDB");
+              "query should be routed through DuckDB");
 }
 
 static void DucklakeEndForeignScan(ForeignScanState *node) {
@@ -513,9 +468,7 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
     DefElem *def = (DefElem *)lfirst(lc);
     if (!IsValidOption(def->defname, catalog)) {
       ereport(ERROR,
-              (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
-               errmsg("invalid ducklake_fdw option \"%s\"",
-                      def->defname)));
+              (errcode(ERRCODE_FDW_INVALID_OPTION_NAME), errmsg("invalid ducklake_fdw option \"%s\"", def->defname)));
     }
   }
 
@@ -526,14 +479,11 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
     bool has_schema = GetOptionValue(options, "metadata_schema") != nullptr;
 
     if (has_frozen && has_dbname)
-      ereport(ERROR,
-              (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
-               errmsg("\"frozen_url\" and \"dbname\" are mutually exclusive")));
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+                      errmsg("\"frozen_url\" and \"dbname\" are mutually exclusive")));
     if (has_frozen && has_schema)
-      ereport(ERROR,
-              (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
-               errmsg("\"frozen_url\" and \"metadata_schema\" are "
-                      "mutually exclusive")));
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME), errmsg("\"frozen_url\" and \"metadata_schema\" are "
+                                                                       "mutually exclusive")));
   }
 
   PG_RETURN_VOID();
@@ -551,8 +501,7 @@ void InitFDW() {
   pgduckdb::RegisterDuckdbExternalTableCheck(IsDucklakeForeignTable);
   pgduckdb::RegisterDuckdbRelationNameCallback(GetDucklakeForeignTableName);
 
-  prev_fdw_process_utility_hook =
-      ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;
+  prev_fdw_process_utility_hook = ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;
   ProcessUtility_hook = DucklakeFdwUtilityHook;
 }
 

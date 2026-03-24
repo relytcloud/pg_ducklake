@@ -65,27 +65,22 @@ duckdb::DuckDB *ducklake_get_duckdb_database() {
 
 void ducklake_detach_catalog() {
   const char *errmsg;
-  int ret = pgducklake::ExecuteDuckDBQuery(
-      "DETACH DATABASE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG, &errmsg);
+  int ret = pgducklake::ExecuteDuckDBQuery("DETACH DATABASE IF EXISTS " PGDUCKLAKE_DUCKDB_CATALOG, &errmsg);
   if (ret != 0) {
-    elog(WARNING, "Failed to detach DuckLake catalog: %s",
-         errmsg ? errmsg : "unknown error");
+    elog(WARNING, "Failed to detach DuckLake catalog: %s", errmsg ? errmsg : "unknown error");
   }
 }
 
 void ducklake_attach_catalog() {
-  duckdb::string query = "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG
-                         ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
+  duckdb::string query = "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
                          "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED;
   auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
   if (creating_extension) {
     try {
       std::filesystem::create_directory(data_path);
     } catch (const std::filesystem::filesystem_error &e) {
-      ereport(ERROR,
-              (errcode(ERRCODE_IO_ERROR),
-               errmsg("failed to create DuckLake data directory \"%s\": %s",
-                      data_path.c_str(), e.what())));
+      ereport(ERROR, (errcode(ERRCODE_IO_ERROR),
+                      errmsg("failed to create DuckLake data directory \"%s\": %s", data_path.c_str(), e.what())));
     }
   }
 

@@ -28,11 +28,11 @@ namespace pgducklake {
  */
 class UnsafeCommandIdGuard {
 public:
-  UnsafeCommandIdGuard() {}
+  UnsafeCommandIdGuard() {
+  }
 
   ~UnsafeCommandIdGuard() {
-    pgduckdb::DuckdbUnsafeSetNextExpectedCommandId(
-        static_cast<uint32_t>(GetCurrentCommandId(false)));
+    pgduckdb::DuckdbUnsafeSetNextExpectedCommandId(static_cast<uint32_t>(GetCurrentCommandId(false)));
   }
 
   UnsafeCommandIdGuard(const UnsafeCommandIdGuard &) = delete;

@@ -82,8 +82,7 @@ void TryRewriteRegclassFunc(FuncExpr *func) {
 
   /* Look up the text-arg version; skip if none exists (e.g. get_partition) */
   char *func_name = get_func_name(func->funcid);
-  List *func_name_list = list_make2(makeString(pstrdup(PGDUCKLAKE_PG_SCHEMA)),
-                                    makeString(func_name));
+  List *func_name_list = list_make2(makeString(pstrdup(PGDUCKLAKE_PG_SCHEMA)), makeString(func_name));
 
   int old_nargs = list_length(func->args);
   int new_nargs = old_nargs + 1; /* regclass -> (text, text) */
@@ -97,14 +96,12 @@ void TryRewriteRegclassFunc(FuncExpr *func) {
     new_argtypes[i++] = exprType((Node *)lfirst(lc));
   }
 
-  Oid text_funcid = LookupFuncName(func_name_list, new_nargs,
-                                   new_argtypes, true);
+  Oid text_funcid = LookupFuncName(func_name_list, new_nargs, new_argtypes, true);
   if (!OidIsValid(text_funcid))
     return;
 
   if (regclass_const->constisnull)
-    ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-                    errmsg("table argument cannot be NULL")));
+    ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("table argument cannot be NULL")));
 
   Oid relid = DatumGetObjectId(regclass_const->constvalue);
 
@@ -116,21 +113,15 @@ void TryRewriteRegclassFunc(FuncExpr *func) {
 
   if (rel_am != ducklake_am_oid)
     ereport(ERROR,
-            (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-             errmsg("table \"%s\" is not a DuckLake table",
-                    get_rel_name(relid))));
+            (errcode(ERRCODE_WRONG_OBJECT_TYPE), errmsg("table \"%s\" is not a DuckLake table", get_rel_name(relid))));
 
   /* Resolve OID to schema + table names */
   char *schema_name = get_namespace_name(get_rel_namespace(relid));
   char *table_name = get_rel_name(relid);
 
   /* Build new args: (schema_text, table_text, remaining...) */
-  Const *schema_const =
-      makeConst(TEXTOID, -1, InvalidOid, -1,
-                CStringGetTextDatum(schema_name), false, false);
-  Const *table_const =
-      makeConst(TEXTOID, -1, InvalidOid, -1,
-                CStringGetTextDatum(table_name), false, false);
+  Const *schema_const = makeConst(TEXTOID, -1, InvalidOid, -1, CStringGetTextDatum(schema_name), false, false);
+  Const *table_const = makeConst(TEXTOID, -1, InvalidOid, -1, CStringGetTextDatum(table_name), false, false);
 
   List *new_args = list_make2(schema_const, table_const);
   for_each_from(lc, func->args, 1) {
@@ -150,20 +141,16 @@ bool RewriteRegclassWalker(Node *node, void *context) {
 
   if (IsA(node, Query)) {
 #if PG_VERSION_NUM >= 160000
-    return query_tree_walker((Query *)node, RewriteRegclassWalker,
-                             context, 0);
+    return query_tree_walker((Query *)node, RewriteRegclassWalker, context, 0);
 #else
-    return query_tree_walker((Query *)node,
-                             (bool (*)())((void *)RewriteRegclassWalker),
-                             context, 0);
+    return query_tree_walker((Query *)node, (bool (*)())((void *)RewriteRegclassWalker), context, 0);
 #endif
   }
 
 #if PG_VERSION_NUM >= 160000
   return expression_tree_walker(node, RewriteRegclassWalker, context);
 #else
-  return expression_tree_walker(
-      node, (bool (*)())((void *)RewriteRegclassWalker), context);
+  return expression_tree_walker(node, (bool (*)())((void *)RewriteRegclassWalker), context);
 #endif
 }
 
@@ -171,17 +158,14 @@ void RewriteRegclassFunctions(Query *parse) {
 #if PG_VERSION_NUM >= 160000
   query_tree_walker(parse, RewriteRegclassWalker, NULL, 0);
 #else
-  query_tree_walker(parse, (bool (*)())((void *)RewriteRegclassWalker),
-                    NULL, 0);
+  query_tree_walker(parse, (bool (*)())((void *)RewriteRegclassWalker), NULL, 0);
 #endif
 }
 
-PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
-                                 int cursor_options,
+PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options,
                                  ParamListInfo bound_params) {
   if (pgducklake::enable_direct_insert) {
-    PlannedStmt *direct_insert_plan =
-        pgducklake::TryCreateDirectInsertPlan(parse, bound_params);
+    PlannedStmt *direct_insert_plan = pgducklake::TryCreateDirectInsertPlan(parse, bound_params);
     if (direct_insert_plan)
       return direct_insert_plan;
   }
@@ -197,8 +181,7 @@ PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string,
 }
 
 bool IsCommitUtilityStmt(PlannedStmt *pstmt) {
-  if (!pstmt || !pstmt->utilityStmt ||
-      !IsA(pstmt->utilityStmt, TransactionStmt))
+  if (!pstmt || !pstmt->utilityStmt || !IsA(pstmt->utilityStmt, TransactionStmt))
     return false;
 
   auto *stmt = castNode(TransactionStmt, pstmt->utilityStmt);
@@ -260,11 +243,9 @@ bool IsDucklakeOnlyProcedure(Oid funcid) {
   return strcmp(prosrc_str, "ducklake_only_procedure") == 0;
 }
 
-void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
-                         bool read_only_tree, ProcessUtilityContext context,
-                         ParamListInfo params,
-                         struct QueryEnvironment *query_env, DestReceiver *dest,
-                         QueryCompletion *qc) {
+void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only_tree,
+                         ProcessUtilityContext context, ParamListInfo params, struct QueryEnvironment *query_env,
+                         DestReceiver *dest, QueryCompletion *qc) {
   if (IsCommitUtilityStmt(pstmt) && pgduckdb::DuckdbIsInitialized()) {
     elog(DEBUG1, "pg_ducklake utility hook caught COMMIT");
     ForceDuckDBCommitOnExplicitCommit();
@@ -285,10 +266,8 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
   /* CREATE INDEX ... USING ducklake_sorted */
   if (IsA(parsetree, IndexStmt)) {
     IndexStmt *idx = castNode(IndexStmt, parsetree);
-    if (idx->accessMethod &&
-        strcmp(idx->accessMethod, PGDUCKLAKE_SORTED_AM) == 0) {
-      pgducklake::HandleCreateSortedIndex(pstmt, query_string, read_only_tree,
-                                          context, params, query_env, dest, qc,
+    if (idx->accessMethod && strcmp(idx->accessMethod, PGDUCKLAKE_SORTED_AM) == 0) {
+      pgducklake::HandleCreateSortedIndex(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc,
                                           prev_process_utility_hook);
       return;
     }
@@ -301,8 +280,7 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string,
 
   bool dropping_extension = IsDropDucklakeExtensionStmt(pstmt);
 
-  prev_process_utility_hook(pstmt, query_string, read_only_tree, context,
-                            params, query_env, dest, qc);
+  prev_process_utility_hook(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
 
   pgducklake::HandleDropSortedIndex(sorted_drops);
 
@@ -321,8 +299,7 @@ void InitHooks() {
   planner_hook = DucklakePlannerHook;
 
   // Chain ProcessUtility so we can observe COMMIT utility statements.
-  prev_process_utility_hook =
-      ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;
+  prev_process_utility_hook = ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;
   ProcessUtility_hook = DucklakeUtilityHook;
 }
 
