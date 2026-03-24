@@ -73,6 +73,11 @@ ifeq ($(shell uname -s), Darwin)
 endif
 
 # ---------------------------------------------------------------------------
+# PGXS (must come before any target rules so PGXS's "all" is the default)
+# ---------------------------------------------------------------------------
+include Makefile.global
+
+# ---------------------------------------------------------------------------
 # Code formatting (project files only, not third_party/)
 # ---------------------------------------------------------------------------
 FORMAT_FILES = $(shell find src/ include/ -name '*.cpp' -o -name '*.hpp' -o -name '*.h')
@@ -82,11 +87,6 @@ format:
 
 check-format:
 	clang-format --dry-run -Werror $(FORMAT_FILES)
-
-# ---------------------------------------------------------------------------
-# PGXS
-# ---------------------------------------------------------------------------
-include Makefile.global
 
 # install-pg_duckdb is pulled in via $(shlib) dependency
 
