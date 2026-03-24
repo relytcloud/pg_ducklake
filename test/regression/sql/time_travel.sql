@@ -33,7 +33,15 @@ SELECT * FROM tt_v2;
 -- 4. Timestamp-based query (use count to avoid row-order sensitivity)
 SELECT count(*) FROM ducklake.time_travel('tt', now());
 
--- 5. Error: invalid version (direct query and via view)
+-- 5. Schema + table overload
+SELECT * FROM ducklake.time_travel('public', 'tt', :v0 + 2);
+SELECT count(*) FROM ducklake.time_travel('public', 'tt', now());
+
+-- 6. Regclass overload
+SELECT * FROM ducklake.time_travel('tt'::regclass, :v0 + 2);
+SELECT count(*) FROM ducklake.time_travel('tt'::regclass, now());
+
+-- 7. Error: invalid version (direct query and via view)
 SELECT * FROM ducklake.time_travel('tt', 999999);
 CREATE VIEW tt_v_bad AS SELECT * FROM ducklake.time_travel('tt', 999999);
 SELECT * FROM tt_v_bad;

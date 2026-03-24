@@ -83,7 +83,35 @@ SELECT count(*) FROM ducklake.time_travel('tt', now());
      3
 (1 row)
 
--- 5. Error: invalid version (direct query and via view)
+-- 5. Schema + table overload
+SELECT * FROM ducklake.time_travel('public', 'tt', :v0 + 2);
+ id | name
+----+-------
+  1 | Alice
+  2 | Bob
+(2 rows)
+
+SELECT count(*) FROM ducklake.time_travel('public', 'tt', now());
+ count
+-------
+     3
+(1 row)
+
+-- 6. Regclass overload
+SELECT * FROM ducklake.time_travel('tt'::regclass, :v0 + 2);
+ id | name
+----+-------
+  1 | Alice
+  2 | Bob
+(2 rows)
+
+SELECT count(*) FROM ducklake.time_travel('tt'::regclass, now());
+ count
+-------
+     3
+(1 row)
+
+-- 7. Error: invalid version (direct query and via view)
 SELECT * FROM ducklake.time_travel('tt', 999999);
 ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Invalid Input Error: No snapshot found at version 999999
 

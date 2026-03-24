@@ -3,9 +3,14 @@
  *
  * @scope duckdb-instance: register time_travel table function
  *
- * Implements `time_travel(table_name, version/timestamp)` as a DuckDB table
- * function. The bind phase resolves the table's schema at the given snapshot
- * and replaces the function with the table's scan function. The execute/init
+ * Implements time_travel() as a DuckDB table function with three calling
+ * conventions:
+ *   time_travel(table_name, version/timestamp)        -- single-string name
+ *   time_travel(schema_name, table_name, version/ts)  -- split schema+table
+ *   time_travel(scope regclass, version/ts)            -- PG-side only (rewrite)
+ *
+ * The bind phase resolves the table's schema at the given snapshot and
+ * replaces the function with the table's scan function.  The execute/init
  * functions are never called.
  *
  * Follows the same pattern as ducklake_table_insertions: bind swaps
@@ -56,6 +61,22 @@ static unique_ptr<FunctionData> TimeTravelBind(ClientContext &context, TableFunc
   return bind_data;
 }
 
+/*
+ * Bind for the (schema_name, table_name, version/timestamp) overloads.
+ * Rewrites inputs to the single-string form and delegates to TimeTravelBind.
+ */
+static unique_ptr<FunctionData> TimeTravelSchemaTableBind(ClientContext &context, TableFunctionBindInput &input,
+                                                          vector<LogicalType> &return_types, vector<string> &names) {
+  auto schema_name = input.inputs[0].GetValue<string>();
+  auto table_name = input.inputs[1].GetValue<string>();
+  auto version_or_ts = std::move(input.inputs[2]);
+
+  input.inputs.clear();
+  input.inputs.push_back(duckdb::Value(schema_name + "." + table_name));
+  input.inputs.push_back(std::move(version_or_ts));
+  return TimeTravelBind(context, input, return_types, names);
+}
+
 static unique_ptr<GlobalTableFunctionState> TimeTravelInit(ClientContext &context, TableFunctionInitInput &input) {
   throw InternalException("TimeTravelInit should never be called");
 }
@@ -70,6 +91,11 @@ TableFunctionSet GetTimeTravelFunctions() {
       TableFunction({LogicalType::VARCHAR, LogicalType::BIGINT}, TimeTravelExecute, TimeTravelBind, TimeTravelInit));
   set.AddFunction(TableFunction({LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ}, TimeTravelExecute, TimeTravelBind,
                                 TimeTravelInit));
+  // (schema_name, table_name, version/timestamp) overloads
+  set.AddFunction(TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT}, TimeTravelExecute,
+                                TimeTravelSchemaTableBind, TimeTravelInit));
+  set.AddFunction(TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ},
+                                TimeTravelExecute, TimeTravelSchemaTableBind, TimeTravelInit));
   return set;
 }
 

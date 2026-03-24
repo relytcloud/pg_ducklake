@@ -279,22 +279,34 @@ $$;
 -- Snapshots ---------------------------------------------------------
 
 -- passthrough
-CREATE FUNCTION ducklake.snapshots()
-RETURNS SETOF duckdb.row
+CREATE FUNCTION ducklake.snapshots(
+    OUT snapshot_id bigint,
+    OUT snapshot_time timestamptz,
+    OUT schema_version bigint,
+    OUT changes text,
+    OUT author text,
+    OUT commit_message text,
+    OUT commit_extra_info text
+)
+RETURNS SETOF record
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
 -- passthrough
-CREATE FUNCTION ducklake.current_snapshot()
-RETURNS SETOF duckdb.row
+CREATE FUNCTION ducklake.current_snapshot(
+    OUT id bigint
+)
+RETURNS SETOF record
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
 -- passthrough
-CREATE FUNCTION ducklake.last_committed_snapshot()
-RETURNS SETOF duckdb.row
+CREATE FUNCTION ducklake.last_committed_snapshot(
+    OUT id bigint
+)
+RETURNS SETOF record
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
@@ -302,8 +314,17 @@ LANGUAGE C;
 -- Metadata ----------------------------------------------------------
 
 -- passthrough
-CREATE FUNCTION ducklake.table_info()
-RETURNS SETOF duckdb.row
+CREATE FUNCTION ducklake.table_info(
+    OUT table_name text,
+    OUT schema_id bigint,
+    OUT table_id bigint,
+    OUT table_uuid uuid,
+    OUT file_count bigint,
+    OUT file_size_bytes bigint,
+    OUT delete_file_count bigint,
+    OUT delete_file_size_bytes bigint
+)
+RETURNS SETOF record
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
@@ -336,6 +357,34 @@ CREATE FUNCTION ducklake.time_travel(table_name text, "timestamp" timestamptz)
 RETURNS SETOF duckdb.row
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough (schema + table)
+CREATE FUNCTION ducklake.time_travel(schema_name text, table_name text, version bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough (schema + table)
+CREATE FUNCTION ducklake.time_travel(schema_name text, table_name text, "timestamp" timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> time_travel(text, text, bigint)
+CREATE FUNCTION ducklake.time_travel(scope regclass, version bigint)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- rewrite -> time_travel(text, text, timestamptz)
+CREATE FUNCTION ducklake.time_travel(scope regclass, "timestamp" timestamptz)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
 LANGUAGE C;
 
 -- Change Feed -------------------------------------------------------
