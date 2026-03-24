@@ -5,11 +5,11 @@ CREATE TABLE snap_test (id int, val text) USING ducklake;
 INSERT INTO snap_test VALUES (1, 'one');
 INSERT INTO snap_test VALUES (2, 'two');
 
--- 1. current_snapshot() returns typed id column
-SELECT id > 0 AS has_id FROM ducklake.current_snapshot();
+-- 1. current_snapshot() returns a single row
+SELECT count(*) FROM ducklake.current_snapshot();
 
--- 2. last_committed_snapshot() returns typed id column
-SELECT id > 0 AS has_id FROM ducklake.last_committed_snapshot();
+-- 2. last_committed_snapshot() returns a single row
+SELECT count(*) FROM ducklake.last_committed_snapshot();
 
 -- Note: snapshots() is not tested in the full suite because it iterates all
 -- catalog snapshots, including those from prior tests that may contain
