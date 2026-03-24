@@ -1,6 +1,7 @@
 -- Test ducklake.freeze() -- export metadata to a standalone .ducklake file
 
--- Disable data inlining so we get actual Parquet files
+-- Flush any inlined data left over from prior tests, then disable inlining
+SELECT count(*) >= 0 AS flushed FROM ducklake.flush_inlined_data();
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 
 -- Setup: create a table with data

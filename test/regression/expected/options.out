@@ -23,9 +23,10 @@ LINE 1: CALL pgducklake.set_option('nonexistent_option', 42)
 -- 5. Error: set_option on a non-ducklake table
 CREATE TABLE regular_table (id int);
 CALL ducklake.set_option('data_inlining_row_limit', 50, 'regular_table'::regclass);
-ERROR:  (PGDuckDB/pgduckdb_raw_query_cpp) Catalog Error: Table with name "regular_table" is not found in schema "public" in catalog "pgducklake"
+ERROR:  (PGDuckDB/pgduckdb_raw_query_cpp) Catalog Error: Table with name regular_table does not exist!
+Did you mean "options_test"?
 
-LINE 1: CALL pgducklake.set_option('data_inlining_row_limit', 50, table_name => 'regular_table', schema => 'public')
+LINE 1: CALL pgducklake.set_option('data_inlining_row_limit', 50, table_...
              ^
 DROP TABLE regular_table;
 -- Cleanup

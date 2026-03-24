@@ -91,16 +91,13 @@ DECLARE_PG_FUNCTION(ducklake_freeze) {
   // PG statement so pg_duckdb's catalog cache refreshes before the copy.
   if (SPI_connect() != SPI_OK_CONNECT)
     elog(ERROR, "SPI_connect failed");
-  int spi_ret = SPI_execute(
-      "SELECT 1 FROM " PGDUCKLAKE_PG_SCHEMA ".ducklake_inlined_data_tables LIMIT 1",
-      true, 1);
+  int spi_ret = SPI_execute("SELECT 1 FROM " PGDUCKLAKE_PG_SCHEMA ".ducklake_inlined_data_tables LIMIT 1", true, 1);
   bool has_inlined = (spi_ret == SPI_OK_SELECT && SPI_processed > 0);
   SPI_finish();
   if (has_inlined)
-    ereport(ERROR,
-        (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-         errmsg("cannot freeze: inlined data has not been flushed"),
-         errhint("Call ducklake.flush_inlined_data() before freezing.")));
+    ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    errmsg("cannot freeze: inlined data has not been flushed"),
+                    errhint("Call ducklake.flush_inlined_data() before freezing.")));
 
   std::string batch;
   batch += duckdb::StringUtil::Format("ATTACH %s AS %s;\n", duckdb::KeywordHelper::WriteQuoted(output_path).c_str(),
