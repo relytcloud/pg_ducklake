@@ -33,6 +33,9 @@ FROM ducklake.ducklake_inlined_data_tables
 WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table
                   WHERE table_name = 'freeze_inlined' AND end_snapshot IS NULL);
 
+-- Error: freeze without flushing should fail
+CALL ducklake.freeze('/tmp/test_freeze_unflushed.ducklake');
+
 -- Flush inlined data as a separate statement before freeze
 SELECT * FROM ducklake.flush_inlined_data();
 CALL ducklake.freeze('/tmp/test_freeze_inlined.ducklake');
@@ -55,4 +58,4 @@ CALL ducklake.freeze(NULL);
 DROP TABLE freeze_test;
 DROP TABLE freeze_inlined;
 CALL ducklake.set_option('data_inlining_row_limit', 0);
-\! rm -f /tmp/test_freeze.ducklake /tmp/test_freeze_inlined.ducklake
+\! rm -f /tmp/test_freeze.ducklake /tmp/test_freeze_inlined.ducklake /tmp/test_freeze_unflushed.ducklake
