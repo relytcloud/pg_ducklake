@@ -13,6 +13,16 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'main') }}
 
 jobs:
+  format-check:
+    name: "Check code formatting"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update -qq && sudo apt-get install -y clang-format
+      - name: Check formatting
+        run: find src/ include/ -name '*.cpp' -o -name '*.hpp' -o -name '*.h' | xargs clang-format --dry-run -Werror
+
   build-and-test:
     name: "Build and test"
     strategy:

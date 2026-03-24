@@ -103,6 +103,12 @@ PG_CONFIG=<pg_config> make check-regression TEST=basic
 
 # Run single isolation test
 PG_CONFIG=<pg_config> make check-isolation TEST=concurrent_writes
+
+# Format all project C++ files (src/ and include/, not third_party/)
+PG_CONFIG=<pg_config> make format
+
+# Check formatting without modifying files (used in CI)
+PG_CONFIG=<pg_config> make check-format
 ```
 
 Tests live in `test/regression/` (SQL regression) and `test/isolation/` (concurrency specs). Use regression and isolation tests to verify functionality as possible.

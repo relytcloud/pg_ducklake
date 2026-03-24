@@ -2,7 +2,8 @@
 	check-isolation clean-isolation \
 	ducklake clean-ducklake \
 	pg_duckdb install-pg_duckdb clean-pg_duckdb \
-	bench-direct-insert
+	bench-direct-insert \
+	format check-format
 
 MODULE_big = pg_ducklake
 EXTENSION = pg_ducklake
@@ -70,6 +71,17 @@ SHLIB_LINK += -Wl,-rpath,$(PG_LIB)/ -L$(PG_LIB) -lduckdb -lstdc++
 ifeq ($(shell uname -s), Darwin)
 	SHLIB_LINK += -Wl,-undefined,dynamic_lookup
 endif
+
+# ---------------------------------------------------------------------------
+# Code formatting (project files only, not third_party/)
+# ---------------------------------------------------------------------------
+FORMAT_FILES = $(shell find src/ include/ -name '*.cpp' -o -name '*.hpp' -o -name '*.h')
+
+format:
+	clang-format -i $(FORMAT_FILES)
+
+check-format:
+	clang-format --dry-run -Werror $(FORMAT_FILES)
 
 # ---------------------------------------------------------------------------
 # PGXS
