@@ -15,6 +15,11 @@ SELECT * FROM options_test ORDER BY a;
 -- 4. Test invalid option name
 CALL ducklake.set_option('nonexistent_option', 42);
 
+-- 5. Error: set_option on a non-ducklake table
+CREATE TABLE regular_table (id int);
+CALL ducklake.set_option('data_inlining_row_limit', 50, 'regular_table'::regclass);
+DROP TABLE regular_table;
+
 -- Cleanup
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 DROP TABLE options_test;
