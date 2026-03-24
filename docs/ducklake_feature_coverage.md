@@ -37,7 +37,7 @@ Last updated: 2026-03-10
 ## Time Travel
 
 - [x] Query at version: `ducklake.time_travel(tbl, version)`
-- [x] Query at timestamp: `ducklake.time_travel(tbl, ts)` and `ducklake.as_of_timestamp` GUC
+- [x] Query at timestamp: `ducklake.time_travel(tbl, ts)`
 
 ## Snapshots
 

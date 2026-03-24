@@ -1,7 +1,6 @@
 -- Test DuckLake GUCs
 SHOW ducklake.default_table_path;
 SHOW ducklake.vacuum_delete_threshold;
-SHOW ducklake.as_of_timestamp;
 SHOW ducklake.enable_direct_insert;
 
 -- Test setting GUCs

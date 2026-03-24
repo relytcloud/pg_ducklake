@@ -19,7 +19,6 @@ namespace pgducklake {
 
 char *default_table_path = strdup("");
 double vacuum_delete_threshold = 0.1;
-char *as_of_timestamp = strdup("");
 bool enable_direct_insert = true;
 bool ctas_skip_data = false;
 
@@ -37,11 +36,6 @@ void RegisterGUCs() {
                            "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a "
                            "data file.",
                            NULL, &vacuum_delete_threshold, 0.1, 0.0, 1.0, PGC_USERSET, 0, NULL, NULL, NULL);
-
-  DefineCustomStringVariable("ducklake.as_of_timestamp",
-                             "Timestamp for point-in-time queries on DuckLake tables. When set, all "
-                             "DuckLake table queries use AT (TIMESTAMP => 'value').",
-                             NULL, &as_of_timestamp, "", PGC_USERSET, 0, NULL, NULL, NULL);
 
   DefineCustomBoolVariable("ducklake.enable_direct_insert",
                            "Enable direct insert optimization for INSERT ... "

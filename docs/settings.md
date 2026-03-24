@@ -11,7 +11,6 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 
 | Name | Default | Access |
 | :--- | :------ | :----- |
-| [`ducklake.as_of_timestamp`](#ducklakeas_of_timestamp) | `""` | Per-session |
 | [`ducklake.default_table_path`](#ducklakedefault_table_path) | `""` | Per-session |
 | [`ducklake.enable_direct_insert`](#ducklakeenable_direct_insert) | `true` | Per-session |
 | [`ducklake.reader_role`](#ducklakereader_role) | `"ducklake_reader"` | Requires restart |
@@ -55,19 +54,6 @@ Minimum fraction of deleted rows before VACUUM rewrites a data file.
 - **Default**: `0.1`
 - **Range**: 0.0 -- 1.0
 - **Access**: Per-session
-
-### `ducklake.as_of_timestamp`
-
-When set, all DuckLake table queries use time-travel to this timestamp.
-
-- **Default**: `""` (disabled)
-- **Access**: Per-session
-
-```sql
-SET ducklake.as_of_timestamp = '2024-01-01 00:00:00';
-SELECT * FROM my_table;  -- queries as of that timestamp
-RESET ducklake.as_of_timestamp;
-```
 
 ### `ducklake.enable_direct_insert`
 

@@ -11,12 +11,6 @@ SHOW ducklake.vacuum_delete_threshold;
  0.1
 (1 row)
 
-SHOW ducklake.as_of_timestamp;
- ducklake.as_of_timestamp 
---------------------------
- 
-(1 row)
-
 SHOW ducklake.enable_direct_insert;
  ducklake.enable_direct_insert 
 -------------------------------
