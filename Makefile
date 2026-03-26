@@ -123,7 +123,9 @@ PG_DUCKDB_TARGET = $(PG_DUCKDB_DIR)/pg_duckdb$(DLSUFFIX)
 
 pg_duckdb: $(PG_DUCKDB_TARGET)
 
-$(PG_DUCKDB_TARGET): $(DUCKDB_HEAD)
+# pg_duckdb is a subtree -- always delegate to its own make which
+# tracks source dependencies via PGXS/cmake.
+$(PG_DUCKDB_TARGET): $(DUCKDB_HEAD) FORCE
 	DUCKDB_BUILD_TYPE=$(DUCKDB_BUILD_TYPE) \
 	$(MAKE) -C $(PG_DUCKDB_DIR)
 
@@ -138,7 +140,9 @@ clean-pg_duckdb:
 # ---------------------------------------------------------------------------
 ducklake: $(DUCKLAKE_STATIC_LIB)
 
-$(DUCKLAKE_STATIC_LIB): $(DUCKDB_HEAD)
+# ducklake is a subtree -- always delegate to its own cmake build
+# which tracks source dependencies internally.
+$(DUCKLAKE_STATIC_LIB): $(DUCKDB_HEAD) FORCE
 	DUCKDB_SRCDIR=$(DUCKDB_SRC_DIR) \
 	CMAKE_VARS="-DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0" \
 	DISABLE_SANITIZER=1 \

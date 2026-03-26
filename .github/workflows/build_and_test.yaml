@@ -83,13 +83,11 @@ jobs:
           DUCKLAKE_SHA=`git log -1 --format=%H -- third_party/ducklake`
           echo "ducklake_sha=${DUCKLAKE_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got DUCKLAKE_SHA='${DUCKLAKE_SHA}'"
-          PG_DUCKDB_SHA=`git log -1 --format=%H -- third_party/pg_duckdb`
-          echo "pg_duckdb_sha=${PG_DUCKDB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "Got PG_DUCKDB_SHA='${PG_DUCKDB_SHA}'"
           pushd ../postgres
           POSTGRES_SHA=`git rev-parse HEAD`
           echo "postgres_sha=${POSTGRES_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got POSTGRES_SHA='${POSTGRES_SHA}'"
+          popd
 
       - name: Setup PG build cache
         id: cache-pg-build
