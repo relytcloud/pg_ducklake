@@ -15,9 +15,9 @@ OBJS += $(subst .c,.o, $(C_SRCS))
 # set to `make` to disable ninja
 DUCKDB_GEN ?= ninja
 # used to know what version of extensions to download
-DUCKDB_VERSION = v1.5.0
+DUCKDB_VERSION = v1.5.1
 # duckdb build tweaks
-DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0
+DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=v1.5.1
 # -Bsymbolic: required for postgres_scanner (used by DuckLake FDW) to avoid
 # ELF symbol conflict with PostgreSQL backend's pg_link_canary_is_frontend()
 ifeq ($(shell uname -s),Linux)

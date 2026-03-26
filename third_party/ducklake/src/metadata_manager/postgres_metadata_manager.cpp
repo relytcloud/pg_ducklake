@@ -86,7 +86,8 @@ bool PostgresMetadataManager::InlinedDeletionTableExists(const string &table_nam
 	auto query = StringUtil::Format(R"(
 SELECT 1 FROM information_schema.tables
 WHERE table_schema = {METADATA_SCHEMA_NAME_LITERAL} AND table_name = '%s'
-)", table_name);
+)",
+	                                table_name);
 	auto result = Query(snapshot, query);
 	if (result->HasError()) {
 		return false;
@@ -271,13 +272,30 @@ vector<DuckLakeInlinedTableInfo> PostgresMetadataManager::LoadInlinedDataTables(
 	return result;
 }
 
+// Postgres metadata manager needs specialized TransformInlinedData:
+// 1. BLOB->VARCHAR reinterpret (Postgres stores VARCHAR as BYTEA)
+// 2. VARCHAR->DuckDB type cast (non-native types stored as VARCHAR in Postgres)
 shared_ptr<DuckLakeInlinedData>
 PostgresMetadataManager::TransformInlinedData(QueryResult &result, const vector<LogicalType> &expected_types) {
+	bool needs_transform = false;
+	if (!expected_types.empty()) {
+		D_ASSERT(expected_types.size() == result.types.size());
+		for (idx_t i = 0; i < expected_types.size(); i++) {
+			if (result.types[i] != expected_types[i]) {
+				needs_transform = true;
+				break;
+			}
+		}
+	}
+	if (!needs_transform) {
+		return DuckLakeMetadataManager::TransformInlinedData(result, expected_types);
+	}
+
 	if (result.HasError()) {
 		result.GetErrorObject().Throw("Failed to read inlined data from DuckLake: ");
 	}
 
-	// Transform the result by casting VARCHAR vectors to their expected types
+	// Transform the result by casting vectors to their expected types
 	auto context = transaction.context.lock();
 	auto data = make_uniq<ColumnDataCollection>(*context, expected_types);
 
@@ -292,7 +310,7 @@ PostgresMetadataManager::TransformInlinedData(QueryResult &result, const vector<
 		casted_chunk.Initialize(*context, expected_types, chunk->size());
 		casted_chunk.SetCardinality(chunk->size());
 
-		// Cast each column from VARCHAR to its expected type
+		// Cast each column to its expected type
 		for (idx_t col_idx = 0; col_idx < chunk->ColumnCount(); col_idx++) {
 			auto &source_vector = chunk->data[col_idx];
 			auto &target_vector = casted_chunk.data[col_idx];
@@ -300,8 +318,12 @@ PostgresMetadataManager::TransformInlinedData(QueryResult &result, const vector<
 			if (source_vector.GetType() == target_vector.GetType()) {
 				// No casting needed, just copy
 				target_vector.Reference(source_vector);
+			} else if (source_vector.GetType().id() == LogicalTypeId::BLOB &&
+			           target_vector.GetType().id() == LogicalTypeId::VARCHAR) {
+				// BLOB->VARCHAR: same binary representation, use Reinterpret
+				target_vector.Reinterpret(source_vector);
 			} else {
-				// Cast from VARCHAR to the expected type
+				// General case: cast from source to expected type
 				VectorOperations::Cast(*context, source_vector, target_vector, chunk->size());
 			}
 		}

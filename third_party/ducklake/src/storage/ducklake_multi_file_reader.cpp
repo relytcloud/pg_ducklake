@@ -253,6 +253,10 @@ ReaderInitializeType DuckLakeMultiFileReader::InitializeReader(MultiFileReaderDa
 			if (!file_entry.delete_file.path.empty()) {
 				delete_filter->Initialize(context, file_entry.delete_file);
 			}
+			if (delete_map && !file_entry.delete_file.path.empty()) {
+				auto delete_data_copy = make_shared_ptr<DuckLakeDeleteData>(*delete_filter->delete_data);
+				delete_map->AddDeleteData(reader.GetFileName(), std::move(delete_data_copy));
+			}
 			// Apply inlined file deletions (stored in metadata database instead of delete file)
 			if (!file_entry.inlined_file_deletions.empty()) {
 				DuckLakeInlinedDataDeletes inlined_deletes;
@@ -264,10 +268,6 @@ ReaderInitializeType DuckLakeMultiFileReader::InitializeReader(MultiFileReaderDa
 			}
 			// set the snapshot id so we know what to skip from deletion files
 			delete_filter->SetSnapshotFilter(read_info.snapshot.snapshot_id);
-			// Only add to delete_map if there's an actual delete file and not just inlined deletions
-			if (delete_map && !file_entry.delete_file.path.empty()) {
-				delete_map->AddDeleteData(reader.GetFileName(), delete_filter->delete_data);
-			}
 			reader.deletion_filter = std::move(delete_filter);
 		}
 	} else {
@@ -362,7 +362,8 @@ shared_ptr<BaseFileReader> DuckLakeMultiFileReader::TryCreateInlinedDataReader(c
 		// read the table at the specified version
 		auto transaction = read_info.GetTransaction();
 		auto &catalog = transaction->GetCatalog();
-		DuckLakeSnapshot snapshot(catalog.GetBeginSnapshotForTable(read_info.table.GetTableId(), *transaction),
+		DuckLakeSnapshot snapshot(catalog.GetBeginSnapshotForSchemaVersion(read_info.table.GetTableId(),
+		                                                                   schema_version.GetIndex(), *transaction),
 		                          schema_version.GetIndex(), 0, 0);
 		auto entry = catalog.GetEntryById(*transaction, snapshot, read_info.table.GetTableId());
 		if (!entry) {
@@ -443,7 +444,8 @@ vector<MultiFileColumnDefinition> MapColumns(ClientContext &context, MultiFileRe
 				                            column_map->source_name, reader_data.reader->file.path);
 			}
 			// Use GetValue to handle NULL values (__HIVE_DEFAULT_PARTITION__) and type casting
-			Value partition_val = HivePartitioning::GetValue(context, column_map->source_name, entry->second, result_col.type);
+			Value partition_val =
+			    HivePartitioning::GetValue(context, column_map->source_name, entry->second, result_col.type);
 			result_col.default_expression = make_uniq<ConstantExpression>(std::move(partition_val));
 			continue;
 		}
@@ -457,7 +459,8 @@ vector<MultiFileColumnDefinition> MapColumns(ClientContext &context, MultiFileRe
 		// recursively process any child nodes
 		if (!column_map->child_entries.empty()) {
 			bool is_list = result_col.type.id() == LogicalTypeId::LIST;
-			result_col.children = MapColumns(context, reader_data, result_col.children, column_map->child_entries, is_list);
+			result_col.children =
+			    MapColumns(context, reader_data, result_col.children, column_map->child_entries, is_list);
 		}
 	}
 	return result;

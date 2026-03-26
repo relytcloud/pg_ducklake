@@ -127,16 +127,29 @@ jobs:
         working-directory: pg_ducklake
         run: make installcheck DUCKDB_BUILD_TYPE=${{ matrix.type }}
 
+      - name: Run pg_duckdb regression tests
+        id: pg_duckdb_tests
+        working-directory: pg_ducklake/third_party/pg_duckdb
+        run: make check-regression-duckdb DUCKDB_BUILD_TYPE=${{ matrix.type }}
+
       - name: Run direct insert benchmark
         if: matrix.version == 'REL_18_STABLE'
         working-directory: pg_ducklake
         run: make bench-direct-insert
         continue-on-error: true
 
-      - name: Print regression.diffs if regression tests failed
+      - name: Print pg_ducklake regression.diffs
         if: failure() && steps.installcheck.outcome == 'failure'
         run: cat pg_ducklake/test/regression/regression.diffs && false
 
-      - name: Print postmaster.log if regression tests failed
+      - name: Print pg_ducklake postmaster.log
         if: failure() && steps.installcheck.outcome == 'failure'
         run: cat pg_ducklake/test/regression/tmp_check/log/postmaster.log
+
+      - name: Print pg_duckdb regression.diffs
+        if: failure() && steps.pg_duckdb_tests.outcome == 'failure'
+        run: cat pg_ducklake/third_party/pg_duckdb/test/regression/regression.diffs && false
+
+      - name: Print pg_duckdb postmaster.log
+        if: failure() && steps.pg_duckdb_tests.outcome == 'failure'
+        run: cat pg_ducklake/third_party/pg_duckdb/test/regression/tmp_check/log/postmaster.log
