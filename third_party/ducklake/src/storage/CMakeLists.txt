@@ -1,0 +1,33 @@
+add_subdirectory(statistics)
+add_library(
+  ducklake_storage OBJECT
+  ducklake_catalog.cpp
+  ducklake_checkpoint.cpp
+  ducklake_default_functions.cpp
+  ducklake_delete_filter.cpp
+  ducklake_field_data.cpp
+  ducklake_inline_data.cpp
+  ducklake_inlined_data_reader.cpp
+  ducklake_insert.cpp
+  ducklake_merge_into.cpp
+  ducklake_schema_entry.cpp
+  ducklake_transaction_manager.cpp
+  ducklake_catalog_set.cpp
+  ducklake_metadata_manager.cpp
+  ducklake_multi_file_list.cpp
+  ducklake_storage.cpp
+  ducklake_delete.cpp
+  ducklake_multi_file_reader.cpp
+  ducklake_secret.cpp
+  ducklake_stats.cpp
+  ducklake_table_entry.cpp
+  ducklake_initializer.cpp
+  ducklake_autoload_helper.cpp
+  ducklake_update.cpp
+  ducklake_scan.cpp
+  ducklake_transaction.cpp
+  ducklake_view_entry.cpp
+  ducklake_transaction_changes.cpp)
+set(ALL_OBJECT_FILES
+    ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:ducklake_storage>
+    PARENT_SCOPE)

@@ -1,0 +1,36 @@
+# name: ${FILE_PATH}
+# description: ${DESCRIPTION}
+# group: [sf1]
+
+argument sf 1
+
+name DuckLake Q${QUERY_NUMBER_PADDED}
+group tpch
+subgroup sf${sf}
+
+require ducklake
+
+require parquet
+
+require tpch
+
+cache_file tpch_sf${sf}_ducklake.db
+
+load
+ATTACH ':memory:' AS mem;
+USE mem;
+CALL dbgen(sf=${sf});
+ATTACH 'ducklake:${BENCHMARK_DIR}/tpch_sf${sf}_ducklake.db' AS ducklake (DATA_PATH '${BENCHMARK_DIR}/tpch_sf${sf}_ducklake_files');
+COPY FROM DATABASE mem TO ducklake;
+USE ducklake;
+DETACH mem;
+
+reload
+ATTACH 'ducklake:${BENCHMARK_DIR}/tpch_sf${sf}_ducklake.db' AS ducklake;
+USE ducklake;
+
+run duckdb/extension/tpch/dbgen/queries/q${QUERY_NUMBER_PADDED}.sql
+
+result duckdb/extension/tpch/dbgen/answers/sf1/q${QUERY_NUMBER_PADDED}.csv sf=1
+
+result duckdb/extension/tpch/dbgen/answers/sf100/q${QUERY_NUMBER_PADDED}.csv sf=100

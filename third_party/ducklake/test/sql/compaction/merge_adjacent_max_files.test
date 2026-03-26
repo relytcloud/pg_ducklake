@@ -1,0 +1,182 @@
+# name: test/sql/compaction/merge_adjacent_max_files.test
+# description: test ducklake merge adjacent files max_files options
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/merge_adjacent_max_files/', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+USE ducklake;
+
+statement ok
+CREATE TABLE example (key integer);
+
+# Generate 20 files
+loop i 0 20
+
+statement ok
+INSERT INTO example VALUES (${i});
+
+endloop
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>1)
+----
+example	20	1
+
+# We create max one file, since we use the default size limits, one file should fit all
+query II
+SELECT max(data_file_id), min (data_file_id) FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+20	20
+
+statement ok
+DROP TABLE example;
+
+statement ok
+CALL ducklake_expire_snapshots('ducklake', older_than => now());
+
+statement ok
+CALL ducklake.set_option('target_file_size', '1KB');
+
+statement ok
+CREATE TABLE example (key integer);
+
+# Generate 20 files
+loop i 0 20
+
+statement ok
+INSERT INTO example VALUES (${i});
+
+endloop
+
+query I
+SELECT count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+20
+
+statement error
+CALL ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>-1);
+----
+Type INT32 with value -1 can't be cast
+
+statement error
+CALL ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>NULL);
+----
+The max_compacted_files option must be a non-null integer
+
+statement error
+CALL ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>0);
+----
+The max_compacted_files option must be greater than zero.
+
+query I
+SELECT count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+20
+
+# max_compacted_files=2 should produce exactly 2 compaction operations
+# The exact files_processed per operation depends on parquet file sizes (platform-dependent)
+query III
+SELECT count(*), bool_and(files_processed >= 2), bool_and(files_created = 1)
+FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>2)
+----
+2	true	true
+
+# File count should have decreased
+query I
+SELECT count(*) < 20 FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+true
+
+# max_compacted_files=1 should produce exactly 1 compaction operation
+query III
+SELECT count(*), bool_and(files_processed >= 2), bool_and(files_created = 1)
+FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>1)
+----
+1	true	true
+
+# Compact all remaining files with a high limit - should produce at least 1 operation
+query I
+SELECT count(*) >= 1 FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>1000)
+----
+true
+
+# Run compaction a few more times to merge files across size groups until fully compacted
+statement ok
+SELECT * FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>1000);
+
+statement ok
+SELECT * FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>1000);
+
+# Eventually no more compaction should be needed
+query I
+SELECT count(*) FROM ducklake_merge_adjacent_files('ducklake', 'example', max_compacted_files=>1000)
+----
+0
+
+# Check data is still correct
+query I
+select count(*) FROM example;
+----
+20
+
+# Test max_compacted_files with database-wide compaction (no table specified)
+statement ok
+DROP TABLE example;
+
+statement ok
+CALL ducklake_expire_snapshots('ducklake', older_than => now());
+
+statement ok
+CALL ducklake.set_option('target_file_size', '1KB');
+
+statement ok
+CREATE TABLE table1 (key integer);
+
+statement ok
+CREATE TABLE table2 (key integer);
+
+# Generate 10 files per table
+loop i 0 10
+
+statement ok
+INSERT INTO table1 VALUES (${i});
+
+statement ok
+INSERT INTO table2 VALUES (${i});
+
+endloop
+
+query I
+SELECT count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+20
+
+# Compact entire database with max_compacted_files=1 per table
+# Each table should get at most 1 compaction operation
+query III
+SELECT count(*), bool_and(files_processed >= 2), bool_and(files_created = 1)
+FROM ducklake_merge_adjacent_files('ducklake', max_compacted_files=>1)
+----
+2	true	true
+
+# Both tables got compacted (1 operation each), file count decreased
+query I
+SELECT count(*) < 20 FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+true
+
+# Check data is still correct
+query I
+SELECT (SELECT count(*) FROM table1) + (SELECT count(*) FROM table2);
+----
+20

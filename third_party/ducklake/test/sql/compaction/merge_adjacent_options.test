@@ -1,0 +1,141 @@
+# name: test/sql/compaction/merge_adjacent_options.test
+# description: test ducklake merge adjacent files options
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/merge_adjacent_options/')
+
+statement ok
+USE ducklake;
+
+# Create one Table with two files
+statement ok
+CREATE TABLE example (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO example (key, value) VALUES ('foo', 'bar');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO example (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# Create another Table with two files
+statement ok
+CREATE TABLE example_2 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO example_2 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO example_2 (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# Different schema with another table with two files
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE TABLE s1.example (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example (key, value) VALUES ('foo', 'bar');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO s1.example (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+CREATE TABLE s1.example_2 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example_2 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO s1.example_2 (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+query II
+SELECT table_id, count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file GROUP BY table_id ORDER BY ALL
+----
+1	2
+2	2
+4	2
+5	2
+
+# We define a table_name but not a schema name so we should be able to merge from example_2
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 'example_2')
+----
+example_2	2	1
+
+# We write a new file for table id 2
+query II
+SELECT table_id, count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file GROUP BY table_id ORDER BY ALL
+----
+1	2
+2	1
+4	2
+5	2
+
+
+# If we define the schema we do table id 5
+query IIII
+SELECT schema_name, table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 'example_2', schema=>'s1')
+----
+s1	example_2	2	1
+
+query II
+SELECT table_id, count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file GROUP BY table_id ORDER BY ALL
+----
+1	2
+2	1
+4	2
+5	1
+
+# If we call with nothing, all tables, schemas go in, so we compress both remaining tables
+query IIII
+SELECT schema_name, table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake') ORDER BY ALL
+----
+main	example	2	1
+s1	example	2	1
+
+query II
+SELECT table_id, count(*) FROM __ducklake_metadata_ducklake.ducklake_data_file GROUP BY table_id ORDER BY ALL
+----
+1	1
+2	1
+4	1
+5	1
+
+statement error
+CALL ducklake_merge_adjacent_files('ducklake', 'example_2', schema=>'bogus');
+----
+Did you mean "main.example_2 or s1.example_2"?

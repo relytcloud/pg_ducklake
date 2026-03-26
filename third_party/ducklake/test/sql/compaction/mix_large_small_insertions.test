@@ -1,0 +1,109 @@
+# name: test/sql/compaction/mix_large_small_insertions.test
+# description: test ducklake mix of small and large insertions
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_compaction_mix_files', METADATA_CATALOG 'metadata')
+
+# set target file size very small
+statement ok
+CALL ducklake.set_option('target_file_size', '2KB');
+
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.tbl(id INTEGER, str VARCHAR);
+
+# perform a mix of large and small insertions
+
+# snapshot 2 (inlined_insert), flush snapshot 3 (flushed_inlined)
+statement ok
+INSERT INTO ducklake.tbl VALUES (1, 'hello');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# snapshot 4 (large insert creates files directly - tables_inserted_into)
+statement ok
+INSERT INTO ducklake.tbl SELECT 100000 + i, concat('thisisastring', i) FROM range(10000) t(i)
+
+# snapshot 5 (inlined_insert), flush snapshot 6 (flushed_inlined)
+statement ok
+INSERT INTO ducklake.tbl VALUES (2, 'world');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# snapshot 7 (inlined_insert), flush snapshot 8 (flushed_inlined)
+statement ok
+INSERT INTO ducklake.tbl VALUES (3, 'and');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# snapshot 9 (large insert creates files directly - tables_inserted_into)
+statement ok
+INSERT INTO ducklake.tbl SELECT 200000 + i, concat('thisisalsoastring', i) FROM range(10000) t(i)
+
+# snapshot 10 (inlined_insert), flush snapshot 11 (flushed_inlined)
+statement ok
+INSERT INTO ducklake.tbl VALUES (3, 'my');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# snapshot 12 (inlined_insert), flush snapshot 13 (flushed_inlined)
+statement ok
+INSERT INTO ducklake.tbl VALUES (3, 'friends');
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# Only show small insert rows (exclude large inserts with id >= 100000)
+query III
+SELECT rowid, * FROM ducklake.tbl WHERE id < 10 ORDER BY ALL
+----
+0	1	hello
+10001	2	world
+10002	3	and
+20003	3	my
+20004	3	friends
+
+# we should have 7 files now
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_mix_files/**/*.parquet')
+----
+7
+
+# now compact and cleanup
+query II
+SELECT table_name, files_created FROM ducklake_merge_adjacent_files('ducklake')
+----
+tbl	1
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# we should have fewer files now (2 large files + 1 merged small file)
+query I
+SELECT COUNT(*) < 7 FROM GLOB('${DATA_PATH}/ducklake_compaction_mix_files/**/*.parquet')
+----
+true
+
+# all row-ids are still intact
+query III
+SELECT rowid, * FROM ducklake.tbl WHERE id < 10 ORDER BY ALL
+----
+0	1	hello
+10001	2	world
+10002	3	and
+20003	3	my
+20004	3	friends
