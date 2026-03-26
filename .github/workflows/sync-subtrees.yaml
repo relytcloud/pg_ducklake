@@ -19,12 +19,10 @@ jobs:
             prefix: third_party/ducklake
             repo: relytcloud/ducklake
             branch: pg_ducklake
-            token_secret: DUCKLAKE_PUSH_TOKEN
           - name: pg_duckdb
             prefix: third_party/pg_duckdb
             repo: relytcloud/pg_duckdb
             branch: pgducklake
-            token_secret: PG_DUCKDB_PUSH_TOKEN
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,7 +30,7 @@ jobs:
 
       - name: Push subtree changes incrementally
         env:
-          PUSH_TOKEN: ${{ secrets[matrix.subtree.token_secret] }}
+          PUSH_TOKEN: ${{ secrets.SUBTREE_PUSH_TOKEN }}
         run: |
           PREFIX="${{ matrix.subtree.prefix }}"
           REPO="${{ matrix.subtree.repo }}"
@@ -42,9 +40,6 @@ jobs:
             "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
           git fetch target "$BRANCH" || true
 
-          # Find merge-base between our main and the target branch.
-          # On first run (target branch doesn't exist), fall back to
-          # full subtree split to bootstrap.
           if git rev-parse "target/$BRANCH" >/dev/null 2>&1; then
             git subtree push --prefix="$PREFIX" target "$BRANCH"
           else
