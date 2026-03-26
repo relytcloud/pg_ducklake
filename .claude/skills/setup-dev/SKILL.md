@@ -138,18 +138,29 @@ grep -qF 'pg-*/' "$exclude_file" 2>/dev/null || echo 'pg-*/' >> "$exclude_file"
 
 ## Step 4: Submodules and subtrees
 
-### pg_duckdb (submodule)
+### pg_duckdb (subtree) and duckdb (submodule)
+
+`third_party/pg_duckdb` is a git subtree -- its source is committed
+directly in the repo. No initialization needed. To pull upstream
+changes:
 
 ```bash
-git submodule update --init --recursive --depth=1
+git subtree pull --prefix=third_party/pg_duckdb \
+    https://github.com/relytcloud/pg_duckdb.git pgducklake --squash
 ```
 
-This initializes `third_party/pg_duckdb` and its sub-submodule
-`third_party/pg_duckdb/third_party/duckdb`. The Makefile also
-auto-inits on `make install`, but explicit init is faster.
+Changes pushed to `main` that touch `third_party/pg_duckdb/` are
+automatically synced to `relytcloud/pg_duckdb:pgducklake` by CI.
 
-**Time**: 5-10 min on first run (duckdb submodule is large even with
-shallow clone).
+The DuckDB source at `third_party/pg_duckdb/third_party/duckdb` is
+the only submodule. Initialize it:
+
+```bash
+git submodule update --init --depth=1 third_party/pg_duckdb/third_party/duckdb
+```
+
+**Time**: 5-10 min on first run (duckdb is large even with shallow
+clone).
 
 ### ducklake (subtree)
 

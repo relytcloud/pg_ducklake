@@ -65,7 +65,7 @@ jobs:
       - name: Checkout pg_ducklake extension code
         uses: actions/checkout@v4
         with:
-          submodules: "recursive"  # pg_duckdb submodule; ducklake is a subtree
+          submodules: true  # duckdb submodule only; pg_duckdb and ducklake are subtrees
 
       - name: Compute job parameters
         id: params

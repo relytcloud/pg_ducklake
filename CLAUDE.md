@@ -120,7 +120,7 @@ See `coding-rules` skill for the full docs tree and style guide.
 ## Gotchas
 
 - **FATAL macro conflict**: PostgreSQL's `elog.h` defines `FATAL`, which clobbers DuckDB's `ExceptionType::FATAL`. Include order is critical: DuckDB/DuckLake headers must parse *before* `postgres.h`. See `coding-rules` skill for the full include-order rules.
-- **Submodule push ordering**: When pushing changes that include pg_duckdb submodule pointer updates, push submodule commits first, then push the root project. If the root is pushed before the submodule, CI will fail trying to clone a submodule commit that does not exist on the remote yet. (ducklake is a subtree, so no push-order concern there.)
+- **Subtree structure**: `third_party/pg_duckdb` and `third_party/ducklake` are git subtrees (source committed directly). Only `third_party/pg_duckdb/third_party/duckdb` is a submodule. CI auto-syncs subtree changes back to `relytcloud/pg_duckdb:pgducklake` and `relytcloud/ducklake:pg_ducklake`.
 
 ## Miscellaneous
 

@@ -25,15 +25,8 @@ RUN chown -R postgres:postgres . /usr/lib/postgresql /usr/share/postgresql /out
 USER postgres
 
 COPY --chown=postgres:postgres Makefile Makefile.global ./
-COPY --chown=postgres:postgres .git/modules/third_party/pg_duckdb/HEAD .git/modules/third_party/pg_duckdb/HEAD
-COPY --chown=postgres:postgres .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD
+COPY --chown=postgres:postgres .git/modules/third_party/pg_duckdb/third_party/duckdb/HEAD .git/modules/third_party/pg_duckdb/third_party/duckdb/HEAD
 COPY --chown=postgres:postgres third_party third_party
-
-# workaround for missing submodule in pg_duckdb build
-RUN rm -rf third_party/pg_duckdb/.git && \
-    mkdir -p third_party/pg_duckdb/.git/modules/third_party/duckdb && \
-    cp .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD \
-      third_party/pg_duckdb/.git/modules/third_party/duckdb/HEAD
 
 RUN --mount=type=cache,target=/ccache/,uid=999,gid=999 \
     make -j$(nproc) -C third_party/pg_duckdb install-duckdb && \

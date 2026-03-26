@@ -1,0 +1,24 @@
+name: Sync pg_duckdb subtree
+
+on:
+  push:
+    branches: [main]
+    paths: [third_party/pg_duckdb/**]
+
+jobs:
+  sync:
+    name: Push subtree to relytcloud/pg_duckdb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for subtree split
+
+      - name: Split and push subtree
+        env:
+          PG_DUCKDB_TOKEN: ${{ secrets.PG_DUCKDB_PUSH_TOKEN }}
+        run: |
+          git subtree split --prefix=third_party/pg_duckdb -b pg-duckdb-split
+          git remote add pg-duckdb \
+            "https://x-access-token:${PG_DUCKDB_TOKEN}@github.com/relytcloud/pg_duckdb.git"
+          git push pg-duckdb pg-duckdb-split:pgducklake --force

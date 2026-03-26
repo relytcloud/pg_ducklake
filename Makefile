@@ -109,19 +109,12 @@ bench-direct-insert: all install
 	bash test/benchmark/bench_direct_insert.sh
 
 # ---------------------------------------------------------------------------
-# Submodule (pg_duckdb)
+# Submodule (duckdb)
 # ---------------------------------------------------------------------------
-PG_DUCKDB_HEAD = .git/modules/third_party/pg_duckdb/HEAD
-DUCKDB_HEAD = .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD
-
-# Force rebuild only when the submodule working tree is dirty
-PG_DUCKDB_DIRTY := $(shell git -C $(PG_DUCKDB_DIR) diff-index --quiet HEAD 2>/dev/null || echo FORCE)
-
-$(PG_DUCKDB_HEAD):
-	git submodule update --init --recursive third_party/pg_duckdb
+DUCKDB_HEAD = .git/modules/third_party/pg_duckdb/third_party/duckdb/HEAD
 
 $(DUCKDB_HEAD):
-	git submodule update --init --recursive third_party/pg_duckdb
+	git submodule update --init --depth=1 third_party/pg_duckdb/third_party/duckdb
 
 # ---------------------------------------------------------------------------
 # pg_duckdb
@@ -130,7 +123,7 @@ PG_DUCKDB_TARGET = $(PG_DUCKDB_DIR)/pg_duckdb$(DLSUFFIX)
 
 pg_duckdb: $(PG_DUCKDB_TARGET)
 
-$(PG_DUCKDB_TARGET): $(PG_DUCKDB_HEAD) $(PG_DUCKDB_DIRTY)
+$(PG_DUCKDB_TARGET): $(DUCKDB_HEAD)
 	DUCKDB_BUILD_TYPE=$(DUCKDB_BUILD_TYPE) \
 	$(MAKE) -C $(PG_DUCKDB_DIR)
 
@@ -163,7 +156,7 @@ clean-ducklake:
 # PG-facing TU uses the default PGXS pattern rule (includes PG server headers).
 # Our PG_CPPFLAGS += $(LOCAL_INCLUDES) adds the bridge header path.
 
-$(OBJS): $(PG_DUCKDB_HEAD)
+$(OBJS): $(DUCKDB_HEAD)
 
 COMPILE.cc.bc += $(PG_CPPFLAGS)
 COMPILE.cxx.bc += $(PG_CXXFLAGS)

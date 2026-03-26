@@ -63,7 +63,7 @@ jobs:
       - name: Checkout pg_ducklake extension code
         uses: actions/checkout@v4
         with:
-          submodules: "recursive"  # pg_duckdb submodule; ducklake is a subtree
+          submodules: true  # duckdb submodule only; pg_duckdb and ducklake are subtrees
           path: pg_ducklake
 
       - name: Checkout PostgreSQL code
@@ -73,18 +73,20 @@ jobs:
 
       - name: Compute Version SHAs
         id: versions
+        working-directory: pg_ducklake
         run: |
-          pushd pg_ducklake/third_party/pg_duckdb/third_party/duckdb
+          pushd third_party/pg_duckdb/third_party/duckdb
           DUCKDB_SHA=`git rev-parse HEAD`
           echo "duckdb_sha=${DUCKDB_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got DUCKDB_SHA='${DUCKDB_SHA}'"
           popd
-          pushd pg_ducklake
           DUCKLAKE_SHA=`git log -1 --format=%H -- third_party/ducklake`
           echo "ducklake_sha=${DUCKLAKE_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got DUCKLAKE_SHA='${DUCKLAKE_SHA}'"
-          popd
-          pushd postgres
+          PG_DUCKDB_SHA=`git log -1 --format=%H -- third_party/pg_duckdb`
+          echo "pg_duckdb_sha=${PG_DUCKDB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Got PG_DUCKDB_SHA='${PG_DUCKDB_SHA}'"
+          pushd ../postgres
           POSTGRES_SHA=`git rev-parse HEAD`
           echo "postgres_sha=${POSTGRES_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got POSTGRES_SHA='${POSTGRES_SHA}'"
