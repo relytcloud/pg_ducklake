@@ -1,0 +1,54 @@
+name: Sync subtrees
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - third_party/ducklake/**
+      - third_party/pg_duckdb/**
+
+jobs:
+  sync:
+    name: Sync ${{ matrix.subtree.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        subtree:
+          - name: ducklake
+            prefix: third_party/ducklake
+            repo: relytcloud/ducklake
+            branch: pg_ducklake
+            token_secret: DUCKLAKE_PUSH_TOKEN
+          - name: pg_duckdb
+            prefix: third_party/pg_duckdb
+            repo: relytcloud/pg_duckdb
+            branch: pgducklake
+            token_secret: PG_DUCKDB_PUSH_TOKEN
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need history to find commits touching the subtree
+
+      - name: Push subtree changes incrementally
+        env:
+          PUSH_TOKEN: ${{ secrets[matrix.subtree.token_secret] }}
+        run: |
+          PREFIX="${{ matrix.subtree.prefix }}"
+          REPO="${{ matrix.subtree.repo }}"
+          BRANCH="${{ matrix.subtree.branch }}"
+
+          git remote add target \
+            "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
+          git fetch target "$BRANCH" || true
+
+          # Find merge-base between our main and the target branch.
+          # On first run (target branch doesn't exist), fall back to
+          # full subtree split to bootstrap.
+          if git rev-parse "target/$BRANCH" >/dev/null 2>&1; then
+            git subtree push --prefix="$PREFIX" target "$BRANCH"
+          else
+            echo "Target branch $BRANCH not found -- bootstrapping with subtree split"
+            git subtree split --prefix="$PREFIX" -b subtree-split
+            git push target subtree-split:"$BRANCH"
+          fi
