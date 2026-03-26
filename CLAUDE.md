@@ -117,6 +117,11 @@ Tests live in `test/regression/` (SQL regression) and `test/isolation/` (concurr
 
 See `coding-rules` skill for the full docs tree and style guide.
 
+## Gotchas
+
+- **FATAL macro conflict**: PostgreSQL's `elog.h` defines `FATAL`, which clobbers DuckDB's `ExceptionType::FATAL`. Include order is critical: DuckDB/DuckLake headers must parse *before* `postgres.h`. See `coding-rules` skill for the full include-order rules.
+- **Submodule push ordering**: When pushing changes that include pg_duckdb submodule pointer updates, push submodule commits first, then push the root project. If the root is pushed before the submodule, CI will fail trying to clone a submodule commit that does not exist on the remote yet. (ducklake is a subtree, so no push-order concern there.)
+
 ## Miscellaneous
 
 - When exploring multiple files, run in parallel whenever possible, instead of processing them sequentially.

@@ -63,7 +63,7 @@ jobs:
       - name: Checkout pg_ducklake extension code
         uses: actions/checkout@v4
         with:
-          submodules: "recursive"
+          submodules: "recursive"  # pg_duckdb submodule; ducklake is a subtree
           path: pg_ducklake
 
       - name: Checkout PostgreSQL code
@@ -79,8 +79,8 @@ jobs:
           echo "duckdb_sha=${DUCKDB_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got DUCKDB_SHA='${DUCKDB_SHA}'"
           popd
-          pushd pg_ducklake/third_party/ducklake
-          DUCKLAKE_SHA=`git rev-parse HEAD`
+          pushd pg_ducklake
+          DUCKLAKE_SHA=`git log -1 --format=%H -- third_party/ducklake`
           echo "ducklake_sha=${DUCKLAKE_SHA}" >> "$GITHUB_OUTPUT"
           echo "Got DUCKLAKE_SHA='${DUCKLAKE_SHA}'"
           popd

@@ -27,7 +27,6 @@ USER postgres
 COPY --chown=postgres:postgres Makefile Makefile.global ./
 COPY --chown=postgres:postgres .git/modules/third_party/pg_duckdb/HEAD .git/modules/third_party/pg_duckdb/HEAD
 COPY --chown=postgres:postgres .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD .git/modules/third_party/pg_duckdb/modules/third_party/duckdb/HEAD
-COPY --chown=postgres:postgres .git/modules/third_party/ducklake/HEAD .git/modules/third_party/ducklake/HEAD
 COPY --chown=postgres:postgres third_party third_party
 
 # workaround for missing submodule in pg_duckdb build
