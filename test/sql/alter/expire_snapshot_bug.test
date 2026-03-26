@@ -1,0 +1,112 @@
+# name: test/sql/alter/expire_snapshot_bug.test
+# description: test an issue that would delete files from a renamed table when expiring the OG table
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/expire_snapshot_bug', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+USE ducklake;
+
+statement ok
+create table a(i integer);
+
+statement ok
+insert into a values(0);
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+alter table a rename to b;
+
+statement ok
+insert into b values(1);
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+# Compute key snapshot IDs dynamically so the test works with or without data inlining.
+# With inlining: INSERT creates inlined_insert + FLUSH creates flushed_inlined (2 snapshots each).
+# Without inlining: INSERT creates tables_inserted_into (1 snapshot), FLUSH is a no-op.
+
+# s_rename_b: the snapshot where table a was renamed to b (shows as tables_created=[main.b])
+statement ok
+SET VARIABLE s_rename_b = (SELECT min(snapshot_id) FROM ducklake_snapshots('ducklake') WHERE changes::VARCHAR LIKE '%tables_created%main.b%');
+
+# Expire all snapshots before the rename to b (schema creation, table a creation, insert into a, flush of a)
+statement ok
+SET VARIABLE v_before_rename_b = (SELECT list(snapshot_id ORDER BY snapshot_id)::BIGINT[] FROM ducklake_snapshots('ducklake') WHERE snapshot_id < getvariable('s_rename_b'));
+
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => getvariable('v_before_rename_b'));
+
+# Data should still be accessible after expiring old snapshots
+query I
+FROM b;
+----
+0
+1
+
+# Expire the rename-to-b snapshot itself
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => [getvariable('s_rename_b')]);
+
+# Data should still be accessible
+query I
+FROM b;
+----
+0
+1
+
+statement ok
+alter table b rename to c;
+
+# s_rename_c: the snapshot where table b was renamed to c (shows as tables_created=[main.c])
+statement ok
+SET VARIABLE s_rename_c = (SELECT min(snapshot_id) FROM ducklake_snapshots('ducklake') WHERE changes::VARCHAR LIKE '%tables_created%main.c%');
+
+query I
+FROM c;
+----
+0
+1
+
+# Expire all snapshots before the rename to c (insert into b, flush of b)
+statement ok
+SET VARIABLE v_before_rename_c = (SELECT list(snapshot_id ORDER BY snapshot_id)::BIGINT[] FROM ducklake_snapshots('ducklake') WHERE snapshot_id < getvariable('s_rename_c'));
+
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => getvariable('v_before_rename_c'));
+
+# Data should still be accessible
+query I
+FROM c;
+----
+0
+1
+
+statement ok
+DROP TABLE c;
+
+# Expire the rename-to-c snapshot (the DROP created the latest snapshot which cannot be expired)
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => [getvariable('s_rename_c')]);
+
+# all traces of the table are gone
+foreach tbl ducklake_table ducklake_column ducklake_table_stats ducklake_table_column_stats ducklake_data_file ducklake_delete_file
+
+query I
+SELECT COUNT(*) FROM ducklake_meta.${tbl}
+----
+0
+
+endloop

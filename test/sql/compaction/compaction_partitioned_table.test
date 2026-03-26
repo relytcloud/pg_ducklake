@@ -1,0 +1,116 @@
+# name: test/sql/compaction/compaction_partitioned_table.test
+# description: test compaction of partitioned tables
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_partitioned_compact_files', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+CREATE TABLE ducklake.partitioned(part_key INTEGER, value INTEGER);
+
+statement ok
+ALTER TABLE ducklake.partitioned SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (1, 10);
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (1, 20);
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (2, 100);
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (2, 200);
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_files/**/*.parquet')
+----
+4
+
+query III
+SELECT rowid, * FROM ducklake.partitioned ORDER BY ALL
+----
+0	1	10
+1	1	20
+2	2	100
+3	2	200
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake') ORDER BY ALL
+----
+partitioned	2	1
+partitioned	2	1
+
+# we gain two files here
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_files/**/*.parquet')
+----
+6
+
+# cleanup
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# two files left
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_files/**/*.parquet')
+----
+2
+
+# verify we have written partition info correctly
+query II
+SELECT partition_id, partition_value
+FROM ducklake_metadata.ducklake_data_file
+JOIN ducklake_metadata.ducklake_file_partition_value USING (data_file_id)
+ORDER BY ALL
+----
+2	1
+2	2
+
+# compute snapshot IDs dynamically (inline mode creates 2 snapshots per INSERT, no-inline creates 1)
+statement ok
+SET VARIABLE s1 = (SELECT snapshot_id FROM (SELECT snapshot_id, row_number() OVER (ORDER BY snapshot_id) as rn FROM ducklake_snapshots('ducklake') WHERE changes::VARCHAR LIKE '%insert%=[1]%') WHERE rn = 1);
+
+statement ok
+SET VARIABLE s2 = (SELECT snapshot_id FROM (SELECT snapshot_id, row_number() OVER (ORDER BY snapshot_id) as rn FROM ducklake_snapshots('ducklake') WHERE changes::VARCHAR LIKE '%insert%=[1]%') WHERE rn = 2);
+
+query II
+SELECT * FROM ducklake.partitioned AT (VERSION => getvariable('s1'))
+----
+1	10
+
+query II
+SELECT * FROM ducklake.partitioned AT (VERSION => getvariable('s2'))
+----
+1	10
+1	20
+
+query III
+SELECT rowid, * FROM ducklake.partitioned ORDER BY ALL
+----
+0	1	10
+1	1	20
+2	2	100
+3	2	200

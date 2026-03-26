@@ -1,0 +1,60 @@
+//===----------------------------------------------------------------------===//
+//                         DuckDB
+//
+// metadata_manager/postgres_metadata_manager.hpp
+//
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
+#include "storage/ducklake_metadata_manager.hpp"
+
+namespace duckdb {
+
+class PostgresMetadataManager : public DuckLakeMetadataManager {
+public:
+	explicit PostgresMetadataManager(DuckLakeTransaction &transaction);
+
+	static unique_ptr<DuckLakeMetadataManager> Create(DuckLakeTransaction &transaction) {
+		return make_uniq<PostgresMetadataManager>(transaction);
+	}
+
+	bool TypeIsNativelySupported(const LogicalType &type) override;
+	string CastColumnToTarget(const string &stats, const LogicalType &type) override;
+	bool SupportsInlining(const LogicalType &type) override;
+	bool SupportsAppender() const override {
+		return false;
+	}
+
+	string GetColumnTypeInternal(const LogicalType &type) override;
+	bool InlinedDeletionTableExists(const string &table_name, DuckLakeSnapshot snapshot) override;
+
+	unique_ptr<QueryResult> Execute(DuckLakeSnapshot snapshot, string query) override;
+
+	unique_ptr<QueryResult> Query(DuckLakeSnapshot snapshot, string query) override;
+
+protected:
+	string GetLatestSnapshotQuery() const override;
+
+	//! Wrap field selections with list aggregation using Postgres jsonb syntax
+	string ListAggregation(const vector<pair<string, string>> &fields) const override;
+
+	//! Cast stats columns to target type using Postgres syntax (no TRY_CAST)
+	string CastStatsToTarget(const string &stats, const LogicalType &type) override;
+
+	//! Load tags from JSON result
+	vector<DuckLakeTag> LoadTags(const Value &tag_map) const override;
+
+	//! Load inlined data tables from JSON result
+	vector<DuckLakeInlinedTableInfo> LoadInlinedDataTables(const Value &list) const override;
+
+	//! Override TransformInlinedData to cast VARCHAR values back to original DuckDB types
+	shared_ptr<DuckLakeInlinedData> TransformInlinedData(QueryResult &result,
+	                                                     const vector<LogicalType> &expected_types) override;
+
+private:
+	unique_ptr<QueryResult> ExecuteQuery(DuckLakeSnapshot snapshot, string &query, string command);
+};
+
+} // namespace duckdb
