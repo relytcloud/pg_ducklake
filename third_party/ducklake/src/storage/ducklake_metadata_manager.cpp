@@ -474,7 +474,7 @@ FROM {METADATA_CATALOG}.ducklake_schema_versions
 WHERE table_id = {TABLE_ID} AND schema_version = {SCHEMA_VERSION})";
 	query = StringUtil::Replace(query, "{TABLE_ID}", to_string(table_id.index));
 	query = StringUtil::Replace(query, "{SCHEMA_VERSION}", to_string(schema_version));
-	auto result = transaction.Query(query);
+	auto result = Query(query);
 	for (auto &row : *result) {
 		return row.GetValue<idx_t>(0);
 	}
