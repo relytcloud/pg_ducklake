@@ -6,11 +6,31 @@ on:
     paths:
       - third_party/ducklake/**
       - third_party/pg_duckdb/**
+  workflow_dispatch:
+    inputs:
+      subtree:
+        description: 'Subtree to sync'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ducklake
+          - pg_duckdb
+      ref:
+        description: 'Commit SHA or branch to sync from (default: main)'
+        required: false
+        default: 'main'
+        type: string
 
 jobs:
   sync:
     name: Sync ${{ matrix.subtree.name }}
     runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'push' ||
+      inputs.subtree == 'all' ||
+      inputs.subtree == matrix.subtree.name
     strategy:
       fail-fast: false
       matrix:
@@ -26,24 +46,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # need history to find commits touching the subtree
+          ref: ${{ inputs.ref || github.sha }}
 
-      - name: Push subtree changes incrementally
+      - name: Sync subtree to target repo
         env:
           PUSH_TOKEN: ${{ secrets.SUBTREE_PUSH_TOKEN }}
         run: |
+          set -euo pipefail
+
           PREFIX="${{ matrix.subtree.prefix }}"
           REPO="${{ matrix.subtree.repo }}"
           BRANCH="${{ matrix.subtree.branch }}"
+          TARGET_URL="https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
 
-          git remote add target \
-            "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
-          git fetch target "$BRANCH" || true
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
 
-          if git rev-parse "target/$BRANCH" >/dev/null 2>&1; then
-            git subtree push --prefix="$PREFIX" target "$BRANCH"
+          # Clone target repo (shallow -- we only need current state)
+          CLONE_DIR=$(mktemp -d)
+          if git ls-remote --heads "$TARGET_URL" "$BRANCH" 2>/dev/null | grep -q "refs/heads/$BRANCH"; then
+            git clone --single-branch --depth=1 --branch "$BRANCH" "$TARGET_URL" "$CLONE_DIR"
           else
-            echo "Target branch $BRANCH not found -- bootstrapping with subtree split"
-            git subtree split --prefix="$PREFIX" -b subtree-split
-            git push target subtree-split:"$BRANCH"
+            echo "Branch $BRANCH not found -- bootstrapping with empty orphan branch"
+            git init "$CLONE_DIR"
+            git -C "$CLONE_DIR" remote add origin "$TARGET_URL"
+            git -C "$CLONE_DIR" checkout --orphan "$BRANCH"
+          fi
+
+          # Save submodule gitlink entries so we can restore them after the copy.
+          # pg_duckdb has third_party/duckdb as a submodule; the source checkout
+          # doesn't initialize it, so the copy would lose the gitlink reference.
+          SUBMODULE_STATE=$(git -C "$CLONE_DIR" submodule status 2>/dev/null || true)
+
+          # Replace target contents with source subtree directory
+          find "$CLONE_DIR" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+          cp -a "$PREFIX"/. "$CLONE_DIR/"
+
+          cd "$CLONE_DIR"
+          git add -A
+
+          # Restore submodule gitlink entries (mode 160000) that were lost during copy
+          if [ -n "$SUBMODULE_STATE" ]; then
+            echo "$SUBMODULE_STATE" | while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              hash=$(echo "$line" | awk '{print $1}' | tr -d '+-')
+              path=$(echo "$line" | awk '{print $2}')
+              if [ -n "$hash" ] && [ -n "$path" ]; then
+                echo "Restoring submodule: $path @ $hash"
+                rm -rf "$path"
+                git update-index --add --cacheinfo "160000,$hash,$path"
+              fi
+            done
+          fi
+
+          # Commit and push if there are changes
+          ORIGIN_COMMIT="https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+          if git rev-parse HEAD >/dev/null 2>&1 && git diff-index --quiet HEAD; then
+            echo "No changes to sync"
+          else
+            git commit -m "sync: update from pg_ducklake@${GITHUB_SHA::7}
+
+Source: $ORIGIN_COMMIT"
+            git push origin "$BRANCH"
           fi
