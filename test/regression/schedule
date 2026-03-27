@@ -11,6 +11,7 @@ test: ctas
 test: gucs
 test: options
 test: data_inlining_row_limit
+test: inlined_data_schema_change
 test: types
 test: variant
 test: readme_examples

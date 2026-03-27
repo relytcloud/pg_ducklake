@@ -1,0 +1,48 @@
+-- Regression test for GitHub issue #111:
+-- Data inconsistency when schema change (DDL) applied to table with inlined data.
+--
+-- When a fresh DuckDB instance loads a DuckLake catalog containing inlined
+-- data written across multiple schema versions, it must read columns from
+-- older schema versions correctly. The root cause was GetBeginSnapshotForTable
+-- returning the table creation snapshot instead of the schema-version-specific
+-- snapshot, which excluded columns added after table creation.
+
+-- Enable data inlining so inserts stay in metadata tables
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+
+-- Schema version 0: two columns
+CREATE TABLE dl_schema_change (id int, score int) USING ducklake;
+INSERT INTO dl_schema_change VALUES (1, 100), (2, 200);
+SELECT * FROM dl_schema_change ORDER BY id;
+
+-- Schema version 1: add column x
+ALTER TABLE dl_schema_change ADD COLUMN x text;
+INSERT INTO dl_schema_change (id, score, x) VALUES (3, 300, 'v1');
+SELECT * FROM dl_schema_change ORDER BY id;
+
+-- Schema version 2: add column y
+ALTER TABLE dl_schema_change ADD COLUMN y integer;
+INSERT INTO dl_schema_change (id, score, x, y) VALUES (4, 400, 'v2', 10);
+SELECT * FROM dl_schema_change ORDER BY id;
+
+-- Force a fresh DuckDB instance that loads the catalog from scratch.
+-- Before the fix, column x for id=3 and columns x,y for id=4 returned NULL.
+CALL duckdb.recycle_ddb();
+
+SELECT id, score, x, y FROM dl_schema_change WHERE id = 3;
+SELECT id, score, x, y FROM dl_schema_change WHERE id = 4;
+SELECT * FROM dl_schema_change ORDER BY id;
+
+-- Schema version 3: drop column x
+ALTER TABLE dl_schema_change DROP COLUMN x;
+INSERT INTO dl_schema_change (id, score, y) VALUES (5, 500, 20);
+
+CALL duckdb.recycle_ddb();
+
+SELECT id, score, y FROM dl_schema_change WHERE id = 4;
+SELECT id, score, y FROM dl_schema_change WHERE id = 5;
+SELECT * FROM dl_schema_change ORDER BY id;
+
+-- Cleanup
+DROP TABLE dl_schema_change;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
