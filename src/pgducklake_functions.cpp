@@ -46,6 +46,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/default/default_functions.hpp"
 #include "duckdb/catalog/default/default_table_functions.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -77,6 +78,11 @@ void RegisterDuckdbOnlyFunctions() {
   // Maintenance functions
   pgduckdb::RegisterDuckdbOnlyFunction("cleanup_old_files");
   pgduckdb::RegisterDuckdbOnlyFunction("flush_inlined_data");
+  // Variant field extraction
+  pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract");
+  pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract_json");
+  pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract_json_idx");
+  pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract_idx");
 }
 
 /*
@@ -125,6 +131,42 @@ void RegisterWrapperMacros(DatabaseInstance &db) {
   auto transaction = CatalogTransaction::GetSystemTransaction(db);
   for (int i = 0; pg_ducklake_wrapper_macros[i].name != nullptr; i++) {
     auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(pg_ducklake_wrapper_macros[i]);
+    catalog.CreateFunction(transaction, *info);
+  }
+}
+
+/*
+ * Register scalar macros for variant field extraction.
+ *
+ * PG inserts store variant data as VARCHAR (JSON strings). DuckDB's
+ * variant_extract only works on OBJECT variants (struct inserts).
+ * These macros bridge the gap by extracting from the VARCHAR/JSON
+ * representation, which handles both PG-inserted and DuckDB-inserted data.
+ *
+ * pg_duckdb's DuckDB-only routing rewrites PG function calls to
+ * system.main.<func_name>(args...). These macros expand that to the
+ * underlying json_extract_string / json_extract calls.
+ */
+// clang-format off
+static const DefaultMacro pg_ducklake_scalar_macros[] = {
+  {DEFAULT_SCHEMA, "pg_variant_extract", {"v", "k", nullptr}, {{nullptr, nullptr}},
+   "json_extract_string(v::VARCHAR, k)"},
+  /* ::VARCHAR needed so DuckDB returns VARCHAR, which PG maps to variant */
+  {DEFAULT_SCHEMA, "pg_variant_extract_json", {"v", "k", nullptr}, {{nullptr, nullptr}},
+   "json_extract(v::VARCHAR, k)::VARCHAR"},
+  {DEFAULT_SCHEMA, "pg_variant_extract_idx", {"v", "i", nullptr}, {{nullptr, nullptr}},
+   "json_extract_string(v::VARCHAR, concat('$[', i, ']'))"},
+  {DEFAULT_SCHEMA, "pg_variant_extract_json_idx", {"v", "i", nullptr}, {{nullptr, nullptr}},
+   "json_extract(v::VARCHAR, concat('$[', i, ']'))::VARCHAR"},
+  {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}
+};
+// clang-format on
+
+void RegisterScalarMacros(DatabaseInstance &db) {
+  auto &catalog = Catalog::GetSystemCatalog(db);
+  auto transaction = CatalogTransaction::GetSystemTransaction(db);
+  for (int i = 0; pg_ducklake_scalar_macros[i].name != nullptr; i++) {
+    auto info = DefaultFunctionGenerator::CreateInternalMacroInfo(pg_ducklake_scalar_macros[i]);
     catalog.CreateFunction(transaction, *info);
   }
 }

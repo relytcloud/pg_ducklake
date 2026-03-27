@@ -68,7 +68,7 @@ namespace pgducklake {
 
 static Oid variant_type_oid = InvalidOid;
 
-static Oid GetVariantTypeOid() {
+Oid GetVariantTypeOid() {
   if (!OidIsValid(variant_type_oid)) {
     Oid nsp_oid = get_namespace_oid(PGDUCKLAKE_PG_SCHEMA, true);
     if (OidIsValid(nsp_oid)) {

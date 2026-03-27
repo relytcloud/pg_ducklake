@@ -519,6 +519,42 @@ CREATE TYPE ducklake.variant (
     OUTPUT = ducklake._variant_out
 );
 
+-- Variant field extraction (DuckDB-only stubs).
+-- The planner hook rewrites -> / ->> operators to the corresponding FuncExpr
+-- nodes before pg_duckdb deparses the query. In DuckDB, scalar macros expand
+-- these to json_extract / json_extract_string calls on v::VARCHAR.
+--
+-- -> returns variant (preserves JSON structure, enables chaining).
+-- ->> returns text (extracts as string).
+CREATE FUNCTION ducklake.pg_variant_extract_json(ducklake.variant, text)
+    RETURNS ducklake.variant
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.pg_variant_extract_json_idx(ducklake.variant, int4)
+    RETURNS ducklake.variant
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.pg_variant_extract(ducklake.variant, text)
+    RETURNS text
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.pg_variant_extract_idx(ducklake.variant, int4)
+    RETURNS text
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+
+-- Operators -> and ->> for variant field extraction (PG JSON-like syntax).
+-- Placed in pg_catalog so they are always in search_path.
+-- -> returns variant, ->> returns text (matching PG json/jsonb semantics).
+CREATE OPERATOR pg_catalog.-> (
+    LEFTARG = ducklake.variant, RIGHTARG = text,
+    FUNCTION = ducklake.pg_variant_extract_json);
+CREATE OPERATOR pg_catalog.-> (
+    LEFTARG = ducklake.variant, RIGHTARG = int4,
+    FUNCTION = ducklake.pg_variant_extract_json_idx);
+CREATE OPERATOR pg_catalog.->> (
+    LEFTARG = ducklake.variant, RIGHTARG = text,
+    FUNCTION = ducklake.pg_variant_extract);
+CREATE OPERATOR pg_catalog.->> (
+    LEFTARG = ducklake.variant, RIGHTARG = int4,
+    FUNCTION = ducklake.pg_variant_extract_idx);
+
 -- ============================================================
 -- Bootstrap
 -- ============================================================

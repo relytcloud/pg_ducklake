@@ -28,7 +28,66 @@ INSERT INTO variant_test VALUES
 SELECT * FROM variant_test ORDER BY id;
 
 -- ============================================================
--- 3. Variant column on non-ducklake table must fail
+-- 3. Variant field extraction with -> and ->> operators
+-- ============================================================
+
+-- -> extracts by key, returns variant (preserves JSON structure)
+SELECT v -> 'name' FROM variant_test WHERE id = 4;
+SELECT v -> 'age' FROM variant_test WHERE id = 4;
+
+-- ->> extracts by key, returns text
+SELECT v ->> 'name' FROM variant_test WHERE id = 4;
+SELECT v ->> 'age' FROM variant_test WHERE id = 4;
+
+-- Function call syntax (->> text)
+SELECT ducklake.pg_variant_extract(v, 'name') FROM variant_test WHERE id = 4;
+
+-- Missing key returns NULL
+SELECT v -> 'nonexistent' FROM variant_test WHERE id = 4;
+SELECT v ->> 'nonexistent' FROM variant_test WHERE id = 4;
+
+-- NULL variant returns NULL
+SELECT v -> 'key' FROM variant_test WHERE id = 8;
+SELECT v ->> 'key' FROM variant_test WHERE id = 8;
+
+-- ============================================================
+-- 3b. Array index extraction with -> and ->> operators
+-- ============================================================
+
+-- -> extracts by index, returns variant
+SELECT v -> 0 FROM variant_test WHERE id = 5;
+SELECT v -> 1 FROM variant_test WHERE id = 5;
+SELECT v -> 2 FROM variant_test WHERE id = 5;
+
+-- ->> extracts by index, returns text
+SELECT v ->> 0 FROM variant_test WHERE id = 5;
+SELECT v ->> 1 FROM variant_test WHERE id = 5;
+
+-- Out-of-bounds index returns NULL
+SELECT v -> 99 FROM variant_test WHERE id = 5;
+SELECT v ->> 99 FROM variant_test WHERE id = 5;
+
+-- ============================================================
+-- 3c. Chained extraction (-> returns variant, enabling chains)
+-- ============================================================
+
+-- Nested key extraction: v -> 'nested' -> 'a' (returns variant)
+SELECT v -> 'nested' -> 'a' FROM variant_test WHERE id = 6;
+
+-- Nested key then ->> for text: v -> 'nested' -> 'b' ->> 'c'
+SELECT v -> 'nested' -> 'b' ->> 'c' FROM variant_test WHERE id = 6;
+
+-- Key then index: v -> 'tags' -> 0
+SELECT v -> 'tags' -> 0 FROM variant_test WHERE id = 7;
+SELECT v -> 'tags' ->> 0 FROM variant_test WHERE id = 7;
+SELECT v -> 'tags' ->> 1 FROM variant_test WHERE id = 7;
+
+-- Key then index on counts array: v -> 'counts' ->> 0
+SELECT v -> 'counts' ->> 0 FROM variant_test WHERE id = 7;
+SELECT v -> 'counts' ->> 1 FROM variant_test WHERE id = 7;
+
+-- ============================================================
+-- 4. Variant column on non-ducklake table must fail
 -- ============================================================
 CREATE TABLE variant_heap (v ducklake.variant);
 
