@@ -97,7 +97,7 @@ ALTER TABLE regular_heap ADD COLUMN v ducklake.variant;
 DROP TABLE regular_heap;
 
 -- ============================================================
--- 4. Metadata sync: variant column synced from DuckLake metadata
+-- 5. Metadata sync: variant column synced from DuckLake metadata
 -- ============================================================
 -- Get current metadata state
 SELECT snapshot_id AS cur_snap, next_catalog_id AS cur_cat_id,
