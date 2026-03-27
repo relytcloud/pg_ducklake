@@ -43,61 +43,61 @@ SELECT * FROM variant_test ORDER BY id;
 -- ============================================================
 -- -> extracts by key, returns variant (preserves JSON structure)
 SELECT v -> 'name' FROM variant_test WHERE id = 4;
- ?column?
+ ?column? 
 ----------
  "alice"
 (1 row)
 
 SELECT v -> 'age' FROM variant_test WHERE id = 4;
- ?column?
+ ?column? 
 ----------
  30
 (1 row)
 
 -- ->> extracts by key, returns text
 SELECT v ->> 'name' FROM variant_test WHERE id = 4;
- ?column?
+ ?column? 
 ----------
  alice
 (1 row)
 
 SELECT v ->> 'age' FROM variant_test WHERE id = 4;
- ?column?
+ ?column? 
 ----------
  30
 (1 row)
 
 -- Function call syntax (->> text)
 SELECT ducklake.pg_variant_extract(v, 'name') FROM variant_test WHERE id = 4;
- pg_variant_extract
+ pg_variant_extract 
 --------------------
  alice
 (1 row)
 
 -- Missing key returns NULL
 SELECT v -> 'nonexistent' FROM variant_test WHERE id = 4;
- ?column?
+ ?column? 
 ----------
-
+ 
 (1 row)
 
 SELECT v ->> 'nonexistent' FROM variant_test WHERE id = 4;
- ?column?
+ ?column? 
 ----------
-
+ 
 (1 row)
 
 -- NULL variant returns NULL
 SELECT v -> 'key' FROM variant_test WHERE id = 8;
- ?column?
+ ?column? 
 ----------
-
+ 
 (1 row)
 
 SELECT v ->> 'key' FROM variant_test WHERE id = 8;
- ?column?
+ ?column? 
 ----------
-
+ 
 (1 row)
 
 -- ============================================================
@@ -105,47 +105,47 @@ SELECT v ->> 'key' FROM variant_test WHERE id = 8;
 -- ============================================================
 -- -> extracts by index, returns variant
 SELECT v -> 0 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
  1
 (1 row)
 
 SELECT v -> 1 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
  2
 (1 row)
 
 SELECT v -> 2 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
  3
 (1 row)
 
 -- ->> extracts by index, returns text
 SELECT v ->> 0 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
  1
 (1 row)
 
 SELECT v ->> 1 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
  2
 (1 row)
 
 -- Out-of-bounds index returns NULL
 SELECT v -> 99 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
-
+ 
 (1 row)
 
 SELECT v ->> 99 FROM variant_test WHERE id = 5;
- ?column?
+ ?column? 
 ----------
-
+ 
 (1 row)
 
 -- ============================================================
@@ -153,46 +153,46 @@ SELECT v ->> 99 FROM variant_test WHERE id = 5;
 -- ============================================================
 -- Nested key extraction: v -> 'nested' -> 'a' (returns variant)
 SELECT v -> 'nested' -> 'a' FROM variant_test WHERE id = 6;
- ?column?
+ ?column? 
 ----------
  [1,2]
 (1 row)
 
 -- Nested key then ->> for text: v -> 'nested' -> 'b' ->> 'c'
 SELECT v -> 'nested' -> 'b' ->> 'c' FROM variant_test WHERE id = 6;
- ?column?
+ ?column? 
 ----------
  true
 (1 row)
 
 -- Key then index: v -> 'tags' -> 0
 SELECT v -> 'tags' -> 0 FROM variant_test WHERE id = 7;
- ?column?
+ ?column? 
 ----------
  "x"
 (1 row)
 
 SELECT v -> 'tags' ->> 0 FROM variant_test WHERE id = 7;
- ?column?
+ ?column? 
 ----------
  x
 (1 row)
 
 SELECT v -> 'tags' ->> 1 FROM variant_test WHERE id = 7;
- ?column?
+ ?column? 
 ----------
  y
 (1 row)
 
 -- Key then index on counts array: v -> 'counts' ->> 0
 SELECT v -> 'counts' ->> 0 FROM variant_test WHERE id = 7;
- ?column?
+ ?column? 
 ----------
  10
 (1 row)
 
 SELECT v -> 'counts' ->> 1 FROM variant_test WHERE id = 7;
- ?column?
+ ?column? 
 ----------
  20
 (1 row)
