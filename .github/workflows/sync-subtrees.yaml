@@ -27,10 +27,6 @@ jobs:
   sync:
     name: Sync ${{ matrix.subtree.name }}
     runs-on: ubuntu-24.04
-    if: >-
-      github.event_name == 'push' ||
-      inputs.subtree == 'all' ||
-      inputs.subtree == matrix.subtree.name
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +34,7 @@ jobs:
           - name: ducklake
             prefix: third_party/ducklake
             repo: relytcloud/ducklake
-            branch: pg_ducklake
+            branch: main
           - name: pg_duckdb
             prefix: third_party/pg_duckdb
             repo: relytcloud/pg_duckdb
@@ -53,6 +49,14 @@ jobs:
           PUSH_TOKEN: ${{ secrets.SUBTREE_PUSH_TOKEN }}
         run: |
           set -euo pipefail
+
+          # Skip if this subtree wasn't selected for manual dispatch
+          if [[ "${{ github.event_name }}" != "push" ]] && \
+             [[ "${{ inputs.subtree }}" != "all" ]] && \
+             [[ "${{ inputs.subtree }}" != "${{ matrix.subtree.name }}" ]]; then
+            echo "::notice::Skipping ${{ matrix.subtree.name }}"
+            exit 0
+          fi
 
           PREFIX="${{ matrix.subtree.prefix }}"
           REPO="${{ matrix.subtree.repo }}"
@@ -104,8 +108,7 @@ jobs:
           if git rev-parse HEAD >/dev/null 2>&1 && git diff-index --quiet HEAD; then
             echo "No changes to sync"
           else
-            git commit -m "sync: update from pg_ducklake@${GITHUB_SHA::7}
-
-Source: $ORIGIN_COMMIT"
+            MSG=$(printf "sync: update from pg_ducklake@%.7s\n\nSource: %s" "$GITHUB_SHA" "$ORIGIN_COMMIT")
+            git commit -m "$MSG"
             git push origin "$BRANCH"
           fi
