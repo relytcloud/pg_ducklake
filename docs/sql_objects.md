@@ -49,7 +49,7 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 
 | Group | Function / Procedure | Kind | Regclass Overload |
 |-------|----------------------|------|-------------------|
-| Options | [`ducklake.set_option(text, "any")`](#set_option) | duckdb-only proc | `(text, "any", regclass)` |
+| Options | [`ducklake.set_option(text, "any")`](#set_option) | duckdb-only proc | `(text, "any", regclass)`, `(text, "any", regnamespace)` |
 | | [`ducklake.options()`](#options) | passthrough | - |
 | Flush | [`ducklake.flush_inlined_data()`](#flush_inlined_data) | passthrough | - |
 | | [`ducklake.flush_inlined_data(text, text)`](#flush_inlined_data) | passthrough | `(regclass)` -- rewrite |
@@ -63,6 +63,7 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 | Snapshots | [`ducklake.snapshots()`](#snapshots) | passthrough | - |
 | | [`ducklake.current_snapshot()`](#current_snapshot) | passthrough | - |
 | | [`ducklake.last_committed_snapshot()`](#last_committed_snapshot) | passthrough | - |
+| | [`ducklake.set_commit_message(text, text)`](#set_commit_message) | duckdb-only proc | - |
 | Metadata | [`ducklake.table_info()`](#table_info) | passthrough | - |
 | | [`ducklake.list_files(text, text)`](#list_files) | passthrough | `(regclass)` -- rewrite |
 | Time Travel | [`ducklake.time_travel(text, bigint)`](#time_travel) | passthrough | - |
@@ -75,6 +76,12 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 | | [`ducklake.table_changes(text, text, timestamptz, timestamptz)`](#table_changes) | passthrough | `(regclass, timestamptz, timestamptz)` -- rewrite |
 | Cleanup | [`ducklake.cleanup_old_files()`](#cleanup_old_files) | passthrough | - |
 | | [`ducklake.cleanup_old_files(interval)`](#cleanup_old_files) | passthrough | - |
+| | [`ducklake.cleanup_orphaned_files()`](#cleanup_orphaned_files) | passthrough | - |
+| Maintenance | [`ducklake.merge_adjacent_files()`](#merge_adjacent_files) | passthrough | - |
+| | [`ducklake.merge_adjacent_files(text, text)`](#merge_adjacent_files) | passthrough | `(regclass)` -- rewrite |
+| | [`ducklake.rewrite_data_files()`](#rewrite_data_files) | passthrough | - |
+| | [`ducklake.rewrite_data_files(text, text)`](#rewrite_data_files) | passthrough | `(regclass)` -- rewrite |
+| | [`ducklake.expire_snapshots()`](#expire_snapshots) | passthrough | - |
 | Freeze | [`ducklake.freeze(text)`](#freeze) | native proc | - |
 
 **Kind legend:**
@@ -99,7 +106,7 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 
 #### <a name="set_option"></a>`ducklake.set_option(option_name text, value "any")` / `ducklake.set_option(option_name text, value "any", scope regclass)`
 
-Sets a DuckLake catalog option. When `scope` is provided, the option applies only to that table. This is a DuckDB-only procedure (routed to DuckDB for execution).
+Sets a DuckLake catalog option. When `scope` is provided, the option applies only to that table or schema. Option precedence: table > schema > global. This is a DuckDB-only procedure (routed to DuckDB for execution).
 
 ```sql
 -- Set global option
@@ -107,6 +114,9 @@ CALL ducklake.set_option('data_inlining_row_limit', 100);
 
 -- Set table-scoped option
 CALL ducklake.set_option('data_inlining_row_limit', 50, 'my_table'::regclass);
+
+-- Set schema-scoped option
+CALL ducklake.set_option('target_file_size', '256MB', 'public'::regnamespace);
 ```
 
 #### <a name="options"></a>`ducklake.options()` -> `SETOF record`
@@ -251,6 +261,16 @@ Returns the latest committed snapshot. This is a DuckDB-only function (routed to
 SELECT * FROM ducklake.last_committed_snapshot();
 ```
 
+#### <a name="set_commit_message"></a>`ducklake.set_commit_message(author text, message text)`
+
+Sets author and commit message metadata for the current transaction's snapshot. Must be called before the transaction commits. This is a DuckDB-only procedure (routed to DuckDB for execution).
+
+```sql
+CALL ducklake.set_commit_message('alice', 'quarterly data refresh');
+INSERT INTO sales SELECT * FROM staging_sales;
+-- Commit will record the author and message in the snapshot
+```
+
 #### <a name="table_info"></a>`ducklake.table_info()` -> `SETOF duckdb.row`
 
 Lists metadata for all tables in the DuckLake catalog. This is a DuckDB-only function (routed to DuckDB for execution).
@@ -338,6 +358,53 @@ SELECT * FROM ducklake.cleanup_old_files('24 hours'::interval);
 
 -- Clean up all old files
 SELECT * FROM ducklake.cleanup_old_files();
+```
+
+#### <a name="cleanup_orphaned_files"></a>`ducklake.cleanup_orphaned_files()` -> `SETOF duckdb.row`
+
+Removes files that were generated but never committed to a snapshot (e.g., from aborted transactions). This is a DuckDB-only function (routed to DuckDB for execution).
+
+> **Note:** This function is defined but currently has an upstream SPI query incompatibility. It may fail at runtime until the upstream issue is resolved.
+
+```sql
+SELECT * FROM ducklake.cleanup_orphaned_files();
+```
+
+#### <a name="merge_adjacent_files"></a>`ducklake.merge_adjacent_files()` / `ducklake.merge_adjacent_files(scope regclass)` / `ducklake.merge_adjacent_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
+
+Merges small adjacent Parquet files into larger ones for better scan performance. Without arguments, merges files across the entire catalog. With a table argument, merges only that table's files. Returns the number of files processed and created per table. This is the same operation that `VACUUM` performs, exposed as a standalone function.
+
+```sql
+-- Merge all tables
+SELECT * FROM ducklake.merge_adjacent_files();
+
+-- Merge a specific table (regclass)
+SELECT * FROM ducklake.merge_adjacent_files('my_table'::regclass);
+
+-- Merge a specific table (text-arg form)
+SELECT * FROM ducklake.merge_adjacent_files('public', 'my_table');
+```
+
+#### <a name="rewrite_data_files"></a>`ducklake.rewrite_data_files()` / `ducklake.rewrite_data_files(scope regclass)` / `ducklake.rewrite_data_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
+
+Rewrites data files that contain deleted rows, producing new files without the deletions. Files are rewritten when the fraction of deleted rows exceeds the `rewrite_delete_threshold` option (default 0.2). This is the same operation that `VACUUM` performs, exposed as a standalone function.
+
+```sql
+-- Rewrite all tables
+SELECT * FROM ducklake.rewrite_data_files();
+
+-- Rewrite a specific table (regclass)
+SELECT * FROM ducklake.rewrite_data_files('my_table'::regclass);
+```
+
+#### <a name="expire_snapshots"></a>`ducklake.expire_snapshots()` -> `SETOF duckdb.row`
+
+Expires old snapshots that are beyond the retention window. The retention period is controlled by the `expire_older_than` option. Returns metadata about the expired snapshots.
+
+```sql
+-- Set retention period, then expire
+CALL ducklake.set_option('expire_older_than', '7 days');
+SELECT * FROM ducklake.expire_snapshots();
 ```
 
 #### <a name="freeze"></a>`ducklake.freeze(output_path text)`

@@ -104,6 +104,9 @@ void ducklake_load_extension(duckdb::DuckDB &db) {
   pgducklake::RegisterWrapperMacros(*db.instance);
   pgducklake::RegisterScalarMacros(*db.instance);
   pgducklake::RegisterCleanupFunction(*db.instance);
+  pgducklake::RegisterCleanupOrphanedFilesFunction(*db.instance);
+  pgducklake::RegisterCompactionFunctions(*db.instance);
+  pgducklake::RegisterExpireSnapshotsFunction(*db.instance);
   pgducklake::RegisterFlushInlinedDataFunction(*db.instance);
 
   ducklake_attach_catalog();

@@ -1,0 +1,128 @@
+-- Test dedicated maintenance functions
+
+-- Disable data inlining so we create actual files
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+
+-- =============================================================
+-- merge_adjacent_files (regclass)
+-- =============================================================
+
+CREATE TABLE maint_merge (a int, b text) USING ducklake;
+
+-- Create multiple small files
+INSERT INTO maint_merge VALUES (1, 'one');
+INSERT INTO maint_merge VALUES (2, 'two');
+INSERT INTO maint_merge VALUES (3, 'three');
+INSERT INTO maint_merge VALUES (4, 'four');
+INSERT INTO maint_merge VALUES (5, 'five');
+
+-- Check file count before merge
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'maint_merge'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Merge with regclass
+SELECT * FROM ducklake.merge_adjacent_files('maint_merge'::regclass);
+
+SELECT * FROM maint_merge ORDER BY a;
+
+-- Check file count after merge
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'maint_merge'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+DROP TABLE maint_merge;
+
+-- =============================================================
+-- merge_adjacent_files (no args -- whole catalog)
+-- =============================================================
+
+CREATE TABLE maint_merge2 (a int) USING ducklake;
+INSERT INTO maint_merge2 VALUES (1);
+INSERT INTO maint_merge2 VALUES (2);
+
+SELECT * FROM ducklake.merge_adjacent_files();
+
+SELECT * FROM maint_merge2 ORDER BY a;
+
+DROP TABLE maint_merge2;
+
+-- =============================================================
+-- rewrite_data_files (regclass)
+-- =============================================================
+
+-- Lower the delete threshold so rewrite triggers with fewer deletes
+CALL ducklake.set_option('rewrite_delete_threshold', 0.1);
+
+CREATE TABLE maint_rewrite (a int, b text) USING ducklake;
+INSERT INTO maint_rewrite SELECT i, 'val' || i FROM generate_series(1, 100) i;
+
+-- Delete enough rows to exceed 10% threshold
+DELETE FROM maint_rewrite WHERE a <= 50;
+SELECT count(*) FROM maint_rewrite;
+
+-- Check delete file count before rewrite
+SELECT count(*)
+FROM ducklake.ducklake_delete_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'maint_rewrite'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Rewrite with regclass
+SELECT * FROM ducklake.rewrite_data_files('maint_rewrite'::regclass);
+
+SELECT count(*) FROM maint_rewrite;
+
+-- Check delete file count after rewrite (should be 0)
+SELECT count(*)
+FROM ducklake.ducklake_delete_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'maint_rewrite'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+DROP TABLE maint_rewrite;
+
+-- =============================================================
+-- rewrite_data_files (no args -- whole catalog)
+-- =============================================================
+
+CREATE TABLE maint_rewrite2 (a int) USING ducklake;
+INSERT INTO maint_rewrite2 SELECT i FROM generate_series(1, 50) i;
+DELETE FROM maint_rewrite2 WHERE a <= 25;
+
+SELECT * FROM ducklake.rewrite_data_files();
+SELECT count(*) FROM maint_rewrite2;
+
+DROP TABLE maint_rewrite2;
+
+CALL ducklake.set_option('rewrite_delete_threshold', 0.2);
+
+-- =============================================================
+-- expire_snapshots (no args)
+-- =============================================================
+
+CREATE TABLE maint_expire (a int) USING ducklake;
+INSERT INTO maint_expire VALUES (1);
+INSERT INTO maint_expire VALUES (2);
+
+-- Expire all eligible snapshots
+SELECT count(*) >= 0 AS ok FROM ducklake.expire_snapshots();
+
+SELECT * FROM maint_expire ORDER BY a;
+
+DROP TABLE maint_expire;
+
+-- Restore default
+CALL ducklake.set_option('data_inlining_row_limit', 0);

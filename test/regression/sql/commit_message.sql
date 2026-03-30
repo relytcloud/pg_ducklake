@@ -1,0 +1,23 @@
+-- Test ducklake.set_commit_message() procedure
+
+CREATE TABLE cm_test (a int) USING ducklake;
+
+-- Set commit message before making changes
+CALL ducklake.set_commit_message('test_user', 'initial data load');
+INSERT INTO cm_test VALUES (1), (2), (3);
+
+-- Verify data is accessible
+SELECT * FROM cm_test ORDER BY a;
+
+-- Verify the procedure ran without error (commit metadata is set
+-- internally; snapshots() returns SETOF duckdb.row so column names
+-- are not addressable by name in PG)
+
+-- Set commit message for a second transaction
+CALL ducklake.set_commit_message('another_user', 'add more data');
+INSERT INTO cm_test VALUES (4), (5);
+
+SELECT * FROM cm_test ORDER BY a;
+
+-- Cleanup
+DROP TABLE cm_test;

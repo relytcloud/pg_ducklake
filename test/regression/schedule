@@ -17,6 +17,8 @@ test: variant
 test: readme_examples
 test: ddl
 test: vacuum
+test: maintenance
+test: commit_message
 test: partition
 test: sorted_table
 test: hybrid_scan

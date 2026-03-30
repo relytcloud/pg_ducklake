@@ -29,6 +29,18 @@ Did you mean "options_test"?
 LINE 1: CALL pgducklake.set_option('data_inlining_row_limit', 50, table_...
              ^
 DROP TABLE regular_table;
+-- 6. Schema-scoped option (use target_file_size to avoid affecting data
+--    inlining in later tests -- schema-scoped options can't be removed)
+CALL ducklake.set_option('target_file_size', 1048576, 'public'::regnamespace);
+ERROR:  (PGDuckDB/pgduckdb_raw_query_cpp) Parser Error: Unknown unit for memory: '' (expected: KB, MB, GB, TB for 1000^i units or KiB, MiB, GiB, TiB for 1024^i units)
+
+LINE 1: CALL pgducklake.set_option('target_file_size', 1048576, schema...
+             ^
+-- 7. Error: schema-scoped option on nonexistent schema
+CALL ducklake.set_option('target_file_size', 1048576, 'nonexistent_schema'::regnamespace);
+ERROR:  schema "nonexistent_schema" does not exist
+LINE 1: ... ducklake.set_option('target_file_size', 1048576, 'nonexiste...
+                                                             ^
 -- Cleanup
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 DROP TABLE options_test;

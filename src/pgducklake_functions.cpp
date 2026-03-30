@@ -2,8 +2,8 @@
  * pgducklake_functions.cpp -- DuckLake function exposing.
  *
  * @scope backend: register DuckDB-only function names with pg_duckdb
- * @scope duckdb-instance: register wrapper macros, cleanup and flush
- *   table functions in DuckDB catalog
+ * @scope duckdb-instance: register wrapper macros, maintenance and
+ *   flush table functions in DuckDB catalog
  *
  * Exposes upstream DuckLake functions as PostgreSQL functions in the
  * `ducklake` schema. Two layers are involved:
@@ -77,7 +77,11 @@ void RegisterDuckdbOnlyFunctions() {
   pgduckdb::RegisterDuckdbOnlyFunction("table_changes");
   // Maintenance functions
   pgduckdb::RegisterDuckdbOnlyFunction("cleanup_old_files");
+  pgduckdb::RegisterDuckdbOnlyFunction("cleanup_orphaned_files");
   pgduckdb::RegisterDuckdbOnlyFunction("flush_inlined_data");
+  pgduckdb::RegisterDuckdbOnlyFunction("merge_adjacent_files");
+  pgduckdb::RegisterDuckdbOnlyFunction("rewrite_data_files");
+  pgduckdb::RegisterDuckdbOnlyFunction("expire_snapshots");
   // Variant field extraction
   pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract");
   pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract_json");
@@ -172,20 +176,44 @@ void RegisterScalarMacros(DatabaseInstance &db) {
 }
 
 /*
- * cleanup_old_files() DuckDB table function set.
+ * Shared helpers for table function wrappers.
  *
  * DuckDB macros don't support overloading (same name, different params),
- * so cleanup_old_files uses a TableFunctionSet instead. Each overload's
- * bind function looks up the underlying ducklake_cleanup_old_files, sets
- * the right named parameters, and replaces input.table_function -- the
- * same pattern used by time_travel (pgducklake_time_travel.cpp).
+ * so functions like cleanup_old_files and merge_adjacent_files use
+ * TableFunctionSets instead. Each overload's bind function looks up the
+ * underlying ducklake_<name>, injects the catalog constant, sets the
+ * right named parameters, and replaces input.table_function.
  */
-static TableFunction LookupDuckLakeCleanupFunction(ClientContext &context) {
+
+/* Look up an upstream ducklake_<name> table function by name and arity. */
+static TableFunction LookupUpstreamFunction(ClientContext &context, const string &ducklake_name,
+                                            vector<LogicalType> arg_types = {LogicalType::VARCHAR}) {
   auto &catalog = Catalog::GetSystemCatalog(context);
-  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ducklake_cleanup_old_files");
-  return entry.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
+  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(context, DEFAULT_SCHEMA, ducklake_name);
+  return entry.functions.GetFunctionByArguments(context, arg_types);
 }
 
+/* Stub init/execute for bind-pattern table functions -- bind replaces
+ * the function pointer before these are reached. */
+static unique_ptr<GlobalTableFunctionState> UnreachableInit(ClientContext &, TableFunctionInitInput &) {
+  throw InternalException("UnreachableInit should never be called");
+}
+
+static void UnreachableExecute(ClientContext &, TableFunctionInput &, DataChunk &) {
+  throw InternalException("UnreachableExecute should never be called");
+}
+
+/* Register a TableFunctionSet in the DuckDB system catalog. */
+static void RegisterTableFunctionSet(DatabaseInstance &db, TableFunctionSet &set) {
+  CreateTableFunctionInfo info(set);
+  auto &catalog = Catalog::GetSystemCatalog(db);
+  auto transaction = CatalogTransaction::GetSystemTransaction(db);
+  catalog.CreateTableFunction(transaction, info);
+}
+
+/*
+ * cleanup_old_files(): bind pattern with no-args and interval overloads.
+ */
 static unique_ptr<FunctionData> CleanupNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
                                                   vector<LogicalType> &return_types, vector<string> &names) {
   input.inputs.clear();
@@ -193,7 +221,7 @@ static unique_ptr<FunctionData> CleanupNoArgsBind(ClientContext &context, TableF
   input.named_parameters.clear();
   input.named_parameters["cleanup_all"] = duckdb::Value::BOOLEAN(true);
 
-  auto func = LookupDuckLakeCleanupFunction(context);
+  auto func = LookupUpstreamFunction(context, "ducklake_cleanup_old_files");
   input.table_function = func;
   return func.bind(context, input, return_types, names);
 }
@@ -209,51 +237,148 @@ static unique_ptr<FunctionData> CleanupIntervalBind(ClientContext &context, Tabl
   input.named_parameters.clear();
   input.named_parameters["older_than"] = duckdb::Value::TIMESTAMPTZ(timestamp_tz_t(older_than.value));
 
-  auto func = LookupDuckLakeCleanupFunction(context);
+  auto func = LookupUpstreamFunction(context, "ducklake_cleanup_old_files");
   input.table_function = func;
   return func.bind(context, input, return_types, names);
 }
 
-static unique_ptr<GlobalTableFunctionState> CleanupInit(ClientContext &, TableFunctionInitInput &) {
-  throw InternalException("CleanupInit should never be called");
-}
-
-static void CleanupExecute(ClientContext &, TableFunctionInput &, DataChunk &) {
-  throw InternalException("CleanupExecute should never be called");
-}
-
 void RegisterCleanupFunction(DatabaseInstance &db) {
   TableFunctionSet set("cleanup_old_files");
-  set.AddFunction(TableFunction({}, CleanupExecute, CleanupNoArgsBind, CleanupInit));
-  set.AddFunction(TableFunction({LogicalType::INTERVAL}, CleanupExecute, CleanupIntervalBind, CleanupInit));
-
-  CreateTableFunctionInfo info(set);
-  auto &catalog = Catalog::GetSystemCatalog(db);
-  auto transaction = CatalogTransaction::GetSystemTransaction(db);
-  catalog.CreateTableFunction(transaction, info);
+  set.AddFunction(TableFunction({}, UnreachableExecute, CleanupNoArgsBind, UnreachableInit));
+  set.AddFunction(TableFunction({LogicalType::INTERVAL}, UnreachableExecute, CleanupIntervalBind, UnreachableInit));
+  RegisterTableFunctionSet(db, set);
 }
 
 /*
- * flush_inlined_data() DuckDB table function set.
- *
- * Unlike cleanup_old_files, the upstream ducklake_flush_inlined_data uses
- * bind_operator (not bind) -- it replaces the entire logical plan at bind
- * time. Each overload's bind_operator looks up the upstream function, sets
- * the catalog and named parameters, then delegates to its bind_operator.
+ * cleanup_orphaned_files(): no-args only, delegates to upstream
+ * ducklake_delete_orphaned_files (note the different name).
  */
-static TableFunction LookupDuckLakeFlushFunction(ClientContext &context) {
-  auto &catalog = Catalog::GetSystemCatalog(context);
-  auto &entry = catalog.GetEntry<TableFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ducklake_flush_inlined_data");
-  return entry.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
+static unique_ptr<FunctionData> OrphanedNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
+                                                   vector<LogicalType> &return_types, vector<string> &names) {
+  input.inputs.clear();
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.named_parameters.clear();
+  input.named_parameters["cleanup_all"] = duckdb::Value::BOOLEAN(true);
+
+  auto func = LookupUpstreamFunction(context, "ducklake_delete_orphaned_files");
+  input.table_function = func;
+  return func.bind(context, input, return_types, names);
 }
 
+void RegisterCleanupOrphanedFilesFunction(DatabaseInstance &db) {
+  TableFunctionSet set("cleanup_orphaned_files");
+  set.AddFunction(TableFunction({}, UnreachableExecute, OrphanedNoArgsBind, UnreachableInit));
+  RegisterTableFunctionSet(db, set);
+}
+
+/*
+ * Compaction functions: merge_adjacent_files() and rewrite_data_files().
+ *
+ * Both upstream functions use bind_operator (like flush_inlined_data) and
+ * accept (catalog) or (catalog, table_name, schema=...) overloads.
+ * PG exposes: no-args (whole catalog) and (text, text) (specific table).
+ * The regclass overload is handled by ducklake_function_mapping in SQL,
+ * which resolves to (schema_name text, table_name text).
+ */
+static unique_ptr<LogicalOperator> CompactionNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
+                                                          idx_t bind_index, vector<string> &return_names,
+                                                          const string &ducklake_name) {
+  input.inputs.clear();
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.named_parameters.clear();
+
+  auto func = LookupUpstreamFunction(context, ducklake_name);
+  input.table_function = func;
+  return func.bind_operator(context, input, bind_index, return_names);
+}
+
+static unique_ptr<LogicalOperator> CompactionTableArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
+                                                             idx_t bind_index, vector<string> &return_names,
+                                                             const string &ducklake_name) {
+  auto schema_name = input.inputs[0].GetValue<string>();
+  auto table_name = input.inputs[1].GetValue<string>();
+
+  input.inputs.clear();
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.inputs.push_back(duckdb::Value(table_name));
+  input.named_parameters.clear();
+  input.named_parameters["schema"] = duckdb::Value(schema_name);
+
+  auto func = LookupUpstreamFunction(context, ducklake_name, {LogicalType::VARCHAR, LogicalType::VARCHAR});
+  input.table_function = func;
+  return func.bind_operator(context, input, bind_index, return_names);
+}
+
+/* bind_operator requires a plain function pointer; define one per compaction function. */
+#define DEFINE_COMPACTION_BIND_OPS(prefix, ducklake_name)                                                              \
+  static unique_ptr<LogicalOperator> prefix##NoArgsBind(ClientContext &ctx, TableFunctionBindInput &input,             \
+                                                        idx_t bind_index, vector<string> &return_names) {              \
+    return CompactionNoArgsBindOp(ctx, input, bind_index, return_names, ducklake_name);                                \
+  }                                                                                                                    \
+  static unique_ptr<LogicalOperator> prefix##TableArgsBind(ClientContext &ctx, TableFunctionBindInput &input,          \
+                                                           idx_t bind_index, vector<string> &return_names) {           \
+    return CompactionTableArgsBindOp(ctx, input, bind_index, return_names, ducklake_name);                             \
+  }
+
+DEFINE_COMPACTION_BIND_OPS(Merge, "ducklake_merge_adjacent_files")
+DEFINE_COMPACTION_BIND_OPS(Rewrite, "ducklake_rewrite_data_files")
+
+#undef DEFINE_COMPACTION_BIND_OPS
+
+static void RegisterOneCompactionFunction(DatabaseInstance &db, const string &pg_name,
+                                          table_function_bind_operator_t no_args_bind,
+                                          table_function_bind_operator_t table_args_bind) {
+  TableFunctionSet set(pg_name);
+
+  TableFunction no_args({}, nullptr, nullptr, nullptr);
+  no_args.bind_operator = no_args_bind;
+  set.AddFunction(no_args);
+
+  TableFunction table_args({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, nullptr, nullptr);
+  table_args.bind_operator = table_args_bind;
+  set.AddFunction(table_args);
+
+  RegisterTableFunctionSet(db, set);
+}
+
+void RegisterCompactionFunctions(DatabaseInstance &db) {
+  RegisterOneCompactionFunction(db, "merge_adjacent_files", MergeNoArgsBind, MergeTableArgsBind);
+  RegisterOneCompactionFunction(db, "rewrite_data_files", RewriteNoArgsBind, RewriteTableArgsBind);
+}
+
+/*
+ * expire_snapshots(): no-args only. Interval overload omitted because
+ * pg_duckdb deparses PG intervals in @ format which DuckDB cannot parse.
+ */
+static unique_ptr<FunctionData> ExpireNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
+                                                 vector<LogicalType> &return_types, vector<string> &names) {
+  input.inputs.clear();
+  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
+  input.named_parameters.clear();
+
+  auto func = LookupUpstreamFunction(context, "ducklake_expire_snapshots");
+  input.table_function = func;
+  return func.bind(context, input, return_types, names);
+}
+
+void RegisterExpireSnapshotsFunction(DatabaseInstance &db) {
+  TableFunctionSet set("expire_snapshots");
+  set.AddFunction(TableFunction({}, UnreachableExecute, ExpireNoArgsBind, UnreachableInit));
+  RegisterTableFunctionSet(db, set);
+}
+
+/*
+ * flush_inlined_data(): bind_operator pattern with no-args and
+ * (schema, table) overloads. Unlike the bind-pattern functions above,
+ * upstream flush uses bind_operator to replace the entire logical plan.
+ */
 static unique_ptr<LogicalOperator> FlushNoArgsBindOp(ClientContext &context, TableFunctionBindInput &input,
                                                      idx_t bind_index, vector<string> &return_names) {
   input.inputs.clear();
   input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
   input.named_parameters.clear();
 
-  auto func = LookupDuckLakeFlushFunction(context);
+  auto func = LookupUpstreamFunction(context, "ducklake_flush_inlined_data");
   input.table_function = func;
   return func.bind_operator(context, input, bind_index, return_names);
 }
@@ -269,7 +394,7 @@ static unique_ptr<LogicalOperator> FlushTableArgsBindOp(ClientContext &context, 
   input.named_parameters["schema_name"] = duckdb::Value(schema_name);
   input.named_parameters["table_name"] = duckdb::Value(table_name);
 
-  auto func = LookupDuckLakeFlushFunction(context);
+  auto func = LookupUpstreamFunction(context, "ducklake_flush_inlined_data");
   input.table_function = func;
   return func.bind_operator(context, input, bind_index, return_names);
 }
@@ -285,10 +410,7 @@ void RegisterFlushInlinedDataFunction(DatabaseInstance &db) {
   table_args.bind_operator = FlushTableArgsBindOp;
   set.AddFunction(table_args);
 
-  CreateTableFunctionInfo info(set);
-  auto &catalog = Catalog::GetSystemCatalog(db);
-  auto transaction = CatalogTransaction::GetSystemTransaction(db);
-  catalog.CreateTableFunction(transaction, info);
+  RegisterTableFunctionSet(db, set);
 }
 
 } // namespace pgducklake

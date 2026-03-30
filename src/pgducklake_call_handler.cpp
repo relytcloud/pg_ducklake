@@ -91,6 +91,13 @@ void HandleDuckdbCall(CallStmt *call, const char *query_string) {
 
       named_params += ", table_name => " + duckdb::KeywordHelper::WriteQuoted(table_name);
       named_params += ", schema => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
+    } else if (c->consttype == REGNAMESPACEOID && !c->constisnull) {
+      Oid nspid = DatumGetObjectId(c->constvalue);
+      char *schema_name = get_namespace_name(nspid);
+      if (!schema_name)
+        elog(ERROR, "could not find namespace with OID %u", nspid);
+
+      named_params += ", schema => " + duckdb::KeywordHelper::WriteQuoted(schema_name);
     } else {
       positional_args.push_back(DatumToSqlLiteral(c->constvalue, c->consttype, c->constisnull));
     }

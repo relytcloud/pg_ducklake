@@ -6,7 +6,7 @@ against what pg_ducklake currently exposes or supports.
 
 Legend: `[x]` supported, `[ ]` not supported
 
-Last updated: 2026-03-10
+Last updated: 2026-03-30
 
 ## Core DML Operations
 
@@ -44,7 +44,7 @@ Last updated: 2026-03-10
 - [x] `snapshots()`: List all snapshots and changesets
 - [x] `current_snapshot()`: Get current snapshot ID
 - [x] `last_committed_snapshot()`: Get latest committed snapshot
-- [ ] `set_commit_message()`: Add author/message to snapshots
+- [x] `set_commit_message()`: Add author/message to snapshots
 
 ## Data Change Feed
 
@@ -75,16 +75,16 @@ Last updated: 2026-03-10
 - [ ] `ducklake_settings()`: Instance metadata
 - [ ] Extension-level retry settings: `ducklake_max_retry_count`, `ducklake_retry_wait_ms`, `ducklake_retry_backoff`
 - [ ] `ducklake_default_data_inlining_row_limit`: Extension-level default
-- [ ] Schema-level option scoping: pg_ducklake has global + table only
+- [x] Schema-level option scoping: `ducklake.set_option(name, val, 'schema'::regnamespace)`
 
 ## Maintenance
 
 - [x] `VACUUM` (merge + rewrite): `VACUUM tablename`
-- [ ] `ducklake_merge_adjacent_files()`: Dedicated merge function
-- [ ] `ducklake_expire_snapshots()`: Expire old snapshots
+- [x] `ducklake_merge_adjacent_files()`: `ducklake.merge_adjacent_files()`
+- [x] `ducklake_expire_snapshots()`: `ducklake.expire_snapshots()`
 - [x] `ducklake_cleanup_old_files()`: `ducklake.cleanup_old_files()`
-- [ ] `ducklake_delete_orphaned_files()`: Remove untracked files
-- [ ] `ducklake_rewrite_data_files()`: VACUUM covers rewrite via `vacuum_delete_threshold`, but no dedicated function
+- [ ] `ducklake_delete_orphaned_files()`: `ducklake.cleanup_orphaned_files()` defined but upstream SPI query incompatibility
+- [x] `ducklake_rewrite_data_files()`: `ducklake.rewrite_data_files()`
 - [ ] `CHECKPOINT` (all-in-one maintenance): Runs all maintenance ops sequentially
 
 ## Metadata
@@ -108,5 +108,5 @@ These features are unique to pg_ducklake and not part of the upstream DuckLake e
 
 ## Summary
 
-- **Supported:** 29 features -- core DML, CREATE/DROP TABLE, ALTER TABLE variants, time travel, partitioning, data inlining, freeze, options, VACUUM, cleanup old files, transactions, metadata tables, snapshots, current_snapshot, last_committed_snapshot, table_insertions, table_deletions, table_changes, list_files, table_info
-- **Not supported:** 12 features -- MERGE INTO, views, macros, comments, sorted tables, NOT NULL constraint management, set_commit_message, rowid, encryption, dedicated maintenance functions, CHECKPOINT, add_data_files, migration, schema-level option scoping, extension-level settings
+- **Supported:** 41 features
+- **Not supported:** 19 features

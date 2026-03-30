@@ -163,6 +163,15 @@ CREATE PROCEDURE ducklake.set_option(
 AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
 LANGUAGE C;
 
+-- duckdb-only proc (schema-scoped)
+CREATE PROCEDURE ducklake.set_option(
+    option_name text,
+    value "any",
+    scope regnamespace
+)
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
+LANGUAGE C;
+
 -- passthrough
 CREATE FUNCTION ducklake.options(
     OUT option_name text,
@@ -297,6 +306,14 @@ CREATE FUNCTION ducklake.last_committed_snapshot()
 RETURNS SETOF duckdb.row
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- duckdb-only proc
+CREATE PROCEDURE ducklake.set_commit_message(
+    author text,
+    message text
+)
+AS 'MODULE_PATHNAME', 'ducklake_only_procedure'
 LANGUAGE C;
 
 -- Metadata ----------------------------------------------------------
@@ -487,6 +504,64 @@ LANGUAGE C;
 
 -- passthrough
 CREATE FUNCTION ducklake.cleanup_old_files(older_than interval)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.cleanup_orphaned_files()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- Maintenance -------------------------------------------------------
+
+-- passthrough
+CREATE FUNCTION ducklake.merge_adjacent_files()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.merge_adjacent_files(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> merge_adjacent_files(text, text)
+CREATE FUNCTION ducklake.merge_adjacent_files(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.rewrite_data_files()
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.rewrite_data_files(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> rewrite_data_files(text, text)
+CREATE FUNCTION ducklake.rewrite_data_files(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
+-- passthrough
+CREATE FUNCTION ducklake.expire_snapshots()
 RETURNS SETOF duckdb.row
 SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
