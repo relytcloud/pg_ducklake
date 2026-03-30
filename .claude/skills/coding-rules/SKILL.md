@@ -1,6 +1,6 @@
 ---
 name: coding-rules
-description: "Code style, import order, submodule policy, and docs conventions. Consult before writing or reviewing code."
+description: "Code style, include order, docs update rules, and submodule policy. MUST consult when: writing or modifying C/C++ files (include order matters), adding/removing/changing ducklake.* SQL functions or procedures (docs/sql_objects.md must be updated), editing third_party/ code, or reviewing code for style."
 ---
 
 # Coding Rules
