@@ -29,4 +29,6 @@ test: freeze
 test: metadata_sync
 test: fdw
 test: frozen_fdw
+test: connection_string
+test: import_foreign_schema
 test: access_control

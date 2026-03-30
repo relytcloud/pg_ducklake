@@ -24,12 +24,19 @@ DROP TABLE frozen_src;
 CREATE SERVER frozen_test
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (frozen_url '/tmp/pg_ducklake_frozen_fdw_test.ducklake');
--- Error: columns specified
-CREATE FOREIGN TABLE frozen_bad_cols (id int)
+-- Explicit columns: allowed (subset)
+CREATE FOREIGN TABLE frozen_explicit_cols (id int)
     SERVER frozen_test
     OPTIONS (schema_name 'public', table_name 'frozen_src');
-ERROR:  ducklake_fdw foreign tables do not accept column definitions
-HINT:  Omit the column list; columns are automatically inferred from the remote DuckLake table.
+SELECT * FROM frozen_explicit_cols ORDER BY id LIMIT 3;
+ id 
+----
+  1
+  2
+  3
+(3 rows)
+
+DROP FOREIGN TABLE frozen_explicit_cols;
 -- Create foreign table with auto-inferred columns
 CREATE FOREIGN TABLE frozen_src_fdw ()
     SERVER frozen_test
@@ -60,6 +67,29 @@ HINT:  UPDATE is not supported on foreign tables created with ducklake_fdw.
 DELETE FROM frozen_src_fdw WHERE id = 1;
 ERROR:  ducklake_fdw tables are read-only
 HINT:  DELETE is not supported on foreign tables created with ducklake_fdw.
+-- IMPORT FOREIGN SCHEMA from frozen server
+CREATE SCHEMA frozen_import;
+IMPORT FOREIGN SCHEMA public FROM SERVER frozen_test INTO frozen_import;
+\d frozen_import.*
+               Foreign table "frozen_import.frozen_src"
+ Column |     Type     | Collation | Nullable | Default | FDW options 
+--------+--------------+-----------+----------+---------+-------------
+ id     | integer      |           |          |         | 
+ name   | text         |           |          |         | 
+ score  | numeric(5,2) |           |          |         | 
+Server: frozen_test
+FDW options: (schema_name 'public', table_name 'frozen_src')
+
+SELECT * FROM frozen_import.frozen_src ORDER BY id LIMIT 3;
+ id |  name   | score 
+----+---------+-------
+  1 | Alice   | 95.50
+  2 | Bob     | 87.00
+  3 | Charlie | 92.75
+(3 rows)
+
+DROP SCHEMA frozen_import CASCADE;
+NOTICE:  drop cascades to foreign table frozen_import.frozen_src
 -- Cleanup
 DROP FOREIGN TABLE frozen_src_fdw;
 DROP SERVER frozen_test;

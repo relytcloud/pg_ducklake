@@ -9,10 +9,14 @@ CREATE SERVER ducklake_test_server
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (metadata_schema 'ducklake');
 
--- Error: columns specified in CREATE FOREIGN TABLE
-CREATE FOREIGN TABLE fdw_bad (id int, name text)
+-- Explicit columns: allowed (subset of remote columns)
+CREATE FOREIGN TABLE fdw_explicit (id int, name text)
     SERVER ducklake_test_server
     OPTIONS (table_name 'fdw_source');
+
+SELECT * FROM fdw_explicit ORDER BY id;
+
+DROP FOREIGN TABLE fdw_explicit;
 
 -- Create foreign table with auto-inferred columns
 CREATE FOREIGN TABLE fdw_t ()

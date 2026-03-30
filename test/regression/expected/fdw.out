@@ -6,12 +6,19 @@ INSERT INTO fdw_source VALUES (1, 'Alice', 95.5), (2, 'Bob', 87.3), (3, 'Charlie
 CREATE SERVER ducklake_test_server
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (metadata_schema 'ducklake');
--- Error: columns specified in CREATE FOREIGN TABLE
-CREATE FOREIGN TABLE fdw_bad (id int, name text)
+-- Explicit columns: allowed (subset of remote columns)
+CREATE FOREIGN TABLE fdw_explicit (id int, name text)
     SERVER ducklake_test_server
     OPTIONS (table_name 'fdw_source');
-ERROR:  ducklake_fdw foreign tables do not accept column definitions
-HINT:  Omit the column list; columns are automatically inferred from the remote DuckLake table.
+SELECT * FROM fdw_explicit ORDER BY id;
+ id |  name   
+----+---------
+  1 | Alice
+  2 | Bob
+  3 | Charlie
+(3 rows)
+
+DROP FOREIGN TABLE fdw_explicit;
 -- Create foreign table with auto-inferred columns
 CREATE FOREIGN TABLE fdw_t ()
     SERVER ducklake_test_server
@@ -88,7 +95,7 @@ CREATE FOREIGN TABLE fdw_nonexistent ()
 ERROR:  ducklake_fdw: cannot read table "public"."no_such_table": Catalog Error: Table with name no_such_table does not exist!
 Did you mean "fdw_source"?
 
-LINE 1: SELECT * FROM "__ducklake_fdw_probe__".public.no_such_table LIMIT 0
+LINE 1: SELECT * FROM "fdw_db_regression".public.no_such_table LIMIT 0
                       ^
 -- Cleanup
 DROP FOREIGN TABLE fdw_t2;

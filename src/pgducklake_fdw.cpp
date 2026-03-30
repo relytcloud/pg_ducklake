@@ -81,6 +81,7 @@ struct DucklakeFdwOption {
 };
 
 static const DucklakeFdwOption valid_server_options[] = {{"dbname", ForeignServerRelationId},
+                                                         {"connection_string", ForeignServerRelationId},
                                                          {"metadata_schema", ForeignServerRelationId},
                                                          {"frozen_url", ForeignServerRelationId},
                                                          {nullptr, InvalidOid}};
@@ -152,6 +153,10 @@ static bool IsDucklakeForeignTable(Oid relid) {
 static duckdb::string GetDatabaseAlias(ForeignServer *server) {
   if (IsFrozenServer(server))
     return server->servername;
+  /* When using connection_string (no dbname), alias by server name */
+  const char *connstr = GetOptionValue(server->options, "connection_string");
+  if (connstr)
+    return duckdb::StringUtil::Format("fdw_db_%s", server->servername);
   const char *dbname = GetOptionValue(server->options, "dbname");
   if (!dbname)
     dbname = get_database_name(MyDatabaseId);
@@ -166,12 +171,20 @@ static duckdb::string BuildAttachQuery(ForeignServer *server, const char *db_ali
     return duckdb::StringUtil::Format("ATTACH%s 'ducklake:%s' AS \"%s\"", exists_clause, url, db_alias);
   }
 
-  const char *dbname = GetOptionValue(server->options, "dbname");
   const char *schema = GetOptionValue(server->options, "metadata_schema");
-  if (!dbname)
-    dbname = get_database_name(MyDatabaseId);
   if (!schema)
     schema = "ducklake";
+
+  const char *connstr = GetOptionValue(server->options, "connection_string");
+  if (connstr) {
+    return duckdb::StringUtil::Format("ATTACH%s 'postgres:%s' "
+                                      "AS \"%s\" (TYPE DUCKLAKE, METADATA_SCHEMA '%s')",
+                                      exists_clause, connstr, db_alias, schema);
+  }
+
+  const char *dbname = GetOptionValue(server->options, "dbname");
+  if (!dbname)
+    dbname = get_database_name(MyDatabaseId);
 
   const char *user = GetUserNameFromId(GetUserId(), false);
   return duckdb::StringUtil::Format("ATTACH%s 'postgres:dbname=%s user=%s' "
@@ -287,7 +300,11 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
 }
 
 /* ----------------------------------------------------------------
- * Column inference: probe remote schema via temporary DuckDB connection
+ * Column inference: probe remote schema via DuckDB connection
+ *
+ * Uses the runtime database alias (with IF NOT EXISTS) rather than a
+ * separate probe alias.  This avoids file-handle conflicts when the
+ * catalog is already ATTACHed (e.g. frozen .ducklake files).
  * ---------------------------------------------------------------- */
 
 static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
@@ -313,24 +330,23 @@ static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
   if (!table_name)
     table_name = stmt->base.relation->relname;
 
-  /* Build ATTACH + PREPARE via a temporary connection */
   duckdb::Connection conn(*db);
 
-  const char *probe_db = "__ducklake_fdw_probe__";
-  duckdb::string attach_query = BuildAttachQuery(server, probe_db, false);
+  duckdb::string db_alias = GetDatabaseAlias(server);
+  duckdb::string attach_query = BuildAttachQuery(server, db_alias.c_str(), true);
 
   auto attach_result = conn.Query(attach_query);
   if (attach_result->HasError()) {
     elog(ERROR, "ducklake_fdw: column inference ATTACH failed: %s", attach_result->GetError().c_str());
   }
 
-  duckdb::string select_query = duckdb::StringUtil::Format(
-      "SELECT * FROM \"%s\".%s.%s LIMIT 0", probe_db, duckdb::KeywordHelper::WriteOptionallyQuoted(schema_name).c_str(),
-      duckdb::KeywordHelper::WriteOptionallyQuoted(table_name).c_str());
+  duckdb::string select_query =
+      duckdb::StringUtil::Format("SELECT * FROM \"%s\".%s.%s LIMIT 0", db_alias.c_str(),
+                                 duckdb::KeywordHelper::WriteOptionallyQuoted(schema_name).c_str(),
+                                 duckdb::KeywordHelper::WriteOptionallyQuoted(table_name).c_str());
 
   auto prepared = conn.Prepare(select_query);
   if (prepared->HasError()) {
-    conn.Query(duckdb::StringUtil::Format("DETACH \"%s\"", probe_db));
     elog(ERROR, "ducklake_fdw: cannot read table \"%s\".\"%s\": %s", schema_name, table_name,
          prepared->error.Message().c_str());
   }
@@ -348,10 +364,128 @@ static List *InferForeignTableColumns(CreateForeignTableStmt *stmt) {
     columns = lappend(columns, col);
   }
 
-  /* Cleanup */
-  conn.Query(duckdb::StringUtil::Format("DETACH \"%s\"", probe_db));
-
   return columns;
+}
+
+/* ----------------------------------------------------------------
+ * IMPORT FOREIGN SCHEMA: bulk-import tables from a remote DuckLake catalog
+ * ---------------------------------------------------------------- */
+
+static List *DucklakeImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid) {
+  /* Ensure DuckDB is initialized */
+  if (!pgduckdb::DuckdbIsInitialized()) {
+    const char *errmsg;
+    pgducklake::ExecuteDuckDBQuery("SELECT 1", &errmsg);
+  }
+
+  duckdb::DuckDB *db = ducklake_get_duckdb_database();
+  if (!db)
+    elog(ERROR, "ducklake_fdw: DuckDB not initialized");
+
+  ForeignServer *server = GetForeignServer(serverOid);
+
+  /* ATTACH the remote catalog using the runtime alias (IF NOT EXISTS
+   * handles the case where it is already ATTACHed). */
+  duckdb::Connection conn(*db);
+  duckdb::string db_alias = GetDatabaseAlias(server);
+  duckdb::string attach_query = BuildAttachQuery(server, db_alias.c_str(), true);
+
+  auto attach_result = conn.Query(attach_query);
+  if (attach_result->HasError())
+    elog(ERROR, "ducklake_fdw: IMPORT FOREIGN SCHEMA ATTACH failed: %s", attach_result->GetError().c_str());
+
+  List *commands = NIL;
+
+  {
+    /* Enumerate tables via duckdb_tables() (information_schema is not
+     * available on ATTACHed DuckLake databases). */
+    duckdb::string list_query = duckdb::StringUtil::Format(
+        "SELECT table_name FROM duckdb_tables() "
+        "WHERE database_name = '%s' AND schema_name = '%s' "
+        "ORDER BY table_name",
+        db_alias.c_str(), duckdb::KeywordHelper::WriteOptionallyQuoted(stmt->remote_schema).c_str());
+
+    auto list_result = conn.Query(list_query);
+    if (list_result->HasError())
+      elog(ERROR, "ducklake_fdw: cannot list tables in schema \"%s\": %s", stmt->remote_schema,
+           list_result->GetError().c_str());
+
+    /* Collect table names, applying LIMIT TO / EXCEPT filtering */
+    duckdb::vector<duckdb::string> table_names;
+    for (idx_t row = 0; row < list_result->RowCount(); row++) {
+      duckdb::string tname = list_result->GetValue(0, row).ToString();
+
+      if (stmt->list_type == FDW_IMPORT_SCHEMA_LIMIT_TO) {
+        bool found = false;
+        ListCell *lc;
+        foreach (lc, stmt->table_list) {
+          RangeVar *rv = (RangeVar *)lfirst(lc);
+          if (strcmp(rv->relname, tname.c_str()) == 0) {
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+          continue;
+      } else if (stmt->list_type == FDW_IMPORT_SCHEMA_EXCEPT) {
+        bool excluded = false;
+        ListCell *lc;
+        foreach (lc, stmt->table_list) {
+          RangeVar *rv = (RangeVar *)lfirst(lc);
+          if (strcmp(rv->relname, tname.c_str()) == 0) {
+            excluded = true;
+            break;
+          }
+        }
+        if (excluded)
+          continue;
+      }
+
+      table_names.push_back(tname);
+    }
+
+    /* For each table, probe columns and build CREATE FOREIGN TABLE SQL */
+    for (auto &tname : table_names) {
+      duckdb::string select_query =
+          duckdb::StringUtil::Format("SELECT * FROM \"%s\".%s.%s LIMIT 0", db_alias.c_str(),
+                                     duckdb::KeywordHelper::WriteOptionallyQuoted(stmt->remote_schema).c_str(),
+                                     duckdb::KeywordHelper::WriteOptionallyQuoted(tname).c_str());
+
+      auto prepared = conn.Prepare(select_query);
+      if (prepared->HasError())
+        elog(ERROR, "ducklake_fdw: cannot read table \"%s\".\"%s\": %s", stmt->remote_schema, tname.c_str(),
+             prepared->error.Message().c_str());
+
+      auto &names = prepared->GetNames();
+      auto &types = prepared->GetTypes();
+
+      /* Build column definitions */
+      StringInfoData col_buf;
+      initStringInfo(&col_buf);
+      for (size_t i = 0; i < names.size(); i++) {
+        Oid pg_type = pgduckdb::GetPostgresDuckDBType(types[i]);
+        int32_t typemod = pgduckdb::GetPostgresDuckDBTypemod(types[i]);
+        char *type_name = format_type_with_typemod(pg_type, typemod);
+
+        if (i > 0)
+          appendStringInfoString(&col_buf, ", ");
+        appendStringInfo(&col_buf, "%s %s", quote_identifier(names[i].c_str()), type_name);
+      }
+
+      /* Build the full CREATE FOREIGN TABLE statement */
+      StringInfoData sql;
+      initStringInfo(&sql);
+      appendStringInfo(&sql, "CREATE FOREIGN TABLE %s.%s (%s) SERVER %s OPTIONS (schema_name '%s', table_name '%s')",
+                       quote_identifier(stmt->local_schema), quote_identifier(tname.c_str()), col_buf.data,
+                       quote_identifier(server->servername), stmt->remote_schema, tname.c_str());
+
+      commands = lappend(commands, pstrdup(sql.data));
+      pfree(col_buf.data);
+      pfree(sql.data);
+    }
+  }
+
+  return commands;
 }
 
 /* ----------------------------------------------------------------
@@ -371,23 +505,17 @@ static void DucklakeFdwUtilityHook(PlannedStmt *pstmt, const char *query_string,
     if (fdw) {
       ForeignServer *server = GetForeignServerByName(cft->servername, true);
       if (server && server->fdwid == fdw->fdwid) {
-        if (cft->base.tableElts != NIL) {
-          ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-                          errmsg("ducklake_fdw foreign tables do not "
-                                 "accept column definitions"),
-                          errhint("Omit the column list; columns are "
-                                  "automatically inferred from the "
-                                  "remote DuckLake table.")));
-        }
+        /* Infer columns when none are provided; allow explicit columns */
+        if (cft->base.tableElts == NIL) {
+          /* Need a mutable copy for column inference */
+          if (read_only_tree) {
+            pstmt = (PlannedStmt *)copyObjectImpl(pstmt);
+            cft = castNode(CreateForeignTableStmt, pstmt->utilityStmt);
+            read_only_tree = false;
+          }
 
-        /* Need a mutable copy for column inference */
-        if (read_only_tree) {
-          pstmt = (PlannedStmt *)copyObjectImpl(pstmt);
-          cft = castNode(CreateForeignTableStmt, pstmt->utilityStmt);
-          read_only_tree = false;
+          cft->base.tableElts = InferForeignTableColumns(cft);
         }
-
-        cft->base.tableElts = InferForeignTableColumns(cft);
       }
     }
   }
@@ -456,6 +584,7 @@ DECLARE_PG_FUNCTION(ducklake_fdw_handler) {
   routine->IterateForeignScan = DucklakeIterateForeignScan;
   routine->ReScanForeignScan = DucklakeReScanForeignScan;
   routine->EndForeignScan = DucklakeEndForeignScan;
+  routine->ImportForeignSchema = DucklakeImportForeignSchema;
   PG_RETURN_POINTER(routine);
 }
 
@@ -472,10 +601,11 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
     }
   }
 
-  /* Validate frozen_url mutual exclusivity */
+  /* Validate mutual exclusivity of connection modes */
   if (catalog == ForeignServerRelationId) {
     bool has_frozen = GetOptionValue(options, "frozen_url") != nullptr;
     bool has_dbname = GetOptionValue(options, "dbname") != nullptr;
+    bool has_connstr = GetOptionValue(options, "connection_string") != nullptr;
     bool has_schema = GetOptionValue(options, "metadata_schema") != nullptr;
 
     if (has_frozen && has_dbname)
@@ -484,6 +614,12 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
     if (has_frozen && has_schema)
       ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME), errmsg("\"frozen_url\" and \"metadata_schema\" are "
                                                                        "mutually exclusive")));
+    if (has_frozen && has_connstr)
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+                      errmsg("\"frozen_url\" and \"connection_string\" are mutually exclusive")));
+    if (has_connstr && has_dbname)
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+                      errmsg("\"connection_string\" and \"dbname\" are mutually exclusive")));
   }
 
   PG_RETURN_VOID();

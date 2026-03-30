@@ -30,10 +30,14 @@ CREATE SERVER frozen_test
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (frozen_url '/tmp/pg_ducklake_frozen_fdw_test.ducklake');
 
--- Error: columns specified
-CREATE FOREIGN TABLE frozen_bad_cols (id int)
+-- Explicit columns: allowed (subset)
+CREATE FOREIGN TABLE frozen_explicit_cols (id int)
     SERVER frozen_test
     OPTIONS (schema_name 'public', table_name 'frozen_src');
+
+SELECT * FROM frozen_explicit_cols ORDER BY id LIMIT 3;
+
+DROP FOREIGN TABLE frozen_explicit_cols;
 
 -- Create foreign table with auto-inferred columns
 CREATE FOREIGN TABLE frozen_src_fdw ()
@@ -50,6 +54,16 @@ SELECT count(*) FROM frozen_src_fdw;
 INSERT INTO frozen_src_fdw VALUES (6, 'Frank', 80.00);
 UPDATE frozen_src_fdw SET name = 'test' WHERE id = 1;
 DELETE FROM frozen_src_fdw WHERE id = 1;
+
+-- IMPORT FOREIGN SCHEMA from frozen server
+CREATE SCHEMA frozen_import;
+IMPORT FOREIGN SCHEMA public FROM SERVER frozen_test INTO frozen_import;
+
+\d frozen_import.*
+
+SELECT * FROM frozen_import.frozen_src ORDER BY id LIMIT 3;
+
+DROP SCHEMA frozen_import CASCADE;
 
 -- Cleanup
 DROP FOREIGN TABLE frozen_src_fdw;
