@@ -104,6 +104,16 @@ CREATE EVENT TRIGGER ducklake_alter_table_trigger ON ddl_command_end
     WHEN tag IN ('ALTER TABLE')
     EXECUTE FUNCTION ducklake._alter_table_trigger();
 
+CREATE FUNCTION ducklake._comment_trigger()
+    RETURNS event_trigger
+    SET search_path = pg_catalog, pg_temp
+    AS 'MODULE_PATHNAME', 'ducklake_comment_trigger'
+    LANGUAGE C;
+
+CREATE EVENT TRIGGER ducklake_comment_trigger ON ddl_command_end
+    WHEN tag IN ('COMMENT')
+    EXECUTE FUNCTION ducklake._comment_trigger();
+
 -- Metadata sync trigger function: DuckDB->PG catalog sync.
 -- When an external DuckDB client creates/drops tables (writing directly to
 -- ducklake metadata tables), this trigger creates/drops corresponding

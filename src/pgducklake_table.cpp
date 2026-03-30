@@ -3,7 +3,7 @@
  *
  * @scope extension: ducklake table AM handler, DDL event triggers
  *   (ducklake_create_table_trigger, ducklake_drop_table_trigger,
- *   ducklake_alter_table_trigger), EnsureDuckLakeTable
+ *   ducklake_alter_table_trigger, ducklake_comment_trigger), EnsureDuckLakeTable
  * @scope duckdb-instance: SyncNewTables, SyncDroppedTables (snapshot sync)
  *
  * Provides the PostgreSQL TableAM implementation for DuckLake tables and
@@ -846,6 +846,94 @@ DECLARE_PG_FUNCTION(ducklake_alter_table_trigger) {
   if (result != 0) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to alter DuckLake table: %s", error_msg ? error_msg : "unknown error")));
+  }
+
+  PG_RETURN_NULL();
+}
+
+DECLARE_PG_FUNCTION(ducklake_comment_trigger) {
+  if (pgducklake::syncing_from_metadata)
+    PG_RETURN_NULL();
+
+  if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
+    elog(ERROR, "not fired by event trigger manager");
+
+  EventTriggerData *trigger_data = (EventTriggerData *)fcinfo->context;
+  Node *parsetree = trigger_data->parsetree;
+
+  if (!IsA(parsetree, CommentStmt))
+    PG_RETURN_NULL();
+
+  CommentStmt *comment_stmt = (CommentStmt *)parsetree;
+
+  /* Only handle table and column comments */
+  if (comment_stmt->objtype != OBJECT_TABLE && comment_stmt->objtype != OBJECT_COLUMN)
+    PG_RETURN_NULL();
+
+  SPI_connect();
+
+  auto save_nestlevel = NewGUCNestLevel();
+  SetConfigOption("search_path", "pg_catalog, pg_temp", PGC_USERSET, PGC_S_SESSION);
+  SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
+
+  int ret = SPI_exec(R"(
+		SELECT DISTINCT cmds.objid AS relid, cmds.objsubid
+		FROM pg_catalog.pg_event_trigger_ddl_commands() cmds
+		JOIN pg_catalog.pg_class
+		ON cmds.objid = pg_class.oid
+		WHERE cmds.object_type IN ('table', 'table column')
+		AND pg_class.relam = (SELECT oid FROM pg_am WHERE amname = 'ducklake')
+		)",
+                     0);
+
+  if (ret != SPI_OK_SELECT)
+    elog(ERROR, "SPI_exec failed: error code %s", SPI_result_code_string(ret));
+
+  if (SPI_processed == 0) {
+    AtEOXact_GUC(false, save_nestlevel);
+    SPI_finish();
+    PG_RETURN_NULL();
+  }
+
+  HeapTuple tuple = SPI_tuptable->vals[0];
+  bool isnull;
+  Datum relid_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+  if (isnull)
+    elog(ERROR, "Expected relid to be returned, but found NULL");
+
+  Oid relid = DatumGetObjectId(relid_datum);
+
+  Datum subid_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
+  int32 objsubid = isnull ? 0 : DatumGetInt32(subid_datum);
+
+  AtEOXact_GUC(false, save_nestlevel);
+  SPI_finish();
+
+  /* Build DuckDB COMMENT SQL */
+  std::string comment_ddl;
+  std::string rel_name(pgduckdb_relation_name(relid));
+
+  if (objsubid > 0) {
+    char *col_name = get_attname(relid, (AttrNumber)objsubid, false);
+    comment_ddl =
+        "COMMENT ON COLUMN " + rel_name + "." + duckdb::KeywordHelper::WriteOptionallyQuoted(col_name) + " IS ";
+  } else {
+    comment_ddl = "COMMENT ON TABLE " + rel_name + " IS ";
+  }
+
+  if (comment_stmt->comment != nullptr) {
+    comment_ddl += quote_literal_cstr(comment_stmt->comment);
+  } else {
+    comment_ddl += "NULL";
+  }
+
+  elog(DEBUG1, "COMMENT DDL for DuckLake: %s", comment_ddl.c_str());
+
+  const char *error_msg = nullptr;
+  int result = pgducklake::ExecuteDuckDBQuery(comment_ddl.c_str(), &error_msg);
+  if (result != 0) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("failed to set DuckLake comment: %s", error_msg ? error_msg : "unknown error")));
   }
 
   PG_RETURN_NULL();
