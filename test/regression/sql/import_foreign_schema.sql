@@ -10,6 +10,9 @@ INSERT INTO ifs_products VALUES (1, 'Widget', 9.99), (2, 'Gadget', 19.99);
 CREATE TABLE ifs_logs (ts timestamp, msg text) USING ducklake;
 INSERT INTO ifs_logs VALUES ('2024-01-01 00:00:00', 'start');
 
+CREATE TABLE ifs_variant (id int, v ducklake.variant) USING ducklake;
+INSERT INTO ifs_variant VALUES (1, '{"name": "alice"}'), (2, '[1, 2, 3]');
+
 -- Create FDW server
 CREATE SERVER ifs_server
     FOREIGN DATA WRAPPER ducklake_fdw
@@ -28,6 +31,9 @@ IMPORT FOREIGN SCHEMA public FROM SERVER ifs_server INTO ifs_target;
 SELECT * FROM ifs_target.ifs_orders ORDER BY id;
 SELECT * FROM ifs_target.ifs_products ORDER BY id;
 SELECT * FROM ifs_target.ifs_logs;
+
+-- Verify variant column is imported correctly
+SELECT * FROM ifs_target.ifs_variant ORDER BY id;
 
 -- Clean up imported tables for next test
 DROP SCHEMA ifs_target CASCADE;
@@ -62,6 +68,7 @@ DROP SCHEMA ifs_target CASCADE;
 
 -- Cleanup
 DROP SERVER ifs_server;
+DROP TABLE ifs_variant;
 DROP TABLE ifs_logs;
 DROP TABLE ifs_products;
 DROP TABLE ifs_orders;

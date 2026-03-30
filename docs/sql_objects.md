@@ -43,6 +43,8 @@ Default operator classes are registered for common types (bool, int2, int4, int8
 |-----|---------|-----------|
 | `ducklake_fdw` | `ducklake._fdw_handler()` | `ducklake._fdw_validator(text[], oid)` |
 
+See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
+
 ## Functions & Procedures
 
 | Group | Function / Procedure | Kind | Regclass Overload |

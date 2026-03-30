@@ -6,6 +6,8 @@ CREATE TABLE ifs_products (id int, name text, price numeric(10,2)) USING ducklak
 INSERT INTO ifs_products VALUES (1, 'Widget', 9.99), (2, 'Gadget', 19.99);
 CREATE TABLE ifs_logs (ts timestamp, msg text) USING ducklake;
 INSERT INTO ifs_logs VALUES ('2024-01-01 00:00:00', 'start');
+CREATE TABLE ifs_variant (id int, v ducklake.variant) USING ducklake;
+INSERT INTO ifs_variant VALUES (1, '{"name": "alice"}'), (2, '[1, 2, 3]');
 -- Create FDW server
 CREATE SERVER ifs_server
     FOREIGN DATA WRAPPER ducklake_fdw
@@ -42,6 +44,14 @@ FDW options: (schema_name 'public', table_name 'ifs_orders')
 Server: ifs_server
 FDW options: (schema_name 'public', table_name 'ifs_products')
 
+                  Foreign table "ifs_target.ifs_variant"
+ Column |       Type       | Collation | Nullable | Default | FDW options 
+--------+------------------+-----------+----------+---------+-------------
+ id     | integer          |           |          |         | 
+ v      | ducklake.variant |           |          |         | 
+Server: ifs_server
+FDW options: (schema_name 'public', table_name 'ifs_variant')
+
 -- Verify imported tables exist and are queryable
 SELECT * FROM ifs_target.ifs_orders ORDER BY id;
  id | customer | amount 
@@ -63,12 +73,21 @@ SELECT * FROM ifs_target.ifs_logs;
  Mon Jan 01 00:00:00 2024 | start
 (1 row)
 
+-- Verify variant column is imported correctly
+SELECT * FROM ifs_target.ifs_variant ORDER BY id;
+ id |         v         
+----+-------------------
+  1 | {"name": "alice"}
+  2 | [1, 2, 3]
+(2 rows)
+
 -- Clean up imported tables for next test
 DROP SCHEMA ifs_target CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to foreign table ifs_target.ifs_logs
 drop cascades to foreign table ifs_target.ifs_orders
 drop cascades to foreign table ifs_target.ifs_products
+drop cascades to foreign table ifs_target.ifs_variant
 -- LIMIT TO: import only specific tables
 CREATE SCHEMA ifs_target;
 IMPORT FOREIGN SCHEMA public LIMIT TO (ifs_orders, ifs_products)
@@ -118,11 +137,13 @@ ERROR:  relation "ifs_target.ifs_logs" does not exist
 LINE 1: SELECT count(*) FROM ifs_target.ifs_logs;
                              ^
 DROP SCHEMA ifs_target CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to foreign table ifs_target.ifs_orders
 drop cascades to foreign table ifs_target.ifs_products
+drop cascades to foreign table ifs_target.ifs_variant
 -- Cleanup
 DROP SERVER ifs_server;
+DROP TABLE ifs_variant;
 DROP TABLE ifs_logs;
 DROP TABLE ifs_products;
 DROP TABLE ifs_orders;

@@ -13,4 +13,5 @@
 
 ## How-to Guides
 
+- [Foreign Data Wrapper](foreign_data_wrapper.md) -- read-only access to remote DuckLake catalogs
 - [Building from Source](compilation.md) -- compile and install on Ubuntu and macOS
