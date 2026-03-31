@@ -14,7 +14,7 @@ Last updated: 2026-03-30
 - [x] `SELECT`: Via table AM and FDW
 - [x] `UPDATE`
 - [x] `DELETE`
-- [ ] `MERGE INTO` (upsert): DuckLake uses MERGE since no PK support
+- [x] `MERGE INTO` (upsert): PG 15+, single UPDATE/DELETE action per MERGE
 
 ## DDL / Schema Evolution
 

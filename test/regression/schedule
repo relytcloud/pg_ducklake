@@ -3,6 +3,7 @@ test: recycle_ddb
 test: ddl_triggers
 test: basic
 test: dml_row_count
+test: merge
 test: transaction
 test: non_ducklake_commit
 test: temp_table

@@ -1,0 +1,8 @@
+-- MERGE INTO support (PG 15+, routed to DuckDB/DuckLake).
+-- PG 14 does not have MERGE syntax; skip the entire file.
+SELECT current_setting('server_version_num')::int >= 150000 AS has_merge \gset
+\if :has_merge
+\else
+-- PG 14: MERGE syntax not available, emit placeholder output.
+MERGE requires PostgreSQL 15+, skipping
+\endif
