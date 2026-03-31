@@ -9,6 +9,11 @@ CREATE SERVER frozen_bad_2
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (frozen_url 'https://example.com/test.ducklake', metadata_schema 'myschema');
 ERROR:  "frozen_url" and "metadata_schema" are mutually exclusive
+-- Validation: frozen_url + updatable 'true' -> error
+CREATE SERVER frozen_bad_3
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', updatable 'true');
+ERROR:  "frozen_url" and "updatable 'true'" are mutually exclusive
 -- Setup: create and freeze our own test data
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 CREATE TABLE frozen_src (id int, name text, score numeric(5,2)) USING ducklake;
@@ -59,14 +64,14 @@ SELECT count(*) FROM frozen_src_fdw;
 
 -- READ-ONLY enforcement
 INSERT INTO frozen_src_fdw VALUES (6, 'Frank', 80.00);
-ERROR:  frozen ducklake_fdw tables are read-only
-HINT:  INSERT is not supported on foreign tables backed by a frozen .ducklake snapshot.
+ERROR:  ducklake_fdw foreign table is not updatable
+HINT:  INSERT is not supported when the "updatable" option is false.
 UPDATE frozen_src_fdw SET name = 'test' WHERE id = 1;
-ERROR:  frozen ducklake_fdw tables are read-only
-HINT:  UPDATE is not supported on foreign tables backed by a frozen .ducklake snapshot.
+ERROR:  ducklake_fdw foreign table is not updatable
+HINT:  UPDATE is not supported when the "updatable" option is false.
 DELETE FROM frozen_src_fdw WHERE id = 1;
-ERROR:  frozen ducklake_fdw tables are read-only
-HINT:  DELETE is not supported on foreign tables backed by a frozen .ducklake snapshot.
+ERROR:  ducklake_fdw foreign table is not updatable
+HINT:  DELETE is not supported when the "updatable" option is false.
 -- IMPORT FOREIGN SCHEMA from frozen server
 CREATE SCHEMA frozen_import;
 IMPORT FOREIGN SCHEMA public FROM SERVER frozen_test INTO frozen_import;

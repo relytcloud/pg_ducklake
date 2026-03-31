@@ -10,6 +10,11 @@ CREATE SERVER frozen_bad_2
     FOREIGN DATA WRAPPER ducklake_fdw
     OPTIONS (frozen_url 'https://example.com/test.ducklake', metadata_schema 'myschema');
 
+-- Validation: frozen_url + updatable 'true' -> error
+CREATE SERVER frozen_bad_3
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (frozen_url 'https://example.com/test.ducklake', updatable 'true');
+
 -- Setup: create and freeze our own test data
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 

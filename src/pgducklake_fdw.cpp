@@ -81,14 +81,15 @@ struct DucklakeFdwOption {
   Oid context;
 };
 
-static const DucklakeFdwOption valid_server_options[] = {{"dbname", ForeignServerRelationId},
-                                                         {"connection_string", ForeignServerRelationId},
-                                                         {"metadata_schema", ForeignServerRelationId},
-                                                         {"frozen_url", ForeignServerRelationId},
-                                                         {nullptr, InvalidOid}};
+static const DucklakeFdwOption valid_server_options[] = {
+    {"dbname", ForeignServerRelationId},          {"connection_string", ForeignServerRelationId},
+    {"metadata_schema", ForeignServerRelationId}, {"frozen_url", ForeignServerRelationId},
+    {"updatable", ForeignServerRelationId},       {nullptr, InvalidOid}};
 
-static const DucklakeFdwOption valid_table_options[] = {
-    {"schema_name", ForeignTableRelationId}, {"table_name", ForeignTableRelationId}, {nullptr, InvalidOid}};
+static const DucklakeFdwOption valid_table_options[] = {{"schema_name", ForeignTableRelationId},
+                                                        {"table_name", ForeignTableRelationId},
+                                                        {"updatable", ForeignTableRelationId},
+                                                        {nullptr, InvalidOid}};
 
 static bool IsValidOption(const char *name, Oid context) {
   for (auto *opt = valid_server_options; opt->optname; opt++) {
@@ -133,6 +134,19 @@ static Oid GetDucklakeFdwOid() {
 
 static bool IsFrozenServer(ForeignServer *server) {
   return GetOptionValue(server->options, "frozen_url") != nullptr;
+}
+
+/* Check whether a foreign table is updatable.  Table-level option
+ * overrides server-level; frozen servers default to false; otherwise
+ * default is true (matching postgres_fdw convention). */
+static bool IsUpdatable(ForeignTable *ft, ForeignServer *server) {
+  const char *table_val = GetOptionValue(ft->options, "updatable");
+  if (table_val)
+    return pg_strcasecmp(table_val, "true") == 0;
+  const char *server_val = GetOptionValue(server->options, "updatable");
+  if (server_val)
+    return pg_strcasecmp(server_val, "true") == 0;
+  return !IsFrozenServer(server);
 }
 
 /* ----------------------------------------------------------------
@@ -274,14 +288,15 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
       pgducklake::RegisterForeignTablesInQuery(castNode(Query, cte->ctequery));
   }
 
-  /* Block DML on frozen FDW tables; regular FDW tables support writes
-   * via DuckDB execution (the planner routes DML through pg_duckdb). */
+  /* Block DML on non-updatable FDW tables.  Regular FDW tables default
+   * to updatable; frozen tables and tables/servers with updatable 'false'
+   * are read-only.  Writable tables are handled by pg_duckdb's planner. */
   if (query->commandType != CMD_SELECT && query->resultRelation > 0) {
     RangeTblEntry *result_rte = list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1);
     if (result_rte->relid != InvalidOid && IsDucklakeForeignTable(result_rte->relid)) {
       ForeignTable *ft = GetForeignTable(result_rte->relid);
       ForeignServer *server = GetForeignServer(ft->serverid);
-      if (IsFrozenServer(server)) {
+      if (!IsUpdatable(ft, server)) {
         const char *op = "Unknown";
         switch (query->commandType) {
         case CMD_INSERT:
@@ -296,10 +311,8 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
         default:
           break;
         }
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("frozen ducklake_fdw tables are read-only"),
-                        errhint("%s is not supported on foreign tables "
-                                "backed by a frozen .ducklake snapshot.",
-                                op)));
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake_fdw foreign table is not updatable"),
+                        errhint("%s is not supported when the \"updatable\" option is false.", op)));
       }
     }
   }
@@ -626,6 +639,20 @@ DECLARE_PG_FUNCTION(ducklake_fdw_validator) {
     if (has_connstr && has_dbname)
       ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
                       errmsg("\"connection_string\" and \"dbname\" are mutually exclusive")));
+
+    const char *updatable_val = GetOptionValue(options, "updatable");
+    if (updatable_val && pg_strcasecmp(updatable_val, "true") != 0 && pg_strcasecmp(updatable_val, "false") != 0)
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME), errmsg("\"updatable\" must be \"true\" or \"false\"")));
+    if (has_frozen && updatable_val && pg_strcasecmp(updatable_val, "true") == 0)
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+                      errmsg("\"frozen_url\" and \"updatable 'true'\" are mutually exclusive")));
+  }
+
+  /* Validate table-level updatable option */
+  if (catalog == ForeignTableRelationId) {
+    const char *updatable_val = GetOptionValue(options, "updatable");
+    if (updatable_val && pg_strcasecmp(updatable_val, "true") != 0 && pg_strcasecmp(updatable_val, "false") != 0)
+      ereport(ERROR, (errcode(ERRCODE_FDW_INVALID_OPTION_NAME), errmsg("\"updatable\" must be \"true\" or \"false\"")));
   }
 
   PG_RETURN_VOID();

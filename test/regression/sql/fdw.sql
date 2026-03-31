@@ -66,6 +66,44 @@ SELECT * FROM fdw_t ORDER BY id;
 INSERT INTO fdw_t VALUES (5, 'Eve', 77.0);
 SELECT * FROM fdw_source ORDER BY id;
 
+-- updatable option: table-level override
+CREATE FOREIGN TABLE fdw_readonly ()
+    SERVER ducklake_test_server
+    OPTIONS (table_name 'fdw_source', updatable 'false');
+
+INSERT INTO fdw_readonly VALUES (6, 'Frank', 60.0);
+SELECT * FROM fdw_readonly ORDER BY id;
+
+DROP FOREIGN TABLE fdw_readonly;
+
+-- updatable option: server-level
+CREATE SERVER ducklake_readonly_server
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (metadata_schema 'ducklake', updatable 'false');
+
+CREATE FOREIGN TABLE fdw_srv_ro ()
+    SERVER ducklake_readonly_server
+    OPTIONS (table_name 'fdw_source');
+
+INSERT INTO fdw_srv_ro VALUES (6, 'Frank', 60.0);
+
+-- table-level updatable 'true' overrides server-level 'false'
+CREATE FOREIGN TABLE fdw_srv_override ()
+    SERVER ducklake_readonly_server
+    OPTIONS (table_name 'fdw_source', updatable 'true');
+
+INSERT INTO fdw_srv_override VALUES (6, 'Frank', 60.0);
+DELETE FROM fdw_srv_override WHERE id = 6;
+
+DROP FOREIGN TABLE fdw_srv_override;
+DROP FOREIGN TABLE fdw_srv_ro;
+DROP SERVER ducklake_readonly_server;
+
+-- updatable validation: invalid value
+CREATE SERVER ducklake_bad_updatable
+    FOREIGN DATA WRAPPER ducklake_fdw
+    OPTIONS (metadata_schema 'ducklake', updatable 'yes');
+
 -- Error: non-existent table
 CREATE FOREIGN TABLE fdw_nonexistent ()
     SERVER ducklake_test_server

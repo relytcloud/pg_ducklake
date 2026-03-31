@@ -51,12 +51,14 @@ CREATE SERVER frozen_snapshot
 | `connection_string` | server | Full libpq connection string (remote connections) |
 | `metadata_schema` | server | Schema holding DuckLake metadata (default: `ducklake`) |
 | `frozen_url` | server | Path or URL to a frozen `.ducklake` file |
+| `updatable` | server, table | Allow INSERT/UPDATE/DELETE (default: `true`; `false` for frozen) |
 | `schema_name` | table | Remote DuckLake schema (default: `public`) |
 | `table_name` | table | Remote table name (default: foreign table name) |
 
 **Mutual exclusivity:** `dbname`, `connection_string`, and `frozen_url`
 are mutually exclusive. `metadata_schema` can be used with `dbname` or
-`connection_string` but not with `frozen_url`.
+`connection_string` but not with `frozen_url`. `frozen_url` and
+`updatable 'true'` are mutually exclusive.
 
 ## Creating foreign tables
 
