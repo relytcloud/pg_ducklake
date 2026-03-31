@@ -9,6 +9,7 @@ test: temp_table
 test: insert_unnest
 test: ctas
 test: gucs
+test: default_table_path
 test: options
 test: data_inlining_row_limit
 test: inlined_data_schema_change

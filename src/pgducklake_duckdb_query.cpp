@@ -12,6 +12,7 @@
 #include <duckdb/parser/keyword_helper.hpp>
 
 #include "pgducklake/pgducklake_duckdb_query.hpp"
+#include "pgducklake/pgducklake_guc.hpp"
 
 #include <string>
 
@@ -85,6 +86,17 @@ int ExecuteDuckDBQuery(const char *query, const char **errmsg_out) {
   AtEOXact_GUC(false, save_nestlevel);
 
   return result;
+}
+
+void SyncDefaultTablePathToDuckDB() {
+  if (default_table_path && default_table_path[0] != '\0') {
+    std::string set_query =
+        "SET ducklake_default_table_path = " + duckdb::KeywordHelper::WriteQuoted(std::string(default_table_path));
+    const char *errmsg = nullptr;
+    if (ExecuteDuckDBQuery(set_query.c_str(), &errmsg) != 0) {
+      elog(WARNING, "failed to sync ducklake.default_table_path to DuckDB: %s", errmsg ? errmsg : "unknown");
+    }
+  }
 }
 
 } // namespace pgducklake

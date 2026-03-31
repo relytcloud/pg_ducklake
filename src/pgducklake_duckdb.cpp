@@ -74,17 +74,21 @@ void ducklake_detach_catalog() {
 void ducklake_attach_catalog() {
   duckdb::string query = "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
                          "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED;
-  auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
   if (creating_extension) {
+    /* First-time init: create local data directory and pass it as DATA_PATH
+     * so DuckLake stores it in the catalog metadata. */
+    auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
     try {
       std::filesystem::create_directory(data_path);
     } catch (const std::filesystem::filesystem_error &e) {
       ereport(ERROR, (errcode(ERRCODE_IO_ERROR),
                       errmsg("failed to create DuckLake data directory \"%s\": %s", data_path.c_str(), e.what())));
     }
+    query += ", DATA_PATH '" + data_path + "'";
   }
-
-  query += ", DATA_PATH '" + data_path + "'";
+  /* On subsequent ATTACHes, omit DATA_PATH so DuckLake reads it from its
+   * stored catalog metadata. This avoids mismatch errors when the data_path
+   * has been changed (e.g. to an S3 bucket via ducklake.set_option). */
   query += ")";
 
   elog(DEBUG1, "Executing query: %s", query.c_str());

@@ -17,4 +17,10 @@ namespace pgducklake {
  */
 int ExecuteDuckDBQuery(const char *query, const char **errmsg_out);
 
+/*
+ * Sync the ducklake.default_table_path PG GUC to DuckDB's
+ * ducklake_default_table_path extension option.  No-op when empty.
+ */
+void SyncDefaultTablePathToDuckDB();
+
 } // namespace pgducklake

@@ -595,6 +595,10 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   AtEOXact_GUC(false, save_nestlevel);
   SPI_finish();
 
+  // Sync ducklake.default_table_path GUC to DuckDB extension option so
+  // DuckLake's CreateTable uses the custom path for data files.
+  pgducklake::SyncDefaultTablePathToDuckDB();
+
   // Generate CREATE TABLE DDL for DuckDB
   std::string create_table_ddl(pgduckdb_get_tabledef(relid));
   elog(DEBUG1, "Creating DuckLake table: %s", create_table_ddl.c_str());
