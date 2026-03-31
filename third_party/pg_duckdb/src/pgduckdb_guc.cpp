@@ -127,6 +127,8 @@ int duckdb_max_workers_per_postgres_scan = 2;
 char *duckdb_motherduck_session_hint = strdup("");
 char *duckdb_postgres_role = strdup("");
 bool duckdb_force_motherduck_views = false;
+bool duckdb_enable_progress_bar = true;
+int duckdb_progress_report_interval = 0; /* seconds, 0 = disabled */
 
 int duckdb_threads = -1;
 int duckdb_maximum_memory = 4096; /* 4GB in MB */
@@ -185,6 +187,14 @@ InitGUC() {
 	DefineCustomVariable("duckdb.force_motherduck_views",
 	                     "Force all views to be created in MotherDuck, even if they don't use MotherDuck tables",
 	                     &duckdb_force_motherduck_views);
+
+	DefineCustomVariable("duckdb.enable_progress_bar",
+	                     "Update process title with DuckDB query progress (visible in ps)",
+	                     &duckdb_enable_progress_bar);
+
+	DefineCustomVariable("duckdb.progress_report_interval",
+	                     "Emit NOTICE with DuckDB query progress every N seconds (0 = disabled)",
+	                     &duckdb_progress_report_interval, 0, INT_MAX, PGC_USERSET, GUC_UNIT_S);
 
 	/* GUCs acting on DuckDB instance */
 	DefineCustomDuckDBVariable("duckdb.enable_external_access", "Allow the DuckDB to access external state.",

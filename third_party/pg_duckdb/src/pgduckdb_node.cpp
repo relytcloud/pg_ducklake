@@ -6,6 +6,7 @@
 #include "pgduckdb/pgduckdb_hooks.hpp"
 #include "pgduckdb/pgduckdb_planner.hpp"
 #include "pgduckdb/pgduckdb_types.hpp"
+#include "pgduckdb/pgduckdb_guc.hpp"
 #include "pgduckdb/vendor/pg_explain.hpp"
 #include "pgduckdb/pg/explain.hpp"
 
@@ -15,7 +16,11 @@ extern "C" {
 #include "tcop/pquery.h"
 #include "nodes/params.h"
 #include "utils/ruleutils.h"
+#include "utils/ps_status.h"
 }
+
+#include <chrono>
+#include <cinttypes>
 
 #include "pgduckdb/pgduckdb_node.hpp"
 #include "pgduckdb/pgduckdb_duckdb.hpp"
@@ -26,6 +31,9 @@ bool duckdb_explain_ctas = false;
 duckdb::ExplainFormat duckdb_explain_format = duckdb::ExplainFormat::DEFAULT;
 
 #define NEED_JSON_PLAN(explain_format) (explain_format == duckdb::ExplainFormat::JSON)
+
+/* Minimum interval between process title updates for progress reporting */
+#define PROGRESS_PS_UPDATE_INTERVAL_MS 500
 
 /* global variables */
 CustomScanMethods duckdb_scan_scan_methods;
@@ -198,11 +206,33 @@ ExecuteQuery(DuckdbScanState *state) {
 	// result. This is required for cases like CTAS from a Postgres table, where allowing streaming results could lead
 	// to race conditions on Postgres resources.
 	// Checkout discussion: https://github.com/duckdb/pg_duckdb/discussions/866
+	/* Must be set BEFORE PendingQuery() -- the ProgressBar is created inside it. */
+	bool progress_enabled = pgduckdb::duckdb_enable_progress_bar || pgduckdb::duckdb_progress_report_interval > 0;
+	char *saved_ps_display = nullptr;
+
+	if (progress_enabled) {
+		auto &config = state->duckdb_connection->context->config;
+		config.enable_progress_bar = true;
+		config.print_progress_bar = false;
+
+		if (pgduckdb::duckdb_enable_progress_bar) {
+			int len;
+			const char *display = get_ps_display(&len);
+			saved_ps_display = pnstrdup(display, len);
+		}
+	}
+
 	bool allow_stream_result = !pgduckdb::ContainsPostgresTable((Node *)state->query, NULL);
 	auto pending = prepared.PendingQuery(named_values, allow_stream_result);
 	if (pending->HasError()) {
+		if (saved_ps_display) {
+			pfree(saved_ps_display);
+		}
 		return pending->ThrowError();
 	}
+
+	auto ps_update_time = std::chrono::steady_clock::now();
+	auto notice_time = ps_update_time;
 
 	duckdb::PendingExecutionResult execution_result = duckdb::PendingExecutionResult::RESULT_NOT_READY;
 	while (true) {
@@ -211,7 +241,36 @@ ExecuteQuery(DuckdbScanState *state) {
 			break;
 		}
 
+		if (progress_enabled) {
+			auto now = std::chrono::steady_clock::now();
+			auto progress = state->duckdb_connection->context->GetQueryProgress();
+			double pct = progress.GetPercentage();
+
+			if (pct > 0 && pct <= 100) {
+				if (pgduckdb::duckdb_enable_progress_bar &&
+				    std::chrono::duration_cast<std::chrono::milliseconds>(now - ps_update_time).count() >=
+				        PROGRESS_PS_UPDATE_INTERVAL_MS) {
+					char buf[256];
+					snprintf(buf, sizeof(buf), "%s DuckDB [%.0f%%]", saved_ps_display, pct);
+					set_ps_display(buf);
+					ps_update_time = now;
+				}
+				if (pgduckdb::duckdb_progress_report_interval > 0 &&
+				    std::chrono::duration_cast<std::chrono::seconds>(now - notice_time).count() >=
+				        pgduckdb::duckdb_progress_report_interval) {
+					ereport(NOTICE, errmsg("DuckDB progress: %.0f%% (%" PRIu64 "/%" PRIu64 " rows)", pct,
+					                       progress.GetRowsProcesseed(), progress.GetTotalRowsToProcess()));
+					notice_time = now;
+				}
+			}
+		}
+
 		if (QueryCancelPending) {
+			if (saved_ps_display) {
+				set_ps_display(saved_ps_display);
+				pfree(saved_ps_display);
+				saved_ps_display = nullptr;
+			}
 			auto &connection = state->duckdb_connection;
 			// Send an interrupt
 			connection->Interrupt();
@@ -240,6 +299,11 @@ ExecuteQuery(DuckdbScanState *state) {
 			ProcessInterrupts();
 			throw duckdb::Exception(duckdb::ExceptionType::EXECUTOR, "Query cancelled");
 		}
+	}
+
+	if (saved_ps_display) {
+		set_ps_display(saved_ps_display);
+		pfree(saved_ps_display);
 	}
 
 	if (execution_result == duckdb::PendingExecutionResult::EXECUTION_ERROR) {
@@ -275,8 +339,7 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 		 * completion tag, and return an empty slot so the executor does
 		 * not further increment es_processed.
 		 */
-		if (!already_executed &&
-		    duckdb_scan_state->query->commandType != CMD_SELECT &&
+		if (!already_executed && duckdb_scan_state->query->commandType != CMD_SELECT &&
 		    duckdb_scan_state->query->returningList == NIL) {
 			auto chunk = duckdb_scan_state->query_results->Fetch();
 			if (chunk && chunk->size() > 0) {
