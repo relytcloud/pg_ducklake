@@ -110,6 +110,8 @@ static const DefaultTableMacro pg_ducklake_wrapper_macros[] = {
    "FROM ducklake_last_committed_snapshot('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
   {DEFAULT_SCHEMA, "table_info", {nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_table_info('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
+  {DEFAULT_SCHEMA, "options", {nullptr}, {{nullptr, nullptr}},
+   "FROM ducklake_options('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
   // table-scoped functions
   {DEFAULT_SCHEMA, "list_files", {"schema_name", "table_name", nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_list_files('" PGDUCKLAKE_DUCKDB_CATALOG "', table_name, schema => schema_name)"},

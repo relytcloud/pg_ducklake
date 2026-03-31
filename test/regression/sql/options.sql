@@ -1,4 +1,7 @@
--- Test ducklake.set_option() procedure
+-- Test ducklake.options() and ducklake.set_option()
+
+-- 0. options() should return rows without crashing (issue #136)
+SELECT count(*) > 0 AS has_options FROM ducklake.options();
 
 -- 1. Set a global option
 CALL ducklake.set_option('data_inlining_row_limit', 100);
