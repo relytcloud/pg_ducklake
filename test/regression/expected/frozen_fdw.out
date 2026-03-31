@@ -59,14 +59,14 @@ SELECT count(*) FROM frozen_src_fdw;
 
 -- READ-ONLY enforcement
 INSERT INTO frozen_src_fdw VALUES (6, 'Frank', 80.00);
-ERROR:  ducklake_fdw tables are read-only
-HINT:  INSERT is not supported on foreign tables created with ducklake_fdw.
+ERROR:  frozen ducklake_fdw tables are read-only
+HINT:  INSERT is not supported on foreign tables backed by a frozen .ducklake snapshot.
 UPDATE frozen_src_fdw SET name = 'test' WHERE id = 1;
-ERROR:  ducklake_fdw tables are read-only
-HINT:  UPDATE is not supported on foreign tables created with ducklake_fdw.
+ERROR:  frozen ducklake_fdw tables are read-only
+HINT:  UPDATE is not supported on foreign tables backed by a frozen .ducklake snapshot.
 DELETE FROM frozen_src_fdw WHERE id = 1;
-ERROR:  ducklake_fdw tables are read-only
-HINT:  DELETE is not supported on foreign tables created with ducklake_fdw.
+ERROR:  frozen ducklake_fdw tables are read-only
+HINT:  DELETE is not supported on foreign tables backed by a frozen .ducklake snapshot.
 -- IMPORT FOREIGN SCHEMA from frozen server
 CREATE SCHEMA frozen_import;
 IMPORT FOREIGN SCHEMA public FROM SERVER frozen_test INTO frozen_import;

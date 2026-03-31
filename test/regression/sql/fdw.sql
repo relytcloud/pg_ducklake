@@ -52,10 +52,19 @@ JOIN fdw_t2 b ON a.id = b.id
 WHERE b.score > 90
 ORDER BY a.name;
 
--- READ-ONLY enforcement
+-- DML on regular FDW tables
 INSERT INTO fdw_t VALUES (4, 'Dave', 88.0);
-UPDATE fdw_t SET score = 100 WHERE id = 1;
-DELETE FROM fdw_t WHERE id = 1;
+SELECT * FROM fdw_t ORDER BY id;
+
+UPDATE fdw_t SET score = 99.9 WHERE id = 4;
+SELECT id, score FROM fdw_t WHERE id = 4;
+
+DELETE FROM fdw_t WHERE id = 4;
+SELECT * FROM fdw_t ORDER BY id;
+
+-- Cross-check: writes through FDW are visible on the base table
+INSERT INTO fdw_t VALUES (5, 'Eve', 77.0);
+SELECT * FROM fdw_source ORDER BY id;
 
 -- Error: non-existent table
 CREATE FOREIGN TABLE fdw_nonexistent ()

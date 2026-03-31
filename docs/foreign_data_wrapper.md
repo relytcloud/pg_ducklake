@@ -1,9 +1,11 @@
 # Foreign Data Wrapper
 
-`ducklake_fdw` provides read-only access to DuckLake tables stored in a
-remote PostgreSQL catalog or a frozen `.ducklake` snapshot file. Queries
-on foreign tables are routed through DuckDB -- the FDW handles catalog
-registration, not scan execution.
+`ducklake_fdw` provides access to DuckLake tables stored in a remote
+PostgreSQL catalog or a frozen `.ducklake` snapshot file. Foreign tables
+backed by a remote catalog support full DML (INSERT/UPDATE/DELETE);
+frozen snapshots are read-only. Queries on foreign tables are routed
+through DuckDB -- the FDW handles catalog registration, not scan
+execution.
 
 ## Connection modes
 
@@ -111,20 +113,24 @@ IMPORT FOREIGN SCHEMA public EXCEPT (internal_logs)
 `IMPORT FOREIGN SCHEMA` works with both remote PostgreSQL catalogs and
 frozen snapshots.
 
-## Querying foreign tables
+## Querying and modifying foreign tables
 
-Foreign tables are read-only. SELECT, JOIN, and aggregation work
-normally -- queries are routed to DuckDB for execution:
+Foreign tables backed by a remote PostgreSQL catalog support full SQL
+including SELECT, INSERT, UPDATE, and DELETE -- queries and writes are
+routed to DuckDB for execution:
 
 ```sql
 SELECT * FROM analytics.orders WHERE amount > 100 ORDER BY created_at;
 
-SELECT o.id, c.name, o.amount
-FROM analytics.orders o
-JOIN analytics.customers c ON o.customer_id = c.id;
+INSERT INTO analytics.orders (id, amount) VALUES (42, 199.99);
+
+UPDATE analytics.orders SET amount = 249.99 WHERE id = 42;
+
+DELETE FROM analytics.orders WHERE id = 42;
 ```
 
-INSERT, UPDATE, and DELETE are not supported and raise an error.
+Foreign tables backed by a **frozen snapshot** (`frozen_url`) are
+read-only. INSERT, UPDATE, and DELETE raise an error.
 
 ## Handling remote schema changes
 

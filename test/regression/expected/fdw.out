@@ -78,16 +78,44 @@ ORDER BY a.name;
  Charlie |  92.1
 (2 rows)
 
--- READ-ONLY enforcement
+-- DML on regular FDW tables
 INSERT INTO fdw_t VALUES (4, 'Dave', 88.0);
-ERROR:  ducklake_fdw tables are read-only
-HINT:  INSERT is not supported on foreign tables created with ducklake_fdw.
-UPDATE fdw_t SET score = 100 WHERE id = 1;
-ERROR:  ducklake_fdw tables are read-only
-HINT:  UPDATE is not supported on foreign tables created with ducklake_fdw.
-DELETE FROM fdw_t WHERE id = 1;
-ERROR:  ducklake_fdw tables are read-only
-HINT:  DELETE is not supported on foreign tables created with ducklake_fdw.
+SELECT * FROM fdw_t ORDER BY id;
+ id |  name   | score 
+----+---------+-------
+  1 | Alice   |  95.5
+  2 | Bob     |  87.3
+  3 | Charlie |  92.1
+  4 | Dave    |    88
+(4 rows)
+
+UPDATE fdw_t SET score = 99.9 WHERE id = 4;
+SELECT id, score FROM fdw_t WHERE id = 4;
+ id | score 
+----+-------
+  4 |  99.9
+(1 row)
+
+DELETE FROM fdw_t WHERE id = 4;
+SELECT * FROM fdw_t ORDER BY id;
+ id |  name   | score 
+----+---------+-------
+  1 | Alice   |  95.5
+  2 | Bob     |  87.3
+  3 | Charlie |  92.1
+(3 rows)
+
+-- Cross-check: writes through FDW are visible on the base table
+INSERT INTO fdw_t VALUES (5, 'Eve', 77.0);
+SELECT * FROM fdw_source ORDER BY id;
+ id |  name   | score 
+----+---------+-------
+  1 | Alice   |  95.5
+  2 | Bob     |  87.3
+  3 | Charlie |  92.1
+  5 | Eve     |    77
+(4 rows)
+
 -- Error: non-existent table
 CREATE FOREIGN TABLE fdw_nonexistent ()
     SERVER ducklake_test_server

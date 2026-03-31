@@ -6,8 +6,9 @@
  *   FDW utility hook; cached FDW OID
  * @scope duckdb-instance: attach DuckLake databases for FDW queries
  *
- * Implements a PostgreSQL FDW that provides read-only access to DuckLake
- * tables.  Supports two modes:
+ * Implements a PostgreSQL FDW that provides access to DuckLake tables.
+ * Regular FDW tables (PostgreSQL-backed) support full DML; frozen
+ * snapshots remain read-only.  Supports two modes:
  *
  *   1. Regular FDW — references a DuckLake catalog backed by a PostgreSQL
  *      metadata database (options: dbname, metadata_schema).
@@ -273,28 +274,33 @@ void pgducklake::RegisterForeignTablesInQuery(Query *query) {
       pgducklake::RegisterForeignTablesInQuery(castNode(Query, cte->ctequery));
   }
 
-  /* Block DML on FDW tables */
+  /* Block DML on frozen FDW tables; regular FDW tables support writes
+   * via DuckDB execution (the planner routes DML through pg_duckdb). */
   if (query->commandType != CMD_SELECT && query->resultRelation > 0) {
     RangeTblEntry *result_rte = list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1);
     if (result_rte->relid != InvalidOid && IsDucklakeForeignTable(result_rte->relid)) {
-      const char *op = "Unknown";
-      switch (query->commandType) {
-      case CMD_INSERT:
-        op = "INSERT";
-        break;
-      case CMD_UPDATE:
-        op = "UPDATE";
-        break;
-      case CMD_DELETE:
-        op = "DELETE";
-        break;
-      default:
-        break;
+      ForeignTable *ft = GetForeignTable(result_rte->relid);
+      ForeignServer *server = GetForeignServer(ft->serverid);
+      if (IsFrozenServer(server)) {
+        const char *op = "Unknown";
+        switch (query->commandType) {
+        case CMD_INSERT:
+          op = "INSERT";
+          break;
+        case CMD_UPDATE:
+          op = "UPDATE";
+          break;
+        case CMD_DELETE:
+          op = "DELETE";
+          break;
+        default:
+          break;
+        }
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("frozen ducklake_fdw tables are read-only"),
+                        errhint("%s is not supported on foreign tables "
+                                "backed by a frozen .ducklake snapshot.",
+                                op)));
       }
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("ducklake_fdw tables are read-only"),
-                      errhint("%s is not supported on foreign tables "
-                              "created with ducklake_fdw.",
-                              op)));
     }
   }
 }
