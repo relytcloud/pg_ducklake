@@ -21,7 +21,7 @@ git log --oneline -10
 
 ### 2. Craft Commit Message
 
-Use `workflow-commit` skill conventions to create a proper Conventional Commits message.
+Use `commit-message-format` skill conventions to create a proper Conventional Commits message.
 
 ### 3. Commit Changes
 

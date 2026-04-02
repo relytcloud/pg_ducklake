@@ -1,6 +1,6 @@
 ---
 name: setup-dev
-description: "Dev environment setup: build tools, PostgreSQL, submodules, worktrees. Always import on EnterWorktree/ExitWorktree."
+description: "Dev environment setup: build tools, PostgreSQL, subtrees, submodule, worktrees. Always import on EnterWorktree/ExitWorktree."
 user-invocable: true
 ---
 
@@ -14,8 +14,8 @@ already done, and present options to the user via `AskUserQuestion`.
 - **Global build cache**: ccache in `~/.ccache`, shared across all worktrees.
 - **Single clone per repo**: one clone each for pg_ducklake and postgres; use
   git worktrees for parallel work.
-- **Submodule sharing**: `git worktree add` on each submodule's git repo
-  to share the same object store across worktrees.
+- **Submodule worktree sharing**: the only submodule (`duckdb`) uses
+  `git worktree add` to share the same object store across worktrees.
 
 ---
 
@@ -27,7 +27,8 @@ Run these checks silently to understand what is already set up:
 command -v ccache                          # compiler cache
 ls pg-*/bin/pg_config 2>/dev/null          # local PG installs in workdir
 ls ~/.dev/pg-*/configure 2>/dev/null       # PG source worktrees
-ls third_party/pg_duckdb/Makefile 2>/dev/null  # submodules initialized?
+ls third_party/pg_duckdb/Makefile 2>/dev/null  # subtrees present? (committed directly)
+ls third_party/pg_duckdb/third_party/duckdb/Makefile 2>/dev/null  # duckdb submodule initialized?
 git worktree list                          # current worktree situation
 ```
 
@@ -136,7 +137,7 @@ grep -qF 'pg-*/' "$exclude_file" 2>/dev/null || echo 'pg-*/' >> "$exclude_file"
 
 ---
 
-## Step 4: Submodules and subtrees
+## Step 4: Subtrees and submodule
 
 ### pg_duckdb (subtree) and duckdb (submodule)
 
@@ -247,9 +248,9 @@ and the SQL files into the PG extension directory.
 - `echo $CMAKE_C_COMPILER_LAUNCHER` is `ccache`
 - cmake is picking it up: check build logs for `ccache` in compiler command
 
-**Wrong submodule commit** -- reset to what the branch expects:
+**Wrong duckdb submodule commit** -- reset to what the branch expects:
 ```bash
-git submodule update third_party/pg_duckdb
+git submodule update third_party/pg_duckdb/third_party/duckdb
 ```
 
 **PG configure fails** -- missing build deps:

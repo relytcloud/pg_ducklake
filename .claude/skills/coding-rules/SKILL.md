@@ -1,6 +1,6 @@
 ---
 name: coding-rules
-description: "Code style, include order, docs update rules, and submodule policy. MUST consult when: writing or modifying C/C++ files (include order matters), adding/removing/changing ducklake.* SQL functions or procedures (docs/sql_objects.md must be updated), editing third_party/ code, or reviewing code for style."
+description: "Code style, include order, docs update rules, and third-party dependency policy. MUST consult when: writing or modifying C/C++ files (include order matters), adding/removing/changing ducklake.* SQL functions or procedures (docs/sql_objects.md must be updated), editing third_party/ code, or reviewing code for style."
 ---
 
 # Coding Rules
@@ -47,7 +47,7 @@ PostgreSQL and DuckDB headers are conflict-prone. Follow strict include order in
 
 **FATAL macro conflict:** PostgreSQL's `elog.h` defines `#define FATAL 22`, which clobbers DuckDB's `ExceptionType::FATAL` enum member in `duckdb/common/exception.hpp`. Any header that transitively includes both will break. The fix is include order: DuckDB's `exception.hpp` (or any header that pulls it in, e.g., `string_util.hpp`, `error_data.hpp`) must be parsed *before* `postgres.h` defines the macro. Once parsed, C++ include guards prevent re-inclusion. Watch for indirect includes -- `pgduckdb/pgduckdb_contracts.hpp` and `pgducklake/utility/cpp_wrapper.hpp` both include `postgres.h`, so any DuckDB header they transitively need must already be included earlier in the translation unit.
 
-## Third-party Submodules
+## Third-party Dependencies (Subtrees)
 
 Treat `third_party/pg_duckdb` as upstream:
 

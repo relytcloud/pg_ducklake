@@ -84,7 +84,7 @@ SQL is parsed and converted to DuckDB SQL by `DuckdbPlannerHook`, then passed to
 
 ## Build and Test Commands
 
-See `setup-dev` skill for full dev environment setup (ccache, PostgreSQL from source, submodules, worktrees). See `commit-message-format`, `pr`, and `fix-ci` skills for git/CI workflows.
+See `setup-dev` skill for full dev environment setup (ccache, PostgreSQL from source, subtrees, worktrees). See `commit-message-format`, `pr`, and `fix-ci` skills for git/CI workflows.
 
 Supported PostgreSQL versions: 14, 15, 16, 17, 18.
 
