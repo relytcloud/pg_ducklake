@@ -82,6 +82,11 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 | | [`ducklake.rewrite_data_files()`](#rewrite_data_files) | passthrough | - |
 | | [`ducklake.rewrite_data_files(text, text)`](#rewrite_data_files) | passthrough | `(regclass)` -- rewrite |
 | | [`ducklake.expire_snapshots()`](#expire_snapshots) | passthrough | - |
+| Virtual Columns | [`ducklake.rowid()`](#rowid) | passthrough | - |
+| | [`ducklake.snapshot_id()`](#snapshot_id) | passthrough | - |
+| | [`ducklake.filename()`](#filename) | passthrough | - |
+| | [`ducklake.file_row_number()`](#file_row_number) | passthrough | - |
+| | [`ducklake.file_index()`](#file_index) | passthrough | - |
 | Freeze | [`ducklake.freeze(text)`](#freeze) | native proc | - |
 
 **Kind legend:**
@@ -406,6 +411,30 @@ Expires old snapshots that are beyond the retention window. The retention period
 CALL ducklake.set_option('expire_older_than', '7 days');
 SELECT * FROM ducklake.expire_snapshots();
 ```
+
+#### <a name="rowid"></a>`ducklake.rowid()` -> `bigint`
+
+Returns the DuckLake virtual row identifier for the current row.
+
+```sql
+SELECT ducklake.rowid(), * FROM my_table;
+```
+
+#### <a name="snapshot_id"></a>`ducklake.snapshot_id()` -> `bigint`
+
+Returns the snapshot ID in which the current row was inserted.
+
+#### <a name="filename"></a>`ducklake.filename()` -> `text`
+
+Returns the data file path that contains the current row.
+
+#### <a name="file_row_number"></a>`ducklake.file_row_number()` -> `bigint`
+
+Returns the row number within the data file for the current row.
+
+#### <a name="file_index"></a>`ducklake.file_index()` -> `bigint`
+
+Returns the internal file index for the current row.
 
 #### <a name="freeze"></a>`ducklake.freeze(output_path text)`
 

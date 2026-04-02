@@ -641,6 +641,30 @@ CREATE OPERATOR pg_catalog.->> (
     FUNCTION = ducklake.pg_variant_extract_idx);
 
 -- ============================================================
+-- Virtual Columns
+-- ============================================================
+
+-- DuckLake virtual column accessors.  These are scalar DuckDB-only stubs;
+-- in DuckDB a scalar macro expands each to the corresponding virtual column
+-- reference (e.g. row_id() -> rowid).  Use in SELECT to access virtual
+-- columns that are not part of the regular column list.
+CREATE FUNCTION ducklake.rowid()
+    RETURNS bigint
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.snapshot_id()
+    RETURNS bigint
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.filename()
+    RETURNS text
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.file_row_number()
+    RETURNS bigint
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION ducklake.file_index()
+    RETURNS bigint
+    AS '$libdir/pg_duckdb', 'duckdb_only_function' LANGUAGE C IMMUTABLE STRICT;
+
+-- ============================================================
 -- Bootstrap
 -- ============================================================
 

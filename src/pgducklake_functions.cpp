@@ -82,6 +82,12 @@ void RegisterDuckdbOnlyFunctions() {
   pgduckdb::RegisterDuckdbOnlyFunction("merge_adjacent_files");
   pgduckdb::RegisterDuckdbOnlyFunction("rewrite_data_files");
   pgduckdb::RegisterDuckdbOnlyFunction("expire_snapshots");
+  // Virtual column accessors
+  pgduckdb::RegisterDuckdbOnlyFunction("rowid");
+  pgduckdb::RegisterDuckdbOnlyFunction("snapshot_id");
+  pgduckdb::RegisterDuckdbOnlyFunction("filename");
+  pgduckdb::RegisterDuckdbOnlyFunction("file_row_number");
+  pgduckdb::RegisterDuckdbOnlyFunction("file_index");
   // Variant field extraction
   pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract");
   pgduckdb::RegisterDuckdbOnlyFunction("pg_variant_extract_json");
@@ -155,6 +161,13 @@ void RegisterWrapperMacros(DatabaseInstance &db) {
  */
 // clang-format off
 static const DefaultMacro pg_ducklake_scalar_macros[] = {
+  // Virtual column accessors -- expand to bare column references
+  {DEFAULT_SCHEMA, "rowid", {nullptr}, {{nullptr, nullptr}}, "rowid"},
+  {DEFAULT_SCHEMA, "snapshot_id", {nullptr}, {{nullptr, nullptr}}, "snapshot_id"},
+  {DEFAULT_SCHEMA, "filename", {nullptr}, {{nullptr, nullptr}}, "filename"},
+  {DEFAULT_SCHEMA, "file_row_number", {nullptr}, {{nullptr, nullptr}}, "file_row_number"},
+  {DEFAULT_SCHEMA, "file_index", {nullptr}, {{nullptr, nullptr}}, "file_index"},
+  // Variant field extraction
   {DEFAULT_SCHEMA, "pg_variant_extract", {"v", "k", nullptr}, {{nullptr, nullptr}},
    "json_extract_string(v::VARCHAR, k)"},
   /* ::VARCHAR needed so DuckDB returns VARCHAR, which PG maps to variant */
