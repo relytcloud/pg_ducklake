@@ -133,6 +133,20 @@ def main():
     log(f"  loaded {actual_rows} rows ({table.num_columns} cols) in {stage_sec:.1f}s")
 
     conn = psycopg.connect(PG_CONNSTR, autocommit=True)
+
+    # Capture key settings for the report
+    settings = {}
+    for guc in ("duckdb.memory_limit", "duckdb.threads", "duckdb.worker_threads",
+                "ducklake.enable_direct_insert"):
+        try:
+            settings[guc] = conn.execute(
+                "SELECT current_setting(%s)", [guc]
+            ).fetchone()[0]
+        except Exception:
+            pass
+    if settings:
+        log("Settings: " + ", ".join(f"{k}={v}" for k, v in settings.items()))
+
     conn.execute("DROP TABLE IF EXISTS hits")
 
     num_batches = (actual_rows + BATCH_SIZE - 1) // BATCH_SIZE
@@ -154,6 +168,7 @@ def main():
 
         results = {
             "scenario": scenario,
+            "settings": settings,
             "config": {
                 "total_rows": actual_rows,
                 "batch_size": BATCH_SIZE,
@@ -187,6 +202,7 @@ def main():
 
         results = {
             "scenario": scenario,
+            "settings": settings,
             "config": {
                 "total_rows": actual_rows,
                 "batch_size": BATCH_SIZE,
