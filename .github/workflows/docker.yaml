@@ -187,6 +187,99 @@ jobs:
             echo "ClickBench queries failed"; exit 1
           fi
 
+  data_inlining_bench:
+    name: Data Inlining Benchmark
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: [setup, docker_build]
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    env:
+      BENCH_TOTAL_ROWS: "30000"
+      BENCH_BATCH_SIZE: "10"
+
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: pgducklake
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download HITS partition
+        run: |
+          wget --no-verbose --continue \
+            'https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_0.parquet' \
+            -O /tmp/hits_0.parquet
+
+      - name: Pull pg_ducklake image
+        run: |
+          docker pull pgducklake/ci-builds:18-amd64-${{ github.sha }}
+
+      - name: Start containers
+        run: |
+          docker run -d --name bench-pgducklake \
+            -p 5432:5432 \
+            -e POSTGRES_PASSWORD=duckdb \
+            -v /tmp/hits_0.parquet:/tmp/hits.parquet:ro \
+            pgducklake/ci-builds:18-amd64-${{ github.sha }}
+          docker run -d --name bench-pgcatalog \
+            -p 5433:5432 \
+            -e POSTGRES_PASSWORD=duckdb \
+            postgres:18
+          for c in bench-pgducklake bench-pgcatalog; do
+            for i in $(seq 60); do
+              docker exec "$c" pg_isready -U postgres && break || sleep 1
+            done
+            docker exec "$c" pg_isready -U postgres
+          done
+
+      - name: Run pg_ducklake benchmark
+        run: |
+          uv run test/benchmark/data-inlining/bench_pg_ducklake.py \
+            > results_pg_ducklake.json
+
+      - name: Run DuckDB + DuckLake benchmark
+        env:
+          BENCH_PG_CATALOG_CONNSTR: "dbname=postgres host=localhost port=5433 user=postgres password=duckdb"
+        run: |
+          uv run test/benchmark/data-inlining/bench_duckdb_ducklake.py \
+            > results_duckdb_ducklake.json
+
+      - name: Compare results
+        if: always()
+        run: |
+          echo "=== Data Inlining Benchmark Results ==="
+          echo ""
+          for f in results_pg_ducklake.json results_duckdb_ducklake.json; do
+            if [ -f "$f" ]; then
+              scenario=$(jq -r '.scenario' "$f")
+              echo "--- $scenario ---"
+              echo "  Insert:  $(jq -r '.results.insert_rows_per_sec' "$f") rows/s  ($(jq -r '.results.insert_sec' "$f")s)"
+              echo "  Queries before flush: $(jq -r '.results.queries_before_flush_sec' "$f")s"
+              echo "  Flush:   $(jq -r '.results.flush_sec' "$f")s"
+              echo "  Queries after flush:  $(jq -r '.results.queries_after_flush_sec' "$f")s"
+              echo ""
+            fi
+          done
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-inlining-bench-results
+          path: results_*.json
+
+      - name: Cleanup containers
+        if: always()
+        run: |
+          docker rm -f bench-pgducklake bench-pgcatalog 2>/dev/null || true
+
   readme_test:
     name: README test for Postgres ${{ matrix.postgres }} on ${{ matrix.runner }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
