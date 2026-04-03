@@ -11,7 +11,19 @@ SELECT count(*) > 0 AS has_files FROM ducklake.list_files('public', 'lf_test');
 -- 2. list_files with regclass
 SELECT count(*) > 0 AS has_files FROM ducklake.list_files('lf_test'::regclass);
 
--- 3. table_info returns rows
+-- 3. regclass rewrite works after recycle_ddb (issue #149)
+-- All rewrite-style regclass functions share TryRewriteRegclassFunc.
+-- Verify representative functions work when DuckDB is uninitialized.
+CALL duckdb.recycle_ddb();
+SELECT count(*) > 0 AS has_files FROM ducklake.list_files('lf_test'::regclass);
+
+CALL duckdb.recycle_ddb();
+SELECT count(*) >= 0 AS ok FROM ducklake.merge_adjacent_files('lf_test'::regclass);
+
+CALL duckdb.recycle_ddb();
+SELECT count(*) >= 0 AS ok FROM ducklake.rewrite_data_files('lf_test'::regclass);
+
+-- 4. table_info returns rows
 SELECT count(*) > 0 AS has_tables FROM ducklake.table_info();
 
 -- Cleanup

@@ -326,12 +326,13 @@ bool RewriteRegclassWalker(Node *node, void *context) {
 #endif
 }
 
-void RewriteRegclassFunctions(Query *parse) {
+Query *RewriteRegclassFunctions(Query *parse) {
 #if PG_VERSION_NUM >= 160000
   query_tree_walker(parse, RewriteRegclassWalker, NULL, 0);
 #else
   query_tree_walker(parse, (bool (*)())((void *)RewriteRegclassWalker), NULL, 0);
 #endif
+  return parse;
 }
 
 PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options,
@@ -342,11 +343,11 @@ PlannedStmt *DucklakePlannerHook(Query *parse, const char *query_string, int cur
       return direct_insert_plan;
   }
 
+  /* Pure PG catalog rewrites -- no DuckDB needed, must run before init (#149) */
+  parse = RewriteVariantOperators(parse);
+  parse = RewriteRegclassFunctions(parse);
+
   if (pgduckdb::DuckdbIsInitialized()) {
-    /* Rewrite variant -> / ->> operators to variant_extract() FuncExpr */
-    parse = RewriteVariantOperators(parse);
-    /* Rewrite regclass overloads before pg_duckdb sees the query */
-    RewriteRegclassFunctions(parse);
     /* ATTACH databases for any ducklake FDW tables before pg_duckdb plans */
     pgducklake::RegisterForeignTablesInQuery(parse);
   }
