@@ -219,6 +219,12 @@ CREATE_TABLE_DUCKDB_SQL = CREATE_TABLE_SQL.replace(
     "CREATE TABLE hits", "CREATE TABLE lake.main.hits"
 ).replace(") USING ducklake", ")")
 
+# -- Heap table DDL (same schema, no USING ducklake -- for baseline)
+
+CREATE_HEAP_TABLE_SQL = CREATE_TABLE_SQL.replace(
+    ") USING ducklake", ")"
+)
+
 # -- Queries --------------------------------------------------------------
 
 QUERIES_PG = [

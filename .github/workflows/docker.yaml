@@ -239,6 +239,13 @@ jobs:
             docker exec "$c" pg_isready -U postgres
           done
 
+      - name: Run pg_heap baseline
+        env:
+          BENCH_MODE: heap
+        run: |
+          uv run test/benchmark/data-inlining/bench_pg_ducklake.py \
+            > results_pg_heap.json
+
       - name: Run pg_ducklake benchmark
         run: |
           uv run test/benchmark/data-inlining/bench_pg_ducklake.py \
@@ -255,16 +262,21 @@ jobs:
         if: always()
         run: |
           echo "=== Data Inlining Benchmark Results ==="
-          echo ""
-          for f in results_pg_ducklake.json results_duckdb_ducklake.json; do
+          for f in results_pg_heap.json results_pg_ducklake.json results_duckdb_ducklake.json; do
             if [ -f "$f" ]; then
               scenario=$(jq -r '.scenario' "$f")
-              echo "--- $scenario ---"
-              echo "  Insert:  $(jq -r '.results.insert_rows_per_sec' "$f") rows/s  ($(jq -r '.results.insert_sec' "$f")s)"
-              echo "  Queries before flush: $(jq -r '.results.queries_before_flush_sec' "$f")s"
-              echo "  Flush:   $(jq -r '.results.flush_sec' "$f")s"
-              echo "  Queries after flush:  $(jq -r '.results.queries_after_flush_sec' "$f")s"
+              insert=$(jq -r '.results.insert_rows_per_sec // .results.heap_insert_rows_per_sec' "$f")
               echo ""
+              echo "--- $scenario ---"
+              echo "  Insert: ${insert} rows/s ($(jq -r '.results.insert_sec // .results.heap_insert_sec' "$f")s)"
+              # ducklake scenarios have before/after flush; heap has just queries_sec
+              if jq -e '.results.flush_sec' "$f" >/dev/null 2>&1; then
+                echo "  Queries before flush: $(jq -r '.results.queries_before_flush_sec' "$f")s"
+                echo "  Flush:   $(jq -r '.results.flush_sec' "$f")s"
+                echo "  Queries after flush:  $(jq -r '.results.queries_after_flush_sec' "$f")s"
+              else
+                echo "  Queries: $(jq -r '.results.queries_sec' "$f")s"
+              fi
             fi
           done
 
