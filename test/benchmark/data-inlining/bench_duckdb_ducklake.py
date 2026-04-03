@@ -103,6 +103,13 @@ def main():
             f"(DATA_PATH '{data_path}', OVERRIDE_DATA_PATH true)"
         )
 
+        # Capture DuckDB settings
+        settings = {}
+        for name in ("memory_limit", "threads", "worker_threads"):
+            val = db.execute(f"SELECT current_setting('{name}')").fetchone()[0]
+            settings[name] = val
+        log("Settings: " + ", ".join(f"{k}={v}" for k, v in settings.items()))
+
         db.execute("DROP TABLE IF EXISTS lake.main.hits")
         db.execute(CREATE_TABLE_DUCKDB_SQL)
         db.execute(
@@ -145,6 +152,7 @@ def main():
 
         results = {
             "scenario": "duckdb_ducklake",
+            "settings": settings,
             "config": {
                 "total_rows": actual_rows,
                 "batch_size": BATCH_SIZE,

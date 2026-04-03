@@ -227,31 +227,78 @@ CREATE_HEAP_TABLE_SQL = CREATE_TABLE_SQL.replace(
 
 # -- Queries --------------------------------------------------------------
 
+# ClickBench queries selected to stress PG's row executor:
+#  Q0  simple count (baseline)
+#  Q4  COUNT DISTINCT on high-cardinality BIGINT
+#  Q9  multi-agg + COUNT DISTINCT + GROUP BY
+#  Q12 string filter + high-cardinality GROUP BY
+#  Q16 high-cardinality UserID GROUP BY
+#  Q20 LIKE string scan
+#  Q29 wide multi-expression SUM (90 SUMs, touches many columns)
+#  Q33 high-cardinality text GROUP BY (URL)
 QUERIES_PG = [
+    # Q0: simple count
     'SELECT COUNT(*) FROM hits',
-    'SELECT SUM("AdvEngineID"), COUNT(*), AVG("ResolutionWidth") FROM hits',
+    # Q4: COUNT DISTINCT on high-cardinality column
     'SELECT COUNT(DISTINCT "UserID") FROM hits',
-    'SELECT MIN("EventDate"), MAX("EventDate") FROM hits',
-    ('SELECT "RegionID", COUNT(DISTINCT "UserID") AS u FROM hits '
-     'GROUP BY "RegionID" ORDER BY u DESC LIMIT 10'),
+    # Q9: multi-agg with COUNT DISTINCT + GROUP BY
+    ('SELECT "RegionID", SUM("AdvEngineID"), COUNT(*) AS c, '
+     'AVG("ResolutionWidth"), COUNT(DISTINCT "UserID") FROM hits '
+     'GROUP BY "RegionID" ORDER BY c DESC LIMIT 10'),
+    # Q12: string filter + high-cardinality text GROUP BY
     ('SELECT "SearchPhrase", COUNT(*) AS c FROM hits '
      "WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10"),
-    'SELECT COUNT(*) FROM hits WHERE "AdvEngineID" <> 0',
-    'SELECT "URL", COUNT(*) AS c FROM hits GROUP BY "URL" ORDER BY c DESC LIMIT 10',
+    # Q16: high-cardinality GROUP BY on BIGINT
+    ('SELECT "UserID", COUNT(*) FROM hits '
+     'GROUP BY "UserID" ORDER BY COUNT(*) DESC LIMIT 10'),
+    # Q20: LIKE string scan
+    "SELECT COUNT(*) FROM hits WHERE \"URL\" LIKE '%google%'",
+    # Q29: wide multi-expression SUM (touches many numeric columns)
+    ('SELECT SUM("ResolutionWidth"), SUM("ResolutionWidth" + 1), '
+     'SUM("ResolutionWidth" + 2), SUM("ResolutionWidth" + 3), '
+     'SUM("ResolutionHeight"), SUM("ResolutionHeight" + 1), '
+     'SUM("ResolutionHeight" + 2), SUM("ResolutionHeight" + 3), '
+     'SUM("ResolutionDepth"), SUM("ResolutionDepth" + 1), '
+     'SUM("FlashMajor"), SUM("FlashMajor" + 1), '
+     'SUM("FlashMinor"), SUM("FlashMinor" + 1), '
+     'SUM("NetMajor"), SUM("NetMajor" + 1), '
+     'SUM("NetMinor"), SUM("NetMinor" + 1), '
+     'SUM("UserAgentMajor"), SUM("UserAgentMajor" + 1), '
+     'SUM("WindowClientWidth"), SUM("WindowClientWidth" + 1), '
+     'SUM("WindowClientHeight"), SUM("WindowClientHeight" + 1) '
+     'FROM hits'),
+    # Q33: high-cardinality text GROUP BY
+    ('SELECT "URL", COUNT(*) AS c FROM hits '
+     'GROUP BY "URL" ORDER BY c DESC LIMIT 10'),
 ]
 
-# DuckDB is case-insensitive so no quoting; queries target lake.main.hits.
+# DuckDB is case-insensitive; queries target lake.main.hits.
 QUERIES_DUCKDB = [
     'SELECT COUNT(*) FROM lake.main.hits',
-    'SELECT SUM(AdvEngineID), COUNT(*), AVG(ResolutionWidth) FROM lake.main.hits',
     'SELECT COUNT(DISTINCT UserID) FROM lake.main.hits',
-    'SELECT MIN(EventDate), MAX(EventDate) FROM lake.main.hits',
-    ('SELECT RegionID, COUNT(DISTINCT UserID) AS u FROM lake.main.hits '
-     'GROUP BY RegionID ORDER BY u DESC LIMIT 10'),
+    ('SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, '
+     'AVG(ResolutionWidth), COUNT(DISTINCT UserID) FROM lake.main.hits '
+     'GROUP BY RegionID ORDER BY c DESC LIMIT 10'),
     ('SELECT SearchPhrase, COUNT(*) AS c FROM lake.main.hits '
      "WHERE SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10"),
-    'SELECT COUNT(*) FROM lake.main.hits WHERE AdvEngineID <> 0',
-    'SELECT URL, COUNT(*) AS c FROM lake.main.hits GROUP BY URL ORDER BY c DESC LIMIT 10',
+    ('SELECT UserID, COUNT(*) FROM lake.main.hits '
+     'GROUP BY UserID ORDER BY COUNT(*) DESC LIMIT 10'),
+    "SELECT COUNT(*) FROM lake.main.hits WHERE URL LIKE '%google%'",
+    ('SELECT SUM(ResolutionWidth), SUM(ResolutionWidth + 1), '
+     'SUM(ResolutionWidth + 2), SUM(ResolutionWidth + 3), '
+     'SUM(ResolutionHeight), SUM(ResolutionHeight + 1), '
+     'SUM(ResolutionHeight + 2), SUM(ResolutionHeight + 3), '
+     'SUM(ResolutionDepth), SUM(ResolutionDepth + 1), '
+     'SUM(FlashMajor), SUM(FlashMajor + 1), '
+     'SUM(FlashMinor), SUM(FlashMinor + 1), '
+     'SUM(NetMajor), SUM(NetMajor + 1), '
+     'SUM(NetMinor), SUM(NetMinor + 1), '
+     'SUM(UserAgentMajor), SUM(UserAgentMajor + 1), '
+     'SUM(WindowClientWidth), SUM(WindowClientWidth + 1), '
+     'SUM(WindowClientHeight), SUM(WindowClientHeight + 1) '
+     'FROM lake.main.hits'),
+    ('SELECT URL, COUNT(*) AS c FROM lake.main.hits '
+     'GROUP BY URL ORDER BY c DESC LIMIT 10'),
 ]
 
 # -- Parquet column indices that need type conversion ---------------------
