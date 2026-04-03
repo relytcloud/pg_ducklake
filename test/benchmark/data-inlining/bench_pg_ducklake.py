@@ -187,6 +187,11 @@ def main():
         pre_flush = run_queries(conn)
         log(f"  total: {sum(pre_flush):.3f}s")
 
+        files_before = conn.execute(
+            "SELECT COUNT(*) FROM ducklake.list_files('hits'::regclass)"
+        ).fetchone()[0]
+        log(f"  files before flush: {files_before}")
+
         log("Flushing inlined data...")
         t0 = time.monotonic()
         try:
@@ -194,7 +199,11 @@ def main():
         except psycopg.errors.WrongObjectType:
             conn.execute("SELECT * FROM ducklake.flush_inlined_data()").fetchall()
         flush_sec = time.monotonic() - t0
-        log(f"  flushed in {flush_sec:.3f}s")
+
+        files_after = conn.execute(
+            "SELECT COUNT(*) FROM ducklake.list_files('hits'::regclass)"
+        ).fetchone()[0]
+        log(f"  flushed in {flush_sec:.3f}s, files after flush: {files_after}")
 
         log("Running queries after flush...")
         post_flush = run_queries(conn)
@@ -214,7 +223,9 @@ def main():
                 "insert_rows_per_sec": round(actual_rows / insert_sec),
                 "queries_before_flush_sec": round(sum(pre_flush), 3),
                 "queries_before_flush_detail": [round(t, 3) for t in pre_flush],
+                "files_before_flush": files_before,
                 "flush_sec": round(flush_sec, 3),
+                "files_after_flush": files_after,
                 "queries_after_flush_sec": round(sum(post_flush), 3),
                 "queries_after_flush_detail": [round(t, 3) for t in post_flush],
             },
