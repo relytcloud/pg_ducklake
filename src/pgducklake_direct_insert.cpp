@@ -666,7 +666,8 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
   // Create the snapshot record immediately while we still have an active
   // PostgreSQL snapshot. This makes the inserted rows visible to subsequent
   // DuckLake queries.
-  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->schema_version);
+  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->schema_version, state->table_id,
+                                            state->rows_inserted);
 
   // Update command counter for RETURNING clause (if any)
   CommandCounterIncrement();

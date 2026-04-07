@@ -572,7 +572,7 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
   return result;
 }
 
-uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
+uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t /*schema_version*/) {
   int ret;
   uint64_t next_row_id = 0;
 
@@ -581,12 +581,16 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
     return 0;
   }
 
+  // Read the persisted counter from ducklake_table_stats -- O(1) lookup on a
+  // tiny table, as opposed to MAX(row_id) over the (growing) inlined data table.
+  // Returns 0 for a fresh table that has no stats row yet.
   StringInfoData query;
   initStringInfo(&query);
   appendStringInfo(&query,
-                   "SELECT COALESCE(MAX(row_id), -1) + 1 "
-                   "FROM ducklake.ducklake_inlined_data_%llu_%llu",
-                   (unsigned long long)table_id, (unsigned long long)schema_version);
+                   "SELECT next_row_id "
+                   "FROM ducklake.ducklake_table_stats "
+                   "WHERE table_id = %llu",
+                   (unsigned long long)table_id);
 
   ret = SPI_execute(query.data, true, 1);
   if (ret == SPI_OK_SELECT && SPI_processed > 0) {
@@ -628,7 +632,8 @@ uint64_t GetNextSnapshotId() {
   return next_snapshot_id;
 }
 
-void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version) {
+void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version, uint64_t table_id,
+                                   int64_t rows_inserted) {
   int ret;
 
   elog(DEBUG1,
@@ -641,9 +646,11 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version
     return;
   }
 
-  const char *query_state = "SELECT COALESCE(MAX(next_catalog_id), 1) AS next_catalog_id, "
-                            "COALESCE(MAX(next_file_id), 0) AS next_file_id "
-                            "FROM ducklake.ducklake_snapshot";
+  // Use the latest snapshot's values via primary-key index backward scan (O(1))
+  // rather than MAX() over the full table.
+  const char *query_state = "SELECT COALESCE(next_catalog_id, 1), COALESCE(next_file_id, 0) "
+                            "FROM ducklake.ducklake_snapshot "
+                            "ORDER BY snapshot_id DESC LIMIT 1";
 
   uint64_t next_catalog_id = 1;
   uint64_t next_file_id = 0;
@@ -695,6 +702,24 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version
   ret = SPI_execute(changes_insert.data, false, 0);
   if (ret != SPI_OK_INSERT) {
     elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot changes: %d", ret);
+  }
+
+  // Advance next_row_id and record_count in ducklake_table_stats to match
+  // what upstream ducklake does in UpdateGlobalTableStats at commit time.
+  // This keeps the counter consistent so subsequent direct inserts (and
+  // DuckDB queries) see the correct value without scanning inlined data.
+  StringInfoData stats_update;
+  initStringInfo(&stats_update);
+  appendStringInfo(&stats_update,
+                   "UPDATE ducklake.ducklake_table_stats "
+                   "SET next_row_id = next_row_id + %lld, "
+                   "    record_count = record_count + %lld "
+                   "WHERE table_id = %llu",
+                   (long long)rows_inserted, (long long)rows_inserted, (unsigned long long)table_id);
+
+  ret = SPI_execute(stats_update.data, false, 0);
+  if (ret != SPI_OK_UPDATE) {
+    elog(ERROR, "CreateSnapshotForDirectInsert: failed to update table stats: %d", ret);
   }
 
   SPI_finish();
