@@ -225,81 +225,121 @@ CREATE_HEAP_TABLE_SQL = CREATE_TABLE_SQL.replace(
     ") USING ducklake", ")"
 )
 
-# -- Queries --------------------------------------------------------------
+# -- Queries (full ClickBench Q0-Q42) ------------------------------------
+#
+# All 43 official ClickBench queries adapted for the HITS schema.
+# PG queries use double-quoted identifiers and PG-native boolean syntax
+# (our schema declares IsRefresh/DontCountHits/etc. as BOOLEAN, whereas
+# ClickBench originals use integer columns with = 0 / <> 0 comparisons).
+# DuckDB queries are derived via _pg_to_duckdb() transformation.
 
-# ClickBench queries selected to stress PG's row executor:
-#  Q0  simple count (baseline)
-#  Q4  COUNT DISTINCT on high-cardinality BIGINT
-#  Q9  multi-agg + COUNT DISTINCT + GROUP BY
-#  Q12 string filter + high-cardinality GROUP BY
-#  Q16 high-cardinality UserID GROUP BY
-#  Q20 LIKE string scan
-#  Q29 wide multi-expression SUM (90 SUMs, touches many columns)
-#  Q33 high-cardinality text GROUP BY (URL)
+# Q29: 90 SUM expressions on ResolutionWidth (generated to avoid a wall of text)
+_Q29_SUMS = ', '.join(f'SUM("ResolutionWidth" + {i})' for i in range(90))
+
 QUERIES_PG = [
-    # Q0: simple count
-    'SELECT COUNT(*) FROM hits',
-    # Q4: COUNT DISTINCT on high-cardinality column
-    'SELECT COUNT(DISTINCT "UserID") FROM hits',
-    # Q9: multi-agg with COUNT DISTINCT + GROUP BY
-    ('SELECT "RegionID", SUM("AdvEngineID"), COUNT(*) AS c, '
-     'AVG("ResolutionWidth"), COUNT(DISTINCT "UserID") FROM hits '
-     'GROUP BY "RegionID" ORDER BY c DESC LIMIT 10'),
-    # Q12: string filter + high-cardinality text GROUP BY
-    ('SELECT "SearchPhrase", COUNT(*) AS c FROM hits '
-     "WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10"),
-    # Q16: high-cardinality GROUP BY on BIGINT
-    ('SELECT "UserID", COUNT(*) FROM hits '
-     'GROUP BY "UserID" ORDER BY COUNT(*) DESC LIMIT 10'),
+    # Q0: count
+    """SELECT COUNT(*) FROM hits""",
+    # Q1: count with filter
+    """SELECT COUNT(*) FROM hits WHERE "AdvEngineID" <> 0""",
+    # Q2: sum, count, avg
+    """SELECT SUM("AdvEngineID"), COUNT(*), AVG("ResolutionWidth") FROM hits""",
+    # Q3: avg bigint
+    """SELECT AVG("UserID") FROM hits""",
+    # Q4: count distinct
+    """SELECT COUNT(DISTINCT "UserID") FROM hits""",
+    # Q5: count distinct text
+    """SELECT COUNT(DISTINCT "SearchPhrase") FROM hits""",
+    # Q6: min/max date
+    """SELECT MIN("EventDate"), MAX("EventDate") FROM hits""",
+    # Q7: group by with filter
+    """SELECT "AdvEngineID", COUNT(*) FROM hits WHERE "AdvEngineID" <> 0 GROUP BY "AdvEngineID" ORDER BY COUNT(*) DESC""",
+    # Q8: count distinct + group by
+    """SELECT "RegionID", COUNT(DISTINCT "UserID") AS u FROM hits GROUP BY "RegionID" ORDER BY u DESC LIMIT 10""",
+    # Q9: multi-agg + count distinct + group by
+    """SELECT "RegionID", SUM("AdvEngineID"), COUNT(*) AS c, AVG("ResolutionWidth"), COUNT(DISTINCT "UserID") FROM hits GROUP BY "RegionID" ORDER BY c DESC LIMIT 10""",
+    # Q10: mobile phone model group by
+    """SELECT "MobilePhoneModel", COUNT(DISTINCT "UserID") AS u FROM hits WHERE "MobilePhoneModel" <> '' GROUP BY "MobilePhoneModel" ORDER BY u DESC LIMIT 10""",
+    # Q11: two-column group by
+    """SELECT "MobilePhone", "MobilePhoneModel", COUNT(DISTINCT "UserID") AS u FROM hits WHERE "MobilePhoneModel" <> '' GROUP BY "MobilePhone", "MobilePhoneModel" ORDER BY u DESC LIMIT 10""",
+    # Q12: search phrase group by
+    """SELECT "SearchPhrase", COUNT(*) AS c FROM hits WHERE "SearchPhrase" <> '' GROUP BY "SearchPhrase" ORDER BY c DESC LIMIT 10""",
+    # Q13: search phrase count distinct
+    """SELECT "SearchPhrase", COUNT(DISTINCT "UserID") AS u FROM hits WHERE "SearchPhrase" <> '' GROUP BY "SearchPhrase" ORDER BY u DESC LIMIT 10""",
+    # Q14: search engine + phrase group by
+    """SELECT "SearchEngineID", "SearchPhrase", COUNT(*) AS c FROM hits WHERE "SearchPhrase" <> '' GROUP BY "SearchEngineID", "SearchPhrase" ORDER BY c DESC LIMIT 10""",
+    # Q15: user id group by
+    """SELECT "UserID", COUNT(*) FROM hits GROUP BY "UserID" ORDER BY COUNT(*) DESC LIMIT 10""",
+    # Q16: user + search phrase ordered
+    """SELECT "UserID", "SearchPhrase", COUNT(*) FROM hits GROUP BY "UserID", "SearchPhrase" ORDER BY COUNT(*) DESC LIMIT 10""",
+    # Q17: user + search phrase unordered
+    """SELECT "UserID", "SearchPhrase", COUNT(*) FROM hits GROUP BY "UserID", "SearchPhrase" LIMIT 10""",
+    # Q18: extract minute + three-way group by
+    """SELECT "UserID", extract(minute FROM "EventTime") AS m, "SearchPhrase", COUNT(*) FROM hits GROUP BY "UserID", m, "SearchPhrase" ORDER BY COUNT(*) DESC LIMIT 10""",
+    # Q19: point lookup
+    """SELECT "UserID" FROM hits WHERE "UserID" = 435090932899640449""",
     # Q20: LIKE string scan
-    "SELECT COUNT(*) FROM hits WHERE \"URL\" LIKE '%google%'",
-    # Q29: wide multi-expression SUM (touches many numeric columns)
-    ('SELECT SUM("ResolutionWidth"), SUM("ResolutionWidth" + 1), '
-     'SUM("ResolutionWidth" + 2), SUM("ResolutionWidth" + 3), '
-     'SUM("ResolutionHeight"), SUM("ResolutionHeight" + 1), '
-     'SUM("ResolutionHeight" + 2), SUM("ResolutionHeight" + 3), '
-     'SUM("ResolutionDepth"), SUM("ResolutionDepth" + 1), '
-     'SUM("FlashMajor"), SUM("FlashMajor" + 1), '
-     'SUM("FlashMinor"), SUM("FlashMinor" + 1), '
-     'SUM("NetMajor"), SUM("NetMajor" + 1), '
-     'SUM("NetMinor"), SUM("NetMinor" + 1), '
-     'SUM("UserAgentMajor"), SUM("UserAgentMajor" + 1), '
-     'SUM("WindowClientWidth"), SUM("WindowClientWidth" + 1), '
-     'SUM("WindowClientHeight"), SUM("WindowClientHeight" + 1) '
-     'FROM hits'),
-    # Q33: high-cardinality text GROUP BY
-    ('SELECT "URL", COUNT(*) AS c FROM hits '
-     'GROUP BY "URL" ORDER BY c DESC LIMIT 10'),
+    """SELECT COUNT(*) FROM hits WHERE "URL" LIKE '%google%'""",
+    # Q21: LIKE + group by
+    """SELECT "SearchPhrase", MIN("URL"), COUNT(*) AS c FROM hits WHERE "URL" LIKE '%google%' AND "SearchPhrase" <> '' GROUP BY "SearchPhrase" ORDER BY c DESC LIMIT 10""",
+    # Q22: LIKE + NOT LIKE + count distinct
+    """SELECT "SearchPhrase", MIN("URL"), MIN("Title"), COUNT(*) AS c, COUNT(DISTINCT "UserID") FROM hits WHERE "Title" LIKE '%Google%' AND "URL" NOT LIKE '%.google.%' AND "SearchPhrase" <> '' GROUP BY "SearchPhrase" ORDER BY c DESC LIMIT 10""",
+    # Q23: SELECT * with LIKE + ORDER BY
+    """SELECT * FROM hits WHERE "URL" LIKE '%google%' ORDER BY "EventTime" LIMIT 10""",
+    # Q24: ORDER BY timestamp
+    """SELECT "SearchPhrase" FROM hits WHERE "SearchPhrase" <> '' ORDER BY "EventTime" LIMIT 10""",
+    # Q25: ORDER BY text
+    """SELECT "SearchPhrase" FROM hits WHERE "SearchPhrase" <> '' ORDER BY "SearchPhrase" LIMIT 10""",
+    # Q26: ORDER BY two columns
+    """SELECT "SearchPhrase" FROM hits WHERE "SearchPhrase" <> '' ORDER BY "EventTime", "SearchPhrase" LIMIT 10""",
+    # Q27: AVG string length + HAVING
+    """SELECT "CounterID", AVG(length("URL")) AS l, COUNT(*) AS c FROM hits WHERE "URL" <> '' GROUP BY "CounterID" HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25""",
+    # Q28: REGEXP_REPLACE + HAVING
+    """SELECT REGEXP_REPLACE("Referer", '^https?://(?:www\\.)?([^/]+)/.*$', '\\1') AS k, AVG(length("Referer")) AS l, COUNT(*) AS c, MIN("Referer") FROM hits WHERE "Referer" <> '' GROUP BY k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25""",
+    # Q29: wide SUM (90 expressions)
+    f"""SELECT {_Q29_SUMS} FROM hits""",
+    # Q30: multi-col group by + boolean SUM
+    """SELECT "SearchEngineID", "ClientIP", COUNT(*) AS c, SUM("IsRefresh"::int), AVG("ResolutionWidth") FROM hits WHERE "SearchPhrase" <> '' GROUP BY "SearchEngineID", "ClientIP" ORDER BY c DESC LIMIT 10""",
+    # Q31: high-cardinality group by + boolean SUM
+    """SELECT "WatchID", "ClientIP", COUNT(*) AS c, SUM("IsRefresh"::int), AVG("ResolutionWidth") FROM hits WHERE "SearchPhrase" <> '' GROUP BY "WatchID", "ClientIP" ORDER BY c DESC LIMIT 10""",
+    # Q32: high-cardinality group by no filter
+    """SELECT "WatchID", "ClientIP", COUNT(*) AS c, SUM("IsRefresh"::int), AVG("ResolutionWidth") FROM hits GROUP BY "WatchID", "ClientIP" ORDER BY c DESC LIMIT 10""",
+    # Q33: URL group by
+    """SELECT "URL", COUNT(*) AS c FROM hits GROUP BY "URL" ORDER BY c DESC LIMIT 10""",
+    # Q34: constant column + URL group by
+    """SELECT 1, "URL", COUNT(*) AS c FROM hits GROUP BY 1, "URL" ORDER BY c DESC LIMIT 10""",
+    # Q35: expression group by
+    """SELECT "ClientIP", "ClientIP" - 1, "ClientIP" - 2, "ClientIP" - 3, COUNT(*) AS c FROM hits GROUP BY "ClientIP", "ClientIP" - 1, "ClientIP" - 2, "ClientIP" - 3 ORDER BY c DESC LIMIT 10""",
+    # Q36: date range + boolean filter
+    """SELECT "URL", COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-01' AND "EventDate" <= '2013-07-31' AND NOT "DontCountHits" AND NOT "IsRefresh" AND "URL" <> '' GROUP BY "URL" ORDER BY PageViews DESC LIMIT 10""",
+    # Q37: title + date range
+    """SELECT "Title", COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-01' AND "EventDate" <= '2013-07-31' AND NOT "DontCountHits" AND NOT "IsRefresh" AND "Title" <> '' GROUP BY "Title" ORDER BY PageViews DESC LIMIT 10""",
+    # Q38: boolean filters + OFFSET
+    """SELECT "URL", COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-01' AND "EventDate" <= '2013-07-31' AND NOT "IsRefresh" AND "IsLink" AND NOT "IsDownload" GROUP BY "URL" ORDER BY PageViews DESC LIMIT 10 OFFSET 1000""",
+    # Q39: CASE + multi-col group by + OFFSET
+    """SELECT "TraficSourceID", "SearchEngineID", "AdvEngineID", CASE WHEN ("SearchEngineID" = 0 AND "AdvEngineID" = 0) THEN "Referer" ELSE '' END AS Src, "URL" AS Dst, COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-01' AND "EventDate" <= '2013-07-31' AND NOT "IsRefresh" GROUP BY "TraficSourceID", "SearchEngineID", "AdvEngineID", Src, Dst ORDER BY PageViews DESC LIMIT 10 OFFSET 1000""",
+    # Q40: hash filter + IN list
+    """SELECT "URLHash", "EventDate", COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-01' AND "EventDate" <= '2013-07-31' AND NOT "IsRefresh" AND "TraficSourceID" IN (-1, 6) AND "RefererHash" = 3594120000172545465 GROUP BY "URLHash", "EventDate" ORDER BY PageViews DESC LIMIT 10 OFFSET 100""",
+    # Q41: hash point filter + large OFFSET
+    """SELECT "WindowClientWidth", "WindowClientHeight", COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-01' AND "EventDate" <= '2013-07-31' AND NOT "IsRefresh" AND NOT "DontCountHits" AND "URLHash" = 2868770270353813622 GROUP BY "WindowClientWidth", "WindowClientHeight" ORDER BY PageViews DESC LIMIT 10 OFFSET 10000""",
+    # Q42: DATE_TRUNC + narrow time range
+    """SELECT DATE_TRUNC('minute', "EventTime") AS M, COUNT(*) AS PageViews FROM hits WHERE "CounterID" = 62 AND "EventDate" >= '2013-07-14' AND "EventDate" <= '2013-07-15' AND NOT "IsRefresh" AND NOT "DontCountHits" GROUP BY DATE_TRUNC('minute', "EventTime") ORDER BY DATE_TRUNC('minute', "EventTime") LIMIT 10 OFFSET 1000""",
 ]
 
-# DuckDB is case-insensitive; queries target lake.main.hits.
-QUERIES_DUCKDB = [
-    'SELECT COUNT(*) FROM lake.main.hits',
-    'SELECT COUNT(DISTINCT UserID) FROM lake.main.hits',
-    ('SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, '
-     'AVG(ResolutionWidth), COUNT(DISTINCT UserID) FROM lake.main.hits '
-     'GROUP BY RegionID ORDER BY c DESC LIMIT 10'),
-    ('SELECT SearchPhrase, COUNT(*) AS c FROM lake.main.hits '
-     "WHERE SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10"),
-    ('SELECT UserID, COUNT(*) FROM lake.main.hits '
-     'GROUP BY UserID ORDER BY COUNT(*) DESC LIMIT 10'),
-    "SELECT COUNT(*) FROM lake.main.hits WHERE URL LIKE '%google%'",
-    ('SELECT SUM(ResolutionWidth), SUM(ResolutionWidth + 1), '
-     'SUM(ResolutionWidth + 2), SUM(ResolutionWidth + 3), '
-     'SUM(ResolutionHeight), SUM(ResolutionHeight + 1), '
-     'SUM(ResolutionHeight + 2), SUM(ResolutionHeight + 3), '
-     'SUM(ResolutionDepth), SUM(ResolutionDepth + 1), '
-     'SUM(FlashMajor), SUM(FlashMajor + 1), '
-     'SUM(FlashMinor), SUM(FlashMinor + 1), '
-     'SUM(NetMajor), SUM(NetMajor + 1), '
-     'SUM(NetMinor), SUM(NetMinor + 1), '
-     'SUM(UserAgentMajor), SUM(UserAgentMajor + 1), '
-     'SUM(WindowClientWidth), SUM(WindowClientWidth + 1), '
-     'SUM(WindowClientHeight), SUM(WindowClientHeight + 1) '
-     'FROM lake.main.hits'),
-    ('SELECT URL, COUNT(*) AS c FROM lake.main.hits '
-     'GROUP BY URL ORDER BY c DESC LIMIT 10'),
-]
+
+def _pg_to_duckdb(q):
+    """Convert PG-syntax query to DuckDB-syntax for lake.main.hits.
+
+    Transformations: table name, remove PG identifier quoting, remove
+    ::int casts (DuckDB SUMs booleans natively), length -> STRLEN.
+    """
+    q = q.replace(' FROM hits', ' FROM lake.main.hits')
+    q = q.replace('::int', '')
+    q = q.replace('"', '')
+    q = q.replace('length(', 'STRLEN(')
+    return q
+
+
+QUERIES_DUCKDB = [_pg_to_duckdb(q) for q in QUERIES_PG]
 
 # -- Parquet column indices that need type conversion ---------------------
 # (parquet stores these as raw integers)

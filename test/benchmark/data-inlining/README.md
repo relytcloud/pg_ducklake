@@ -15,9 +15,9 @@ Default settings match the blog: 300k rows, batches of 10.
 ## What it measures
 
 1. **Batch insert** -- streaming 10-row batches from pyarrow
-2. **Query before flush** -- 8 ClickBench aggregation queries on inlined data
+2. **Query before flush** -- all 43 ClickBench queries (Q0-Q42) on inlined data
 3. **Flush** -- `flush_inlined_data()` materializes rows to Parquet (ducklake only)
-4. **Query after flush** -- same queries on Parquet files (ducklake only)
+4. **Query after flush** -- same 43 queries on Parquet files (ducklake only)
 
 ## Quick start
 
