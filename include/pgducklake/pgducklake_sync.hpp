@@ -12,6 +12,11 @@ namespace pgducklake {
  * ducklake_sorted indexes during sync. */
 extern bool syncing_from_metadata;
 
+/* When true the snapshot trigger skips all sync handlers.  Set by the
+ * direct insert path which only inserts inlined data rows -- no DDL
+ * or sort-key changes that need reverse-syncing to pg_class. */
+extern bool skip_snapshot_sync;
+
 /* Signature for per-object-type sync handlers.
  * Called by ducklake_snapshot_trigger for each new snapshot,
  * after SyncNewTables/SyncDroppedTables have run.

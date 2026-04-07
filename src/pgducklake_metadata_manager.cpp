@@ -615,8 +615,8 @@ uint64_t GetNextSnapshotId() {
     return next_snapshot_id;
   }
 
-  const char *query = "SELECT COALESCE(MAX(snapshot_id), 0) + 1 FROM "
-                      "ducklake.ducklake_snapshot";
+  const char *query = "SELECT snapshot_id + 1 FROM ducklake.ducklake_snapshot "
+                      "ORDER BY snapshot_id DESC LIMIT 1";
 
   ret = SPI_execute(query, true, 1);
   if (ret == SPI_OK_SELECT && SPI_processed > 0) {

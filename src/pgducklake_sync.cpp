@@ -36,6 +36,7 @@ extern "C" {
 namespace pgducklake {
 
 bool syncing_from_metadata = false;
+bool skip_snapshot_sync = false;
 
 } // namespace pgducklake
 
@@ -70,6 +71,13 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
     elog(ERROR, "not fired by trigger manager");
 
   TriggerData *trigdata = (TriggerData *)fcinfo->context;
+
+  /* Direct insert path sets skip_snapshot_sync -- no DDL or sort-key
+   * changes to reverse-sync, so skip the expensive SPI queries. */
+  if (pgducklake::skip_snapshot_sync) {
+    pgducklake::skip_snapshot_sync = false;
+    return PointerGetDatum(trigdata->tg_trigtuple);
+  }
 
   /* Extract snapshot_id from the NEW row */
   bool isnull;

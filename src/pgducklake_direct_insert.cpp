@@ -23,6 +23,9 @@
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
+#include "pgducklake/pgducklake_sync.hpp"
+
+#include <unordered_map>
 
 extern "C" {
 #include "postgres.h"
@@ -58,6 +61,44 @@ extern "C" {
 }
 
 namespace pgducklake {
+
+/*
+ * Session-level caches for metadata that is stable across EXECUTE calls.
+ * Cleared on DuckDB instance recycle (recycle_ddb) via ResetDirectInsertCaches().
+ */
+struct InliningInfoCache {
+  uint64_t table_id;
+  uint64_t schema_version;
+};
+
+struct InlinedColumnTypesCache {
+  List *col_types; // List of Oid, palloc'd in TopMemoryContext
+};
+
+static std::unordered_map<Oid, InliningInfoCache> inlining_info_cache;
+/* Keyed by (table_id, schema_version) so a DDL that changes column
+ * types (and bumps schema_version) invalidates the cache entry. */
+struct TableSchemaKey {
+  uint64_t table_id;
+  uint64_t schema_version;
+  bool operator==(const TableSchemaKey &o) const {
+    return table_id == o.table_id && schema_version == o.schema_version;
+  }
+};
+struct TableSchemaKeyHash {
+  size_t operator()(const TableSchemaKey &k) const {
+    return std::hash<uint64_t>()(k.table_id) ^ (std::hash<uint64_t>()(k.schema_version) << 1);
+  }
+};
+static std::unordered_map<TableSchemaKey, InlinedColumnTypesCache, TableSchemaKeyHash> inlined_col_types_cache;
+
+void ResetDirectInsertCaches() {
+  inlining_info_cache.clear();
+  for (auto &entry : inlined_col_types_cache) {
+    list_free(entry.second.col_types);
+  }
+  inlined_col_types_cache.clear();
+}
 
 // Define the scan state structure here (needs full CustomScanState definition)
 struct DirectInsertScanState {
@@ -286,9 +327,16 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
 
   // Check 5: Must have data inlining enabled
   uint64_t table_id, schema_version;
-  if (!pgducklake::GetTableInliningInfo(target_oid, &table_id, &schema_version)) {
-    relation_close(target_rel, AccessShareLock);
-    return false;
+  auto cache_it = inlining_info_cache.find(target_oid);
+  if (cache_it != inlining_info_cache.end()) {
+    table_id = cache_it->second.table_id;
+    schema_version = cache_it->second.schema_version;
+  } else {
+    if (!pgducklake::GetTableInliningInfo(target_oid, &table_id, &schema_version)) {
+      relation_close(target_rel, AccessShareLock);
+      return false;
+    }
+    inlining_info_cache[target_oid] = {table_id, schema_version};
   }
 
   // Check 6: Must have SELECT query as source
@@ -385,12 +433,26 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
   }
 
   // Check 9: Query ducklake_column metadata to determine what PG types the
-  // inlined table uses.  Non-natively-supported DuckDB types are stored under
-  // a different PG type (e.g. VARCHAR->BYTEA, DATE->VARCHAR).  Bail out for
-  // nested types (STRUCT/MAP/LIST) which cannot appear in the UNNEST pattern.
+  // inlined table uses.
   List *inlined_col_types = NIL;
-  if (!GetInlinedColumnTypes(table_id, param_infos, &inlined_col_types)) {
-    return false;
+  TableSchemaKey col_key = {table_id, schema_version};
+  auto col_cache_it = inlined_col_types_cache.find(col_key);
+  if (col_cache_it != inlined_col_types_cache.end()) {
+    inlined_col_types = col_cache_it->second.col_types;
+  } else {
+    if (!GetInlinedColumnTypes(table_id, param_infos, &inlined_col_types)) {
+      return false;
+    }
+    // Copy the list into TopMemoryContext so it survives across statements
+    MemoryContext old_ctx = MemoryContextSwitchTo(TopMemoryContext);
+    List *persistent = NIL;
+    ListCell *lc_oid;
+    foreach (lc_oid, inlined_col_types) {
+      persistent = lappend_oid(persistent, lfirst_oid(lc_oid));
+    }
+    MemoryContextSwitchTo(old_ctx);
+    inlined_col_types_cache[col_key] = {persistent};
+    inlined_col_types = persistent;
   }
 
   // All checks passed, fill context
@@ -665,7 +727,9 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
 
   // Create the snapshot record immediately while we still have an active
   // PostgreSQL snapshot. This makes the inserted rows visible to subsequent
-  // DuckLake queries.
+  // DuckLake queries.  Tell the snapshot trigger to skip sync handlers --
+  // direct insert only adds inlined data rows, no DDL changes to reverse-sync.
+  pgducklake::skip_snapshot_sync = true;
   pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->schema_version, state->table_id,
                                             state->rows_inserted);
 

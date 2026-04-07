@@ -101,8 +101,13 @@ void ducklake_attach_catalog() {
   }
 }
 
+namespace pgducklake {
+void ResetDirectInsertCaches();
+} // namespace pgducklake
+
 void ducklake_load_extension(duckdb::DuckDB &db) {
   ducklake_duckdb_instance = &db;
+  pgducklake::ResetDirectInsertCaches();
   db.LoadStaticExtension<duckdb::DucklakeExtension>();
   pgducklake::RegisterTimeTravelFunction(*db.instance);
   pgducklake::RegisterWrapperMacros(*db.instance);

@@ -54,4 +54,8 @@ void RegisterDirectInsertNode();
 
 PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params);
 
+/* Clear session-level caches.  Must be called on DuckDB instance recycle
+ * (recycle_ddb) since table_id/schema_version may change. */
+void ResetDirectInsertCaches();
+
 } // namespace pgducklake
