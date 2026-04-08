@@ -35,6 +35,7 @@ extern "C" {
 #include "postgres.h"
 
 #include "access/genam.h"
+#include "access/htup_details.h"
 #include "access/skey.h"
 #include "access/table.h"
 #include "catalog/pg_class.h"
@@ -75,8 +76,10 @@ static duckdb::StatementType ConvertSPIResultToDuckStatementType(int result) {
   }
 }
 
+/* Deform SPI tuples into a DuckDB DataChunk using pre-allocated buffers.
+ * Callers pass Datum/bool arrays sized to natts so we avoid per-chunk palloc. */
 static void InsertSPITupleTableIntoChunk(duckdb::DataChunk &output, SPITupleTable *tuptable, idx_t start_idx,
-                                         int num_tuples) {
+                                         int num_tuples, Datum *values, bool *nulls) {
   D_ASSERT(tuptable);
   D_ASSERT(start_idx + num_tuples <= tuptable->numvals);
 
@@ -84,33 +87,47 @@ static void InsertSPITupleTableIntoChunk(duckdb::DataChunk &output, SPITupleTabl
     return;
   }
 
-  int natts = tuptable->tupdesc->natts;
+  TupleDesc tupdesc = tuptable->tupdesc;
+  int natts = tupdesc->natts;
 
-  for (int duckdb_output_index = 0; duckdb_output_index < natts; duckdb_output_index++) {
-    auto &result = output.data[duckdb_output_index];
-    auto attr = TupleDescAttr(tuptable->tupdesc, duckdb_output_index);
+  /* Cache per-column attribute metadata outside the row loop. */
+  auto attlen = (int16 *)palloc(natts * sizeof(int16));
+  auto atttypid = (Oid *)palloc(natts * sizeof(Oid));
+  for (int col = 0; col < natts; col++) {
+    auto attr = TupleDescAttr(tupdesc, col);
+    attlen[col] = attr->attlen;
+    atttypid[col] = attr->atttypid;
+  }
 
-    for (int row = 0; row < num_tuples; row++) {
-      HeapTuple tuple = tuptable->vals[start_idx + row];
-      bool isnull = false;
-      Datum datum = SPI_getbinval(tuple, tuptable->tupdesc, duckdb_output_index + 1, &isnull);
-      if (isnull) {
+  for (int row = 0; row < num_tuples; row++) {
+    HeapTuple tuple = tuptable->vals[start_idx + row];
+    heap_deform_tuple(tuple, tupdesc, values, nulls);
+
+    for (int col = 0; col < natts; col++) {
+      auto &result = output.data[col];
+
+      if (nulls[col]) {
         auto &array_mask = duckdb::FlatVector::Validity(result);
         array_mask.SetInvalid(row);
       } else {
-        if (attr->attlen == -1) {
+        Datum datum = values[col];
+
+        if (attlen[col] == -1) {
           bool should_free = false;
           Datum detoasted_value = DetoastPostgresDatum(reinterpret_cast<varlena *>(datum), &should_free);
-          ConvertPostgresToDuckValue(attr->atttypid, detoasted_value, result, row);
+          ConvertPostgresToDuckValue(atttypid[col], detoasted_value, result, row);
           if (should_free) {
             pfree(DatumGetPointer(detoasted_value));
           }
         } else {
-          ConvertPostgresToDuckValue(attr->atttypid, datum, result, row);
+          ConvertPostgresToDuckValue(atttypid[col], datum, result, row);
         }
       }
     }
   }
+
+  pfree(attlen);
+  pfree(atttypid);
 }
 
 /*
@@ -242,16 +259,23 @@ static duckdb::unique_ptr<duckdb::QueryResult> CreateSPIResult(const duckdb::str
   auto &allocator = duckdb::Allocator::DefaultAllocator();
   auto collection_p = duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator, types);
 
+  // Allocate deform buffers once for all chunks
+  auto values = (Datum *)palloc(num_columns * sizeof(Datum));
+  auto deform_nulls = (bool *)palloc(num_columns * sizeof(bool));
+
   // Convert SPI rows to DuckDB DataChunks and append them
   for (idx_t row_idx = 0; row_idx < num_rows; row_idx += STANDARD_VECTOR_SIZE) {
     idx_t chunk_size = duckdb::MinValue<int>(STANDARD_VECTOR_SIZE, num_rows - row_idx);
     auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
     chunk->Initialize(allocator, types, chunk_size);
-    InsertSPITupleTableIntoChunk(*chunk, tuptable, row_idx, chunk_size);
+    InsertSPITupleTableIntoChunk(*chunk, tuptable, row_idx, chunk_size, values, deform_nulls);
 
     chunk->SetCardinality(chunk_size);
     collection_p->Append(*chunk);
   }
+
+  pfree(values);
+  pfree(deform_nulls);
 
   PopActiveSnapshot();
   SPI_finish();
@@ -354,6 +378,44 @@ PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {
 duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Query(duckdb::string query) {
   SubstituteCatalogPlaceholders(query);
   return CreateSPIResult(query);
+}
+
+/*
+ * Build a SELECT column list from the columns_to_read vector.
+ * Mirrors the static GetProjection() in ducklake_metadata_manager.cpp.
+ */
+static duckdb::string BuildProjection(const duckdb::vector<duckdb::string> &columns_to_read) {
+  duckdb::string result;
+  duckdb::idx_t i = 1;
+  for (auto &entry : columns_to_read) {
+    if (!result.empty()) {
+      result += ", ";
+    }
+    result += "inlined_data." + entry + " AS c" + std::to_string(i++);
+  }
+  return result;
+}
+
+/*
+ * ReadInlinedData override: route through DuckDB's query engine instead of
+ * SPI.  DuckDB resolves pgduckdb."ducklake".table through PostgresCatalog
+ * -> PostgresTableReader, which acquires GlobalProcessLock in 32-tuple
+ * batches instead of holding it for the entire SPI operation.
+ */
+duckdb::unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::ReadInlinedData(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
+                                           const duckdb::vector<duckdb::string> &columns_to_read) {
+  auto projection = BuildProjection(columns_to_read);
+  auto query =
+      duckdb::StringUtil::Format(R"(
+SELECT %s
+FROM pgduckdb."%s".%s inlined_data
+WHERE %llu >= begin_snapshot AND (%llu < end_snapshot OR end_snapshot IS NULL)
+ORDER BY row_id;)",
+                                 projection, PGDUCKLAKE_PG_SCHEMA, duckdb::SQLIdentifier(inlined_table_name),
+                                 (unsigned long long)snapshot.snapshot_id, (unsigned long long)snapshot.snapshot_id);
+  elog(DEBUG1, "ReadInlinedData via DuckDB: %s", query.c_str());
+  return transaction.Query(query);
 }
 
 duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot,

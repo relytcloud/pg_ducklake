@@ -30,6 +30,10 @@ public:
   duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::string query) override;
   duckdb::unique_ptr<duckdb::QueryResult> Query(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) override;
 
+  duckdb::unique_ptr<duckdb::QueryResult>
+  ReadInlinedData(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
+                  const duckdb::vector<duckdb::string> &columns_to_read) override;
+
   static bool IsInitialized();
   bool IsInitialized(duckdb::DuckLakeOptions & /*options*/) override;
   void InitializeDuckLake(bool has_explicit_schema, duckdb::DuckLakeEncryption encryption) override;
