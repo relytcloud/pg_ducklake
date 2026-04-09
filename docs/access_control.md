@@ -25,6 +25,7 @@ for multi-role environments. See also the upstream
 | SELECT/INSERT/UPDATE/DELETE table-level permissions | pg_duckdb's planner sets `permInfos = NULL`, skipping executor-level checks |
 | Column-level SELECT restrictions | Same as above |
 | `ducklake.time_travel()` bypasses table-level checks | Table name is a text argument, not an RTE |
+| Non-superusers cannot use local file storage without explicit grants | pg_duckdb disables `LocalFileSystem` for users without `pg_read_server_files` + `pg_write_server_files`, blocking DuckLake catalog attach, reads, and writes ([#164](https://github.com/relytcloud/pg_ducklake/issues/164)) |
 
 These gaps exist because pg_duckdb's `DuckdbPlanNode()` only runs
 `check_view_perms_recursive()` (which checks VIEW permissions) and sets
@@ -62,6 +63,15 @@ For local file storage, also grant filesystem access:
 ```sql
 GRANT pg_read_server_files, pg_write_server_files TO lake_admin, lake_writer, lake_reader;
 ```
+
+**Without these grants, DuckLake will fail with:**
+```
+Permission Error: File system LocalFileSystem has been disabled by configuration
+```
+This happens because pg_duckdb disables DuckDB's `LocalFileSystem` for users
+not in both `pg_read_server_files` and `pg_write_server_files`. The restriction
+affects all local storage operations -- catalog attach, reads (SELECT), and
+writes (INSERT). See [#164](https://github.com/relytcloud/pg_ducklake/issues/164).
 
 These grants are **not** needed for S3/GCS/R2 storage.
 
