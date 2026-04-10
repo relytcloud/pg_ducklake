@@ -10,6 +10,7 @@
  */
 
 #include "pgducklake/pgducklake_defs.hpp"
+#include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_sync.hpp"
 
 #include <duckdb/common/error_data.hpp> /* must precede postgres.h (FATAL macro) */
@@ -72,10 +73,14 @@ DECLARE_PG_FUNCTION(ducklake_snapshot_trigger) {
 
   TriggerData *trigdata = (TriggerData *)fcinfo->context;
 
-  /* Direct insert path sets skip_snapshot_sync -- no DDL or sort-key
-   * changes to reverse-sync, so skip the expensive SPI queries. */
-  if (pgducklake::skip_snapshot_sync) {
-    pgducklake::skip_snapshot_sync = false;
+  /* Skip sync when:
+   *  - skip_snapshot_sync is set (direct insert / ExecuteCommit paths
+   *    have no DDL changes to reverse-sync; running sync handlers on
+   *    a DuckDB worker thread would also crash because PG's
+   *    InterruptHoldoffCount is not thread-safe), or
+   *  - enable_metadata_sync GUC is off (user opts out of the
+   *    per-commit sync overhead when all DDL goes through PG). */
+  if (pgducklake::skip_snapshot_sync || !pgducklake::enable_metadata_sync) {
     return PointerGetDatum(trigdata->tg_trigtuple);
   }
 

@@ -10,6 +10,7 @@
  */
 
 #include "pgducklake/pgducklake_metadata_manager.hpp"
+#include "pgducklake/pgducklake_sync.hpp"
 
 // DuckDB headers first
 #include "duckdb/common/allocator.hpp"
@@ -439,6 +440,12 @@ duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::ExecuteCommit
                                                                                  duckdb::string query) {
   DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
   SubstituteCatalogPlaceholders(query);
+  /* Skip the snapshot sync trigger during commit.  The trigger exists
+   * for external DuckDB clients that write directly to the ducklake
+   * metadata tables; pg_ducklake's own commits have nothing to
+   * reverse-sync.  Running the trigger on a DuckDB worker thread
+   * crashes because PG's InterruptHoldoffCount is not thread-safe. */
+  SkipSnapshotSyncGuard sync_guard;
   return CreateSPIExecuteInSubtransaction(query);
 }
 

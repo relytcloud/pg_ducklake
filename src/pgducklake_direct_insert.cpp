@@ -727,9 +727,9 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
 
   // Create the snapshot record immediately while we still have an active
   // PostgreSQL snapshot. This makes the inserted rows visible to subsequent
-  // DuckLake queries.  Tell the snapshot trigger to skip sync handlers --
-  // direct insert only adds inlined data rows, no DDL changes to reverse-sync.
-  pgducklake::skip_snapshot_sync = true;
+  // DuckLake queries.  Guard skips the sync trigger -- direct insert only
+  // adds inlined data rows, no DDL changes to reverse-sync.
+  pgducklake::SkipSnapshotSyncGuard sync_guard;
   pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->schema_version, state->table_id,
                                             state->rows_inserted);
 

@@ -48,3 +48,27 @@ SHOW ducklake.enable_direct_insert;
 (1 row)
 
 RESET ducklake.enable_direct_insert;
+SHOW ducklake.enable_metadata_sync;
+ ducklake.enable_metadata_sync 
+-------------------------------
+ on
+(1 row)
+
+SET ducklake.enable_metadata_sync = false;
+SHOW ducklake.enable_metadata_sync;
+ ducklake.enable_metadata_sync 
+-------------------------------
+ off
+(1 row)
+
+-- DML should still work with metadata sync disabled
+CREATE TABLE guc_sync_test (id int, val text) USING ducklake;
+INSERT INTO guc_sync_test VALUES (1, 'hello');
+SELECT * FROM guc_sync_test;
+ id |  val  
+----+-------
+  1 | hello
+(1 row)
+
+DROP TABLE guc_sync_test;
+RESET ducklake.enable_metadata_sync;

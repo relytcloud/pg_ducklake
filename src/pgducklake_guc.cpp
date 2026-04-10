@@ -22,6 +22,8 @@ double vacuum_delete_threshold = 0.1;
 bool enable_direct_insert = true;
 bool ctas_skip_data = false;
 
+bool enable_metadata_sync = true;
+
 char *superuser_role = strdup("ducklake_superuser");
 char *writer_role = strdup("ducklake_writer");
 char *reader_role = strdup("ducklake_reader");
@@ -41,6 +43,15 @@ void RegisterGUCs() {
                            "Enable direct insert optimization for INSERT ... "
                            "SELECT UNNEST($n) statements.",
                            NULL, &enable_direct_insert, true, PGC_USERSET, 0, NULL, NULL, NULL);
+
+  DefineCustomBoolVariable("ducklake.enable_metadata_sync",
+                           "Enable reverse metadata sync from DuckDB to PostgreSQL. "
+                           "When enabled (default), a snapshot trigger detects tables "
+                           "created or dropped by external DuckDB clients and syncs "
+                           "the corresponding pg_class entries. Disable this when all "
+                           "DDL and DML goes through PostgreSQL, to avoid the per-commit "
+                           "trigger overhead.",
+                           NULL, &enable_metadata_sync, true, PGC_USERSET, 0, NULL, NULL, NULL);
 
   DefineCustomStringVariable("ducklake.superuser_role",
                              "Role with full DDL + DML access to DuckLake tables. "

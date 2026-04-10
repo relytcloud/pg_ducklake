@@ -7,6 +7,8 @@ extern double vacuum_delete_threshold;
 extern bool enable_direct_insert;
 extern bool ctas_skip_data;
 
+extern bool enable_metadata_sync;
+
 extern char *superuser_role;
 extern char *writer_role;
 extern char *reader_role;
