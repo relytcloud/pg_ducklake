@@ -1,0 +1,68 @@
+-- Test DECIMAL/NUMERIC precision is preserved through DuckDB (#171)
+-- Wide precision: DECIMAL(31,3) -- exceeds DuckDB's default DECIMAL(18,3)
+CREATE TABLE t_decimal_wide (usd decimal(31, 3)) USING ducklake;
+-- Insert a large value that overflows DECIMAL(18,3) but fits DECIMAL(31,3)
+INSERT INTO t_decimal_wide VALUES (1.7820000000000002e+16);
+-- Insert normal values
+INSERT INTO t_decimal_wide VALUES (12345.678);
+INSERT INTO t_decimal_wide VALUES (0.001);
+INSERT INTO t_decimal_wide VALUES (-99999999999999.999);
+SELECT * FROM t_decimal_wide ORDER BY usd;
+          usd          
+-----------------------
+   -99999999999999.999
+                 0.001
+             12345.678
+ 17820000000000002.000
+(4 rows)
+
+-- Max precision: DECIMAL(38,10)
+CREATE TABLE t_decimal_max (val decimal(38, 10)) USING ducklake;
+INSERT INTO t_decimal_max VALUES (12345678901234567890.1234567890);
+INSERT INTO t_decimal_max VALUES (-12345678901234567890.1234567890);
+SELECT * FROM t_decimal_max ORDER BY val;
+               val                
+----------------------------------
+ -12345678901234567890.1234567890
+  12345678901234567890.1234567890
+(2 rows)
+
+-- Verify PG column types are preserved
+\d+ t_decimal_wide
+                                 Table "public.t_decimal_wide"
+ Column |     Type      | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------------+-----------+----------+---------+---------+--------------+-------------
+ usd    | numeric(31,3) |           |          |         | main    |              | 
+
+\d+ t_decimal_max
+                                  Table "public.t_decimal_max"
+ Column |      Type      | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+----------------+-----------+----------+---------+---------+--------------+-------------
+ val    | numeric(38,10) |           |          |         | main    |              | 
+
+-- Verify DuckDB-side column types in ducklake metadata
+SELECT c.column_name, c.column_type
+FROM ducklake.ducklake_column c
+JOIN ducklake.ducklake_table t ON c.table_id = t.table_id
+WHERE t.table_name = 't_decimal_wide' AND t.end_snapshot IS NULL
+  AND c.end_snapshot IS NULL
+ORDER BY c.column_order;
+ column_name |  column_type  
+-------------+---------------
+ usd         | decimal(31,3)
+(1 row)
+
+SELECT c.column_name, c.column_type
+FROM ducklake.ducklake_column c
+JOIN ducklake.ducklake_table t ON c.table_id = t.table_id
+WHERE t.table_name = 't_decimal_max' AND t.end_snapshot IS NULL
+  AND c.end_snapshot IS NULL
+ORDER BY c.column_order;
+ column_name |  column_type   
+-------------+----------------
+ val         | decimal(38,10)
+(1 row)
+
+-- Cleanup
+DROP TABLE t_decimal_wide;
+DROP TABLE t_decimal_max;

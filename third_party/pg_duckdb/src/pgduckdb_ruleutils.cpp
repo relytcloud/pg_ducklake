@@ -381,6 +381,17 @@ pgduckdb_show_type(Const *constval, int original_showtype) {
 	if (pgduckdb_is_fake_type(constval->consttype)) {
 		return -1;
 	}
+	/*
+	 * Suppress "::numeric" for unqualified NUMERIC constants (typmod == -1).
+	 * PG's unqualified NUMERIC is arbitrary precision, but DuckDB interprets
+	 * "::numeric" as DECIMAL(18,3).  Dropping the cast lets DuckDB infer the
+	 * type from context (e.g. target column type for INSERT).  Qualified casts
+	 * like "::numeric(31,3)" are preserved because format_type_with_typemod
+	 * produces the precision/scale that DuckDB can parse.
+	 */
+	if (constval->consttype == NUMERICOID && constval->consttypmod == -1) {
+		return -1;
+	}
 	return original_showtype;
 }
 
@@ -714,8 +725,8 @@ pgduckdb_get_tabledef(Oid relation_oid) {
 		pgduckdb::GetPostgresDuckDBType(duck_type, true);
 
 		const char *passthrough_name = pgduckdb::GetPassthroughTypeName(column->atttypid);
-		const char *column_type_name = passthrough_name ? passthrough_name
-		                                                : format_type_with_typemod(column->atttypid, column->atttypmod);
+		const char *column_type_name =
+		    passthrough_name ? passthrough_name : format_type_with_typemod(column->atttypid, column->atttypmod);
 
 		if (first_column_printed) {
 			appendStringInfoString(&buffer, ", ");
@@ -991,8 +1002,8 @@ pgduckdb_get_alter_tabledef(Oid relation_oid, AlterTableStmt *alter_stmt) {
 			TupleDesc tupdesc = BuildDescForRelation(list_make1(col));
 			Form_pg_attribute attribute = TupleDescAttr(tupdesc, 0);
 			const char *add_passthrough = pgduckdb::GetPassthroughTypeName(attribute->atttypid);
-			const char *column_fq_type = add_passthrough ? add_passthrough
-			                                             : format_type_with_typemod(attribute->atttypid, attribute->atttypmod);
+			const char *column_fq_type =
+			    add_passthrough ? add_passthrough : format_type_with_typemod(attribute->atttypid, attribute->atttypmod);
 
 			appendStringInfo(&buffer, "ADD COLUMN %s %s", quote_identifier(col->colname), column_fq_type);
 			foreach_node(Constraint, constraint, col->constraints) {
@@ -1051,8 +1062,9 @@ pgduckdb_get_alter_tabledef(Oid relation_oid, AlterTableStmt *alter_stmt) {
 			TupleDesc tupdesc = BuildDescForRelation(list_make1(col));
 			Form_pg_attribute attribute = TupleDescAttr(tupdesc, 0);
 			const char *alter_passthrough = pgduckdb::GetPassthroughTypeName(attribute->atttypid);
-			const char *column_fq_type = alter_passthrough ? alter_passthrough
-			                                               : format_type_with_typemod(attribute->atttypid, attribute->atttypmod);
+			const char *column_fq_type = alter_passthrough
+			                                 ? alter_passthrough
+			                                 : format_type_with_typemod(attribute->atttypid, attribute->atttypmod);
 			/* TODO: Disallow after SET DEFAULT/ADD CHECK CONSTRAINTin the same ALTER command */
 
 			appendStringInfo(&buffer, "ALTER COLUMN %s TYPE %s; ", quote_identifier(column_name), column_fq_type);
