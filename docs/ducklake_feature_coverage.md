@@ -6,7 +6,7 @@ against what pg_ducklake currently exposes or supports.
 
 Legend: `[x]` supported, `[ ]` not supported
 
-Last updated: 2026-03-30
+Last updated: 2026-04-10
 
 ## Core DML Operations
 
@@ -25,13 +25,13 @@ Last updated: 2026-03-30
 - [x] `ALTER TABLE RENAME TABLE`
 - [x] `ALTER TABLE RENAME COLUMN`
 - [x] `ALTER TABLE ALTER COLUMN TYPE`
-- [x] `ALTER TABLE SET DEFAULT`
-- [ ] `ALTER TABLE SET/DROP NOT NULL`: Constraint management
+- [x] `ALTER TABLE SET DEFAULT` / `DROP DEFAULT`
+- [x] `ALTER TABLE SET/DROP NOT NULL`: Constraint management via alter table event trigger
+- [x] `COMMENT ON TABLE/COLUMN`: Via `ducklake_comment_trigger` event trigger; stored in ducklake_tag metadata
 - [ ] `CREATE VIEW`: Stored in ducklake_view metadata
 - [ ] `DROP VIEW`
 - [ ] `CREATE MACRO` (scalar + table): Stored in ducklake_macro metadata
 - [ ] `DROP MACRO` / `DROP MACRO TABLE`
-- [ ] `COMMENT ON TABLE/COLUMN`: Stored in ducklake_tag metadata
 - [ ] `CREATE SCHEMA`: DuckLake multi-schema support
 
 ## Time Travel
@@ -51,7 +51,14 @@ Last updated: 2026-03-30
 - [x] `table_changes(tbl, start, end)`: Query changes between snapshots
 - [x] `table_deletions(tbl, start, end)`: Query deleted rows between snapshots
 - [x] `table_insertions(tbl, start, end)`: Query inserted rows between snapshots
-- [ ] `rowid` virtual column: Unique row lineage identifier
+
+## Virtual Columns
+
+- [x] `ducklake.rowid()`: Unique row lineage identifier
+- [x] `ducklake.snapshot_id()`: Snapshot ID of the row's insertion
+- [x] `ducklake.filename()`: Data file path containing the row
+- [x] `ducklake.file_row_number()`: Row number within the data file
+- [x] `ducklake.file_index()`: Internal file index for the row
 
 ## Partitioning
 
@@ -60,11 +67,17 @@ Last updated: 2026-03-30
 - [x] Get partition info: `ducklake.get_partition()`
 - [x] Partition transforms (year/month/day/hour)
 
+## Sorted Tables
+
+- [x] `CREATE INDEX ... USING ducklake_sorted`: PG-native syntax for `SET SORTED BY`
+- [x] `ducklake.set_sort()` / `ducklake.reset_sort()` / `ducklake.get_sort()`: Procedure-based alternative
+- [x] Bidirectional sync: DuckDB sort keys sync to `pg_class` indexes and vice versa
+
 ## Advanced Features
 
 - [x] Data inlining: `ducklake.flush_inlined_data()` and `data_inlining_row_limit` option
+- [x] Variant type: `ducklake.variant` column type with `->` / `->>` extraction operators
 - [ ] Encryption (`ENCRYPTED` flag): Parquet-level encryption
-- [ ] Sorted tables (`SET SORTED BY`): Physical sort order for better min/max stats
 - [ ] Conflict resolution (auto-retry): pg_ducklake relies on PG transactions but lacks DuckLake's auto-retry
 - [x] Transactions (ACID): Via PostgreSQL transaction model
 - [x] Freeze/export to `.ducklake`: `ducklake.freeze()`
@@ -83,7 +96,7 @@ Last updated: 2026-03-30
 - [x] `ducklake_merge_adjacent_files()`: `ducklake.merge_adjacent_files()`
 - [x] `ducklake_expire_snapshots()`: `ducklake.expire_snapshots()`
 - [x] `ducklake_cleanup_old_files()`: `ducklake.cleanup_old_files()`
-- [ ] `ducklake_delete_orphaned_files()`: `ducklake.cleanup_orphaned_files()` defined but upstream SPI query incompatibility
+- [x] `ducklake_delete_orphaned_files()`: `ducklake.cleanup_orphaned_files()`
 - [x] `ducklake_rewrite_data_files()`: `ducklake.rewrite_data_files()`
 - [ ] `CHECKPOINT` (all-in-one maintenance): Runs all maintenance ops sequentially
 
@@ -104,9 +117,10 @@ These features are unique to pg_ducklake and not part of the upstream DuckLake e
 
 - [x] Role-based access control: `ducklake_superuser`, `ducklake_writer`, `ducklake_reader` roles
 - [x] Foreign data wrapper (read-only): `ducklake_fdw` for read-only access to DuckLake tables
+- [x] `IMPORT FOREIGN SCHEMA`: Bulk-import tables from a remote DuckLake catalog via FDW
 - [x] Direct insert optimization: Fast path for `INSERT ... SELECT UNNEST($n)`
 
 ## Summary
 
-- **Supported:** 41 features
-- **Not supported:** 19 features
+- **Supported:** 55 features
+- **Not supported:** 13 features
