@@ -118,6 +118,9 @@ static const DefaultTableMacro pg_ducklake_wrapper_macros[] = {
    "FROM ducklake_table_info('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
   {DEFAULT_SCHEMA, "options", {nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_options('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
+  // maintenance functions (no args)
+  {DEFAULT_SCHEMA, "expire_snapshots", {nullptr}, {{nullptr, nullptr}},
+   "FROM ducklake_expire_snapshots('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
   // table-scoped functions
   {DEFAULT_SCHEMA, "list_files", {"schema_name", "table_name", nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_list_files('" PGDUCKLAKE_DUCKDB_CATALOG "', table_name, schema => schema_name)"},
@@ -359,27 +362,6 @@ static void RegisterOneCompactionFunction(DatabaseInstance &db, const string &pg
 void RegisterCompactionFunctions(DatabaseInstance &db) {
   RegisterOneCompactionFunction(db, "merge_adjacent_files", MergeNoArgsBind, MergeTableArgsBind);
   RegisterOneCompactionFunction(db, "rewrite_data_files", RewriteNoArgsBind, RewriteTableArgsBind);
-}
-
-/*
- * expire_snapshots(): no-args only. Interval overload omitted because
- * pg_duckdb deparses PG intervals in @ format which DuckDB cannot parse.
- */
-static unique_ptr<FunctionData> ExpireNoArgsBind(ClientContext &context, TableFunctionBindInput &input,
-                                                 vector<LogicalType> &return_types, vector<string> &names) {
-  input.inputs.clear();
-  input.inputs.push_back(duckdb::Value(PGDUCKLAKE_DUCKDB_CATALOG));
-  input.named_parameters.clear();
-
-  auto func = LookupUpstreamFunction(context, "ducklake_expire_snapshots");
-  input.table_function = func;
-  return func.bind(context, input, return_types, names);
-}
-
-void RegisterExpireSnapshotsFunction(DatabaseInstance &db) {
-  TableFunctionSet set("expire_snapshots");
-  set.AddFunction(TableFunction({}, UnreachableExecute, ExpireNoArgsBind, UnreachableInit));
-  RegisterTableFunctionSet(db, set);
 }
 
 /*
