@@ -641,7 +641,7 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
   return result;
 }
 
-uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t /*schema_version*/) {
+uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
   int ret;
   uint64_t next_row_id = 0;
 
@@ -651,10 +651,9 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t /*schema_version*/) {
   }
 
   /* Read next_row_id from ducklake_table_stats (O(1) index lookup).
-   * DuckDB populates this table on every commit that writes data, so it
-   * is always present when an inlined data table exists.  Our
-   * CreateSnapshotForDirectInsert keeps it up to date after each
-   * direct insert. */
+   * CreateSnapshotForDirectInsert keeps this row up to date after
+   * each direct insert.  If no row exists (first insert into this
+   * table), fall back to MAX(row_id) + 1 from the inlined data table. */
   StringInfoData query;
   initStringInfo(&query);
   appendStringInfo(&query,
@@ -670,6 +669,24 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t /*schema_version*/) {
     Datum row_id_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
     if (!isnull) {
       next_row_id = DatumGetInt64(row_id_datum);
+    }
+  } else if (ret == SPI_OK_SELECT) {
+    /* No stats row -- fall back to scanning the inlined data table. */
+    StringInfoData fallback;
+    initStringInfo(&fallback);
+    appendStringInfo(&fallback,
+                     "SELECT COALESCE(MAX(row_id) + 1, 0) "
+                     "FROM ducklake.ducklake_inlined_data_%llu_%llu",
+                     (unsigned long long)table_id, (unsigned long long)schema_version);
+
+    ret = SPI_execute(fallback.data, true, 1);
+    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+      HeapTuple tuple = SPI_tuptable->vals[0];
+      bool isnull;
+      Datum row_id_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+      if (!isnull) {
+        next_row_id = DatumGetInt64(row_id_datum);
+      }
     }
   }
 
@@ -775,13 +792,12 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version
     elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot changes: %d", ret);
   }
 
-  /* Update ducklake_table_stats if a row exists for this table.  DuckDB
-   * does not always populate this table (it manages next_row_id per-
-   * transaction), so we only UPDATE, never INSERT.  Creating a stats row
-   * without the matching column_stats entries would crash DuckDB's
-   * GetGlobalTableStats (LEFT JOIN expects column_stats columns).
-   * When no stats row exists, GetNextRowIdForTable falls back to
-   * MAX(row_id) + 1 from the inlined data table. */
+  /* Update ducklake_table_stats, or create it if this is the first insert.
+   * DuckDB normally creates this row on its first data commit, but the
+   * direct-insert path bypasses DuckDB entirely.  When inserting a new
+   * stats row we must also populate ducklake_table_column_stats so that
+   * DuckDB's GetGlobalTableStats LEFT JOIN doesn't produce a NULL
+   * column_id (TransformGlobalStatsRow reads it without a null check). */
   StringInfoData stats_update;
   initStringInfo(&stats_update);
   appendStringInfo(&stats_update,
@@ -794,6 +810,41 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version
   ret = SPI_execute(stats_update.data, false, 0);
   if (ret != SPI_OK_UPDATE) {
     elog(ERROR, "CreateSnapshotForDirectInsert: failed to update table stats: %d", ret);
+  }
+
+  if (SPI_processed == 0) {
+    /* No existing stats row -- first direct insert into this table. */
+    StringInfoData stats_insert;
+    initStringInfo(&stats_insert);
+    appendStringInfo(&stats_insert,
+                     "INSERT INTO ducklake.ducklake_table_stats "
+                     "(table_id, record_count, next_row_id, file_size_bytes) "
+                     "VALUES (%llu, %lld, %lld, 0)",
+                     (unsigned long long)table_id, (long long)rows_inserted, (long long)rows_inserted);
+
+    ret = SPI_execute(stats_insert.data, false, 0);
+    if (ret != SPI_OK_INSERT) {
+      elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert table stats: %d", ret);
+    }
+
+    /* Populate ducklake_table_column_stats for each active column. */
+    StringInfoData col_stats_insert;
+    initStringInfo(&col_stats_insert);
+    appendStringInfo(&col_stats_insert,
+                     "INSERT INTO ducklake.ducklake_table_column_stats "
+                     "(table_id, column_id, contains_null, contains_nan, "
+                     "min_value, max_value, extra_stats) "
+                     "SELECT %llu, column_id, NULL, NULL, NULL, NULL, NULL "
+                     "FROM ducklake.ducklake_column "
+                     "WHERE table_id = %llu AND end_snapshot IS NULL",
+                     (unsigned long long)table_id, (unsigned long long)table_id);
+
+    ret = SPI_execute(col_stats_insert.data, false, 0);
+    if (ret != SPI_OK_INSERT) {
+      elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert column stats: %d", ret);
+    }
+
+    elog(DEBUG1, "CreateSnapshotForDirectInsert: created new stats row for table %llu", (unsigned long long)table_id);
   }
 
   SPI_finish();
