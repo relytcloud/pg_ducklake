@@ -79,6 +79,7 @@ void RegisterDuckdbOnlyFunctions() {
   pgduckdb::RegisterDuckdbOnlyFunction("cleanup_old_files");
   pgduckdb::RegisterDuckdbOnlyFunction("cleanup_orphaned_files");
   pgduckdb::RegisterDuckdbOnlyFunction("flush_inlined_data");
+  pgduckdb::RegisterDuckdbOnlyFunction("ensure_inlined_data_table");
   pgduckdb::RegisterDuckdbOnlyFunction("merge_adjacent_files");
   pgduckdb::RegisterDuckdbOnlyFunction("rewrite_data_files");
   pgduckdb::RegisterDuckdbOnlyFunction("expire_snapshots");
@@ -122,6 +123,8 @@ static const DefaultTableMacro pg_ducklake_wrapper_macros[] = {
   {DEFAULT_SCHEMA, "expire_snapshots", {nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_expire_snapshots('" PGDUCKLAKE_DUCKDB_CATALOG "')"},
   // table-scoped functions
+  {DEFAULT_SCHEMA, "ensure_inlined_data_table", {"schema_name", "table_name", nullptr}, {{nullptr, nullptr}},
+   "FROM ducklake_ensure_inlined_table('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name)"},
   {DEFAULT_SCHEMA, "list_files", {"schema_name", "table_name", nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_list_files('" PGDUCKLAKE_DUCKDB_CATALOG "', table_name, schema => schema_name)"},
   // data change feed functions (schema + table + start + end)

@@ -217,6 +217,20 @@ SET search_path = pg_catalog, pg_temp
 AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
 LANGUAGE C;
 
+-- passthrough
+CREATE FUNCTION ducklake.ensure_inlined_data_table(schema_name text, table_name text)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_duckdb', 'duckdb_only_function'
+LANGUAGE C;
+
+-- rewrite -> ensure_inlined_data_table(text, text)
+CREATE FUNCTION ducklake.ensure_inlined_data_table(scope regclass)
+RETURNS SETOF duckdb.row
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
+LANGUAGE C;
+
 -- Partitioning ------------------------------------------------------
 
 -- native proc

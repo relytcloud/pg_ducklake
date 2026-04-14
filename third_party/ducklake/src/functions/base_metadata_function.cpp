@@ -63,4 +63,9 @@ DuckLakeBaseMetadataFunction::DuckLakeBaseMetadataFunction(string name_p, table_
     : TableFunction(std::move(name_p), {LogicalType::VARCHAR}, MetadataFunctionExecute, bind, MetadataFunctionInit) {
 }
 
+DuckLakeBaseMetadataFunction::DuckLakeBaseMetadataFunction(string name_p, vector<LogicalType> arguments,
+											   table_function_bind_t bind)
+	: TableFunction(std::move(name_p), std::move(arguments), MetadataFunctionExecute, bind, MetadataFunctionInit) {
+}
+
 } // namespace duckdb

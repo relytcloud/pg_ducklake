@@ -9,6 +9,7 @@ test: transaction
 test: non_ducklake_commit
 test: temp_table
 test: insert_unnest
+test: copy_from
 test: insert_cte
 test: ctas
 test: gucs

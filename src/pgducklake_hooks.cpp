@@ -21,6 +21,7 @@
 
 #include "pgducklake/pgducklake_hooks.hpp"
 #include "pgducklake/pgducklake_call_handler.hpp"
+#include "pgducklake/pgducklake_copy_from.hpp"
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
@@ -36,6 +37,7 @@ extern "C" {
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "access/table.h"
 #include "catalog/namespace.h"
 #include "commands/defrem.h"
 #include "nodes/makefuncs.h"
@@ -435,6 +437,25 @@ void DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read
       if (qc)
         SetQueryCompletion(qc, CMDTAG_CALL, 0);
       return;
+    }
+  }
+
+  /* COPY <ducklake_table> FROM STDIN -- handle before pg_duckdb rejects it */
+  if (IsA(parsetree, CopyStmt)) {
+    CopyStmt *copy_stmt = castNode(CopyStmt, parsetree);
+    if (copy_stmt->is_from && copy_stmt->filename == NULL && copy_stmt->relation) {
+      Relation rel = table_openrv(copy_stmt->relation, AccessShareLock);
+      Oid am_oid = rel->rd_rel->relam;
+      table_close(rel, AccessShareLock);
+      static Oid ducklake_am_oid = InvalidOid;
+      if (!OidIsValid(ducklake_am_oid))
+        ducklake_am_oid = get_am_oid("ducklake", true);
+      if (OidIsValid(ducklake_am_oid) && am_oid == ducklake_am_oid) {
+        uint64 processed = pgducklake::DucklakeCopyFromStdin(copy_stmt, query_string);
+        if (qc)
+          SetQueryCompletion(qc, CMDTAG_COPY, processed);
+        return;
+      }
     }
   }
 
