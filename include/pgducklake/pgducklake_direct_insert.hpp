@@ -1,19 +1,16 @@
 /*
  * pgducklake_direct_insert.hpp
  *
- * Direct insert optimization for INSERT UNNEST pattern.
+ * Direct insert optimization for INSERT patterns into inlined DuckLake tables.
  *
- * Bypasses DuckDB execution by directly inserting array data into inlined data
- * tables via SPI, avoiding the overhead of DuckDB query parsing and data
- * conversion.
+ * Supported patterns:
+ *   1. INSERT INTO <table> SELECT UNNEST($1), UNNEST($2), ...
+ *      -- parameterized array bulk insert via SPI
+ *   2. INSERT INTO <table> VALUES (const, ...), ...
+ *      -- constant-value insert via table_multi_insert (heap AM)
  *
- * Pattern detected: INSERT INTO <ducklake_table> SELECT UNNEST($1), UNNEST($2),
- * ...
- *
- * Optimization applies when:
- * - ducklake.enable_direct_insert = true
- * - Target table uses ducklake access method
- * - Query is parameterized INSERT with UNNEST of Param nodes
+ * Both patterns bypass DuckDB execution and write directly to the inlined
+ * data table when ducklake.enable_direct_insert = true.
  */
 
 #pragma once

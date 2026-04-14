@@ -86,8 +86,9 @@ EXPLAIN EXECUTE insert_plan(ARRAY[10, 20], ARRAY['x', 'y']);
 ----------------------------------------------------------------------
  Custom Scan (DuckLakeDirectInsert)  (cost=0.00..0.00 rows=0 width=0)
    Custom Scan: DuckLakeDirectInsert
+   Pattern: UNNEST
    Expected Rows: 2
-(3 rows)
+(4 rows)
 
 -- Test 3c: Execute the previous plan
 EXECUTE insert_plan(ARRAY[10, 20], ARRAY['x', 'y']);
