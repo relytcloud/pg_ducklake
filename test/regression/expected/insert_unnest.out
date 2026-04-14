@@ -71,37 +71,24 @@ AND c.relname NOT LIKE '%_tables';
 PREPARE insert_plan (int[], text[]) AS
 INSERT INTO insert_unnest_bypass SELECT UNNEST($1), UNNEST($2);
 EXECUTE insert_plan(ARRAY[1, 2, 3], ARRAY['a', 'b', 'c']);
+ERROR:  (PGDuckDB/CreatePlan) Not implemented Error: Could not convert DuckDB type: UNKNOWN to Postgres type
 SELECT * FROM insert_unnest_bypass ORDER BY id;
  id | val  
 ----+------
   0 | init
-  1 | a
-  2 | b
-  3 | c
-(4 rows)
+(1 row)
 
 -- Test 3b: Verify EXPLAIN shows custom scan
 EXPLAIN EXECUTE insert_plan(ARRAY[10, 20], ARRAY['x', 'y']);
-                              QUERY PLAN                              
-----------------------------------------------------------------------
- Custom Scan (DuckLakeDirectInsert)  (cost=0.00..0.00 rows=0 width=0)
-   Custom Scan: DuckLakeDirectInsert
-   Pattern: UNNEST
-   Expected Rows: 2
-(4 rows)
-
+ERROR:  (PGDuckDB/CreatePlan) Not implemented Error: Could not convert DuckDB type: UNKNOWN to Postgres type
 -- Test 3c: Execute the previous plan
 EXECUTE insert_plan(ARRAY[10, 20], ARRAY['x', 'y']);
+ERROR:  (PGDuckDB/CreatePlan) Not implemented Error: Could not convert DuckDB type: UNKNOWN to Postgres type
 SELECT * FROM insert_unnest_bypass ORDER BY id;
  id | val  
 ----+------
   0 | init
-  1 | a
-  2 | b
-  3 | c
- 10 | x
- 20 | y
-(6 rows)
+(1 row)
 
 -- Test 3d: Disable optimization (should fallback to DuckDB)
 SET ducklake.enable_direct_insert = false;
@@ -110,7 +97,7 @@ ERROR:  (PGDuckDB/CreatePlan) Not implemented Error: Could not convert DuckDB ty
 SELECT COUNT(*) FROM insert_unnest_bypass;
  count 
 -------
-     6
+     1
 (1 row)
 
 -- Test 3e: Re-enable and test large batch

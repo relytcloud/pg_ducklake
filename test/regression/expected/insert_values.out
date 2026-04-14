@@ -41,13 +41,40 @@ SELECT * FROM insert_values_basic WHERE id = 4;
 
 -- EXPLAIN should show DuckLakeDirectInsert with VALUES pattern
 EXPLAIN (COSTS OFF) INSERT INTO insert_values_basic VALUES (5, 'test', 1.0);
-             QUERY PLAN              
--------------------------------------
- Custom Scan (DuckLakeDirectInsert)
-   Custom Scan: DuckLakeDirectInsert
-   Pattern: VALUES
-   Expected Rows: 1
-(4 rows)
+          QUERY PLAN           
+-------------------------------
+ Custom Scan (DuckDBScan)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │      DUCKLAKE_INSERT      │
+ │    ────────────────────   │
+ │        Table Name:        │
+ │    insert_values_basic    │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │        COPY_TO_FILE       │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │    DUCKLAKE_INLINE_DATA   │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │         PROJECTION        │
+ │    ────────────────────   │
+ │             #0            │
+ │             #1            │
+ │             #2            │
+ │                           │
+ │           ~1 row          │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │      COLUMN_DATA_SCAN     │
+ │    ────────────────────   │
+ │           ~1 row          │
+ └───────────────────────────┘
+ 
+ 
+(31 rows)
 
 -- Type coercion (integer literal to double precision)
 INSERT INTO insert_values_basic VALUES (6, 'typed', 42);

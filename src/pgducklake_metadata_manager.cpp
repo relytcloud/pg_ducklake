@@ -650,9 +650,11 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t /*schema_version*/) {
     return 0;
   }
 
-  // Read the persisted counter from ducklake_table_stats -- O(1) lookup on a
-  // tiny table, as opposed to MAX(row_id) over the (growing) inlined data table.
-  // Returns 0 for a fresh table that has no stats row yet.
+  /* Read next_row_id from ducklake_table_stats (O(1) index lookup).
+   * DuckDB populates this table on every commit that writes data, so it
+   * is always present when an inlined data table exists.  Our
+   * CreateSnapshotForDirectInsert keeps it up to date after each
+   * direct insert. */
   StringInfoData query;
   initStringInfo(&query);
   appendStringInfo(&query,
@@ -773,10 +775,13 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version
     elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot changes: %d", ret);
   }
 
-  // Advance next_row_id and record_count in ducklake_table_stats to match
-  // what upstream ducklake does in UpdateGlobalTableStats at commit time.
-  // This keeps the counter consistent so subsequent direct inserts (and
-  // DuckDB queries) see the correct value without scanning inlined data.
+  /* Update ducklake_table_stats if a row exists for this table.  DuckDB
+   * does not always populate this table (it manages next_row_id per-
+   * transaction), so we only UPDATE, never INSERT.  Creating a stats row
+   * without the matching column_stats entries would crash DuckDB's
+   * GetGlobalTableStats (LEFT JOIN expects column_stats columns).
+   * When no stats row exists, GetNextRowIdForTable falls back to
+   * MAX(row_id) + 1 from the inlined data table. */
   StringInfoData stats_update;
   initStringInfo(&stats_update);
   appendStringInfo(&stats_update,
