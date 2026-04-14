@@ -51,7 +51,8 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 |-------|----------------------|------|-------------------|
 | Options | [`ducklake.set_option(text, "any")`](#set_option) | duckdb-only proc | `(text, "any", regclass)`, `(text, "any", regnamespace)` |
 | | [`ducklake.options()`](#options) | passthrough | - |
-| Flush | [`ducklake.flush_inlined_data()`](#flush_inlined_data) | passthrough | - |
+| Inline Data | [`ducklake.ensure_inlined_data_table(text, text)`](#ensure_inlined_data_table) | passthrough | `(regclass)` -- rewrite |
+| | [`ducklake.flush_inlined_data()`](#flush_inlined_data) | passthrough | - |
 | | [`ducklake.flush_inlined_data(text, text)`](#flush_inlined_data) | passthrough | `(regclass)` -- rewrite |
 | Partitioning | [`ducklake.set_partition(regclass, VARIADIC text[])`](#set_partition) | native proc | - |
 | | [`ducklake.reset_partition(regclass)`](#reset_partition) | native proc | - |
@@ -130,6 +131,23 @@ Lists all DuckLake options with their current values. This is a DuckDB-only func
 
 ```sql
 SELECT * FROM ducklake.options();
+```
+
+#### <a name="ensure_inlined_data_table"></a>`ducklake.ensure_inlined_data_table(schema_name text, table_name text)` / `ducklake.ensure_inlined_data_table(scope regclass)` -> `SETOF duckdb.row`
+
+Creates the inlined data table for a DuckLake table if one does not already exist. Returns the name of the inlined data table. This is required before using `COPY FROM STDIN` on a DuckLake table.
+
+Normally the inlined data table is created lazily on the first `INSERT` when `data_inlining_row_limit > 0`. This function creates it eagerly so that `COPY FROM STDIN` can write directly into it.
+
+```sql
+-- Create inlined data table for a specific table
+SELECT * FROM ducklake.ensure_inlined_data_table('my_table'::regclass);
+
+-- Text-arg form
+SELECT * FROM ducklake.ensure_inlined_data_table('public', 'my_table');
+
+-- Then use COPY FROM STDIN
+COPY my_table FROM STDIN;
 ```
 
 #### <a name="flush_inlined_data"></a>`ducklake.flush_inlined_data()` / `ducklake.flush_inlined_data(schema_name text, table_name text)` / `ducklake.flush_inlined_data(scope regclass)` -> `SETOF duckdb.row`
