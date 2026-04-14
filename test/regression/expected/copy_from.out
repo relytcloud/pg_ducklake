@@ -9,7 +9,7 @@
 -- Create a table and ensure inlined data table exists
 CREATE TABLE copy_stdin (id int, name text, val double precision) USING ducklake;
 SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_stdin'::regclass);
- count
+ count 
 -------
      1
 (1 row)
@@ -17,7 +17,7 @@ SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_stdin'::regclass);
 -- Test 1: Basic COPY FROM STDIN (tab-delimited)
 COPY copy_stdin FROM STDIN;
 SELECT * FROM copy_stdin ORDER BY id;
- id |  name   | val
+ id |  name   | val  
 ----+---------+------
   1 | alice   |  1.5
   2 | bob     |  2.7
@@ -27,7 +27,7 @@ SELECT * FROM copy_stdin ORDER BY id;
 -- Test 2: COPY FROM STDIN with CSV format
 COPY copy_stdin FROM STDIN WITH (FORMAT csv);
 SELECT count(*) FROM copy_stdin;
- count
+ count 
 -------
      5
 (1 row)
@@ -35,22 +35,22 @@ SELECT count(*) FROM copy_stdin;
 -- Test 3: COPY FROM STDIN with specific columns
 COPY copy_stdin (id, name) FROM STDIN WITH (FORMAT csv);
 SELECT id, name, val FROM copy_stdin WHERE id = 6;
- id | name  | val
+ id | name  | val 
 ----+-------+-----
-  6 | frank |
+  6 | frank |    
 (1 row)
 
 -- Test 4: COPY FROM STDIN with NULL values
 COPY copy_stdin FROM STDIN;
 SELECT id, name, val FROM copy_stdin WHERE id = 7;
- id | name | val
+ id | name | val 
 ----+------+-----
   7 |      | 7.7
 (1 row)
 
 -- Test 5: Verify all data is queryable via DuckDB
 SELECT count(*) FROM copy_stdin;
- count
+ count 
 -------
      7
 (1 row)
@@ -59,6 +59,8 @@ DROP TABLE copy_stdin;
 -- =============================================================
 -- Error case: COPY FROM STDIN without inlined data table
 -- =============================================================
+-- Disable inlining so CREATE TABLE does not auto-create the inlined table
+CALL ducklake.set_option('data_inlining_row_limit', 0);
 CREATE TABLE copy_no_inline (id int) USING ducklake;
 -- Should fail: no inlined data table
 COPY copy_no_inline FROM STDIN;

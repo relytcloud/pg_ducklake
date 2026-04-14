@@ -52,11 +52,17 @@ DROP TABLE copy_stdin;
 -- =============================================================
 -- Error case: COPY FROM STDIN without inlined data table
 -- =============================================================
+
+-- Disable inlining so CREATE TABLE does not auto-create the inlined table
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+
 CREATE TABLE copy_no_inline (id int) USING ducklake;
+
 -- Should fail: no inlined data table
 COPY copy_no_inline FROM STDIN;
 1
 \.
+
 DROP TABLE copy_no_inline;
 
 CALL ducklake.set_option('data_inlining_row_limit', 0);
