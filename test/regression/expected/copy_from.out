@@ -56,21 +56,6 @@ SELECT count(*) FROM copy_stdin;
 (1 row)
 
 DROP TABLE copy_stdin;
--- =============================================================
--- Error case: COPY FROM STDIN without inlined data table
--- =============================================================
--- Disable inlining so CREATE TABLE does not auto-create the inlined table
-CALL ducklake.set_option('data_inlining_row_limit', 0);
-CREATE TABLE copy_no_inline (id int) USING ducklake;
--- Should fail: no inlined data table
-COPY copy_no_inline FROM STDIN;
-ERROR:  COPY FROM STDIN requires an inlined data table for "copy_no_inline"
-HINT:  Call ducklake.ensure_inlined_data_table('copy_no_inline'::regclass) first.
-1
-\.
-invalid command \.
-DROP TABLE copy_no_inline;
-ERROR:  syntax error at or near "1"
-LINE 1: 1
-        ^
-CALL ducklake.set_option('data_inlining_row_limit', 0);
+-- Note: error case (COPY FROM STDIN without inlined data table) is not
+-- tested here because a failed COPY FROM STDIN leaks its data as SQL,
+-- preventing cleanup of the test table.
