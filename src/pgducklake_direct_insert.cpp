@@ -50,6 +50,7 @@ extern "C" {
 #include "executor/executor.h"
 #include "executor/spi.h"
 #include "fmgr.h"
+#include "miscadmin.h"
 #include "nodes/extensible.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -251,10 +252,13 @@ static Oid DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
  * Query ducklake_column metadata to determine the PG types used in the
  * inlined data table for each user column.  Returns false on bail-out
  * (nested types, missing metadata, column count mismatch).
+ *
+ * element_types: List of Oid -- the user-facing PG type for each column
+ * (array element type for UNNEST, column type for VALUES).
  */
-static bool GetInlinedColumnTypes(uint64_t table_id, List *param_infos, List **inlined_col_types_out) {
+static bool GetInlinedColumnTypes(uint64_t table_id, List *element_types, List **inlined_col_types_out) {
   int ret;
-  int num_cols = list_length(param_infos);
+  int num_cols = list_length(element_types);
 
   // Allocate in the caller's memory context -- SPI_connect switches to a
   // private context that is freed by SPI_finish, so List nodes built inside
@@ -287,7 +291,7 @@ ORDER BY column_order)",
     return false;
   }
 
-  ListCell *lc = list_head(param_infos);
+  ListCell *lc = list_head(element_types);
   for (int i = 0; i < num_cols; i++) {
     bool isnull;
     Datum type_datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
@@ -297,8 +301,8 @@ ORDER BY column_order)",
     }
     char *duckdb_type = TextDatumGetCString(type_datum);
 
-    ParamInfo *pinfo = (ParamInfo *)lfirst(lc);
-    Oid inlined_oid = DuckDBTypeToInlinedOid(duckdb_type, pinfo->element_type);
+    Oid element_type = lfirst_oid(lc);
+    Oid inlined_oid = DuckDBTypeToInlinedOid(duckdb_type, element_type);
     pfree(duckdb_type);
 
     if (!OidIsValid(inlined_oid)) {
@@ -306,7 +310,7 @@ ORDER BY column_order)",
       return false;
     }
     oids[i] = inlined_oid;
-    lc = lnext(param_infos, lc);
+    lc = lnext(element_types, lc);
   }
 
   SPI_finish();
@@ -398,8 +402,10 @@ static bool CheckInsertPreconditions(Query *parse, InsertPreconditionResult *res
  * Retrieve inlined column types, using the session-level cache.
  * On cache miss, queries ducklake_column metadata via SPI and caches
  * the result in TopMemoryContext.  Caller must not free the returned list.
+ *
+ * element_types: List of Oid -- user-facing PG type per column.
  */
-static bool GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, List *param_infos,
+static bool GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, List *element_types,
                                         List **inlined_col_types_out) {
   TableSchemaKey col_key = {table_id, schema_version};
   auto col_cache_it = inlined_col_types_cache.find(col_key);
@@ -409,7 +415,7 @@ static bool GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_versi
   }
 
   List *inlined_col_types = NIL;
-  if (!GetInlinedColumnTypes(table_id, param_infos, &inlined_col_types)) {
+  if (!GetInlinedColumnTypes(table_id, element_types, &inlined_col_types)) {
     return false;
   }
 
@@ -560,8 +566,14 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
   }
 
   // Check 9: Inlined column types
+  List *element_types = NIL;
+  foreach (lc, param_infos) {
+    ParamInfo *pinfo = (ParamInfo *)lfirst(lc);
+    element_types = lappend_oid(element_types, pinfo->element_type);
+  }
+
   List *inlined_col_types = NIL;
-  if (!GetCachedInlinedColumnTypes(precond.table_id, precond.schema_version, param_infos, &inlined_col_types)) {
+  if (!GetCachedInlinedColumnTypes(precond.table_id, precond.schema_version, element_types, &inlined_col_types)) {
     return false;
   }
 
@@ -714,8 +726,7 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
     }
   }
 
-  List *values_lists = NIL; /* will own a single-element list for single-row case */
-  bool free_values_lists = false;
+  List *values_lists = NIL;
 
   if (values_rte) {
     /* Multi-row VALUES: expressions in values_rte->values_lists */
@@ -738,7 +749,6 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
       row = lappend(row, tle->expr);
     }
     values_lists = list_make1(row);
-    free_values_lists = true;
   }
   int num_rows = list_length(values_lists);
   if (num_rows == 0) {
@@ -811,17 +821,8 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
 
   relation_close(target_rel, AccessShareLock);
 
-  /* Get inlined column types (reuses UNNEST's GetInlinedColumnTypes via fake ParamInfos) */
-  List *fake_param_infos = NIL;
-  ListCell *src_lc;
-  foreach (src_lc, src_col_types) {
-    ParamInfo *pinfo = (ParamInfo *)palloc0(sizeof(ParamInfo));
-    pinfo->element_type = lfirst_oid(src_lc);
-    fake_param_infos = lappend(fake_param_infos, pinfo);
-  }
-
   List *inlined_col_types = NIL;
-  if (!GetCachedInlinedColumnTypes(precond.table_id, precond.schema_version, fake_param_infos, &inlined_col_types)) {
+  if (!GetCachedInlinedColumnTypes(precond.table_id, precond.schema_version, src_col_types, &inlined_col_types)) {
     pfree(consts);
     return false;
   }
@@ -1324,14 +1325,39 @@ static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
     if (src_type == inl_type) {
       conv[i].needs_text_conv = false;
     } else if (inl_type == VARCHAROID || inl_type == TEXTOID) {
+      /* Scalar types (DATE, TIMESTAMP, etc.) stored as VARCHAR in
+       * the inlined table: convert via PG output function. */
       Oid typoutput;
       bool typisvarlena;
       getTypeOutputInfo(src_type, &typoutput, &typisvarlena);
       fmgr_info(typoutput, &conv[i].typoutput_finfo);
       conv[i].needs_text_conv = true;
+    } else if (inl_type == BYTEAOID) {
+      /* DuckDB VARCHAR/BLOB columns use BYTEA in the inlined table.
+       * PG text/varchar and bytea share the same varlena binary
+       * layout (length header + payload bytes), so the Datum can
+       * be stored as-is without conversion. */
+      conv[i].needs_text_conv = false;
     } else {
       conv[i].needs_text_conv = false;
     }
+  }
+
+  /* Ensure DateStyle is ISO for temporal -> VARCHAR text conversion.
+   * PG output functions for DATE, TIMESTAMP, etc. are DateStyle-dependent;
+   * DuckDB always expects ISO format (YYYY-MM-DD, YYYY-MM-DD HH:MM:SS). */
+  bool any_text_conv = false;
+  for (int i = 0; i < num_cols; i++) {
+    if (conv[i].needs_text_conv) {
+      any_text_conv = true;
+      break;
+    }
+  }
+  int saved_date_style = DateStyle;
+  int saved_date_order = DateOrder;
+  if (any_text_conv) {
+    DateStyle = USE_ISO_DATES;
+    DateOrder = DATEORDER_YMD;
   }
 
   /* Allocate slots for batched insert */
@@ -1400,6 +1426,11 @@ static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
 
   table_finish_bulk_insert(inlined_rel, 0);
   FreeBulkInsertState(bistate);
+
+  if (any_text_conv) {
+    DateStyle = saved_date_style;
+    DateOrder = saved_date_order;
+  }
 
   for (int i = 0; i < batch_size; i++) {
     ExecDropSingleTupleTableSlot(slots[i]);

@@ -4,34 +4,207 @@
 SET ducklake.enable_direct_insert = true;
 CALL ducklake.set_option('data_inlining_row_limit', 1000);
 
--- Create table and ensure inlined data table exists
-CREATE TABLE insert_values_t (id int, val text) USING ducklake;
-SELECT count(*) FROM ducklake.ensure_inlined_data_table('insert_values_t'::regclass);
+-- ============================================================
+-- Test 1: Stats creation and row_id correctness (#176)
+-- ============================================================
+CREATE TABLE iv_stats (id int, val text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_stats'::regclass);
 
--- First direct insert should create ducklake_table_stats row (#176)
-INSERT INTO insert_values_t VALUES (1, 'one');
+-- First direct insert should create ducklake_table_stats row
+INSERT INTO iv_stats VALUES (1, 'one');
 
 SELECT record_count, next_row_id
 FROM ducklake.ducklake_table_stats
 JOIN ducklake.ducklake_table dt USING (table_id)
-WHERE dt.table_name = 'insert_values_t' AND dt.end_snapshot IS NULL;
+WHERE dt.table_name = 'iv_stats' AND dt.end_snapshot IS NULL;
 
 -- Second insert should increment stats
-INSERT INTO insert_values_t VALUES (2, 'two'), (3, 'three');
+INSERT INTO iv_stats VALUES (2, 'two'), (3, 'three');
 
 SELECT record_count, next_row_id
 FROM ducklake.ducklake_table_stats
 JOIN ducklake.ducklake_table dt USING (table_id)
-WHERE dt.table_name = 'insert_values_t' AND dt.end_snapshot IS NULL;
+WHERE dt.table_name = 'iv_stats' AND dt.end_snapshot IS NULL;
 
--- Verify no duplicate row_ids (the original symptom of the bug)
-SELECT id, val FROM insert_values_t ORDER BY id;
+-- No duplicate row_ids
+SELECT id, val FROM iv_stats ORDER BY id;
 
--- Verify UPDATE/DELETE work (depends on correct row_id allocation)
-UPDATE insert_values_t SET val = 'ONE' WHERE id = 1;
-SELECT id, val FROM insert_values_t ORDER BY id;
+-- UPDATE/DELETE work after direct insert
+UPDATE iv_stats SET val = 'ONE' WHERE id = 1;
+SELECT id, val FROM iv_stats ORDER BY id;
 
-DELETE FROM insert_values_t WHERE id = 2;
-SELECT id, val FROM insert_values_t ORDER BY id;
+DELETE FROM iv_stats WHERE id = 2;
+SELECT id, val FROM iv_stats ORDER BY id;
 
-DROP TABLE insert_values_t;
+DROP TABLE iv_stats;
+
+-- ============================================================
+-- Test 2: EXPLAIN shows Pattern: VALUES
+-- ============================================================
+CREATE TABLE iv_explain (id int, val text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_explain'::regclass);
+
+EXPLAIN INSERT INTO iv_explain VALUES (1, 'hello');
+EXPLAIN INSERT INTO iv_explain VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+DROP TABLE iv_explain;
+
+-- ============================================================
+-- Test 3: GUC toggle (disable -> falls through to DuckDB)
+-- ============================================================
+CREATE TABLE iv_guc (id int, val text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_guc'::regclass);
+
+INSERT INTO iv_guc VALUES (1, 'direct');
+SET ducklake.enable_direct_insert = false;
+INSERT INTO iv_guc VALUES (2, 'duckdb');
+SET ducklake.enable_direct_insert = true;
+
+SELECT id, val FROM iv_guc ORDER BY id;
+DROP TABLE iv_guc;
+
+-- ============================================================
+-- Test 4: Partial columns (omitted columns get NULL)
+-- ============================================================
+CREATE TABLE iv_partial (id int, name text, score double precision) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_partial'::regclass);
+
+INSERT INTO iv_partial (id) VALUES (1);
+INSERT INTO iv_partial (id, name) VALUES (2, 'alice');
+INSERT INTO iv_partial (id, score) VALUES (3, 9.5);
+
+SELECT id, name, score FROM iv_partial ORDER BY id;
+DROP TABLE iv_partial;
+
+-- ============================================================
+-- Test 5: Explicit NULLs
+-- ============================================================
+CREATE TABLE iv_nulls (id int, val text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_nulls'::regclass);
+
+INSERT INTO iv_nulls VALUES (1, NULL), (NULL, 'hello'), (NULL, NULL);
+SELECT id, val FROM iv_nulls ORDER BY id NULLS LAST;
+DROP TABLE iv_nulls;
+
+-- ============================================================
+-- Test 6: Native integer types (smallint, int, bigint)
+-- ============================================================
+CREATE TABLE iv_integers (a smallint, b int, c bigint) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_integers'::regclass);
+
+INSERT INTO iv_integers VALUES (1, 100, 1000000000000);
+INSERT INTO iv_integers VALUES (-32768, -2147483648, -9223372036854775808);
+INSERT INTO iv_integers VALUES (32767, 2147483647, 9223372036854775807);
+SELECT * FROM iv_integers ORDER BY a;
+DROP TABLE iv_integers;
+
+-- ============================================================
+-- Test 7: Floating point types (real, double precision)
+-- ============================================================
+CREATE TABLE iv_floats (a real, b double precision) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_floats'::regclass);
+
+INSERT INTO iv_floats VALUES (1.5, 2.5);
+INSERT INTO iv_floats VALUES (-3.14, 2.718281828459045);
+SELECT * FROM iv_floats ORDER BY a;
+DROP TABLE iv_floats;
+
+-- ============================================================
+-- Test 8: Boolean
+-- ============================================================
+CREATE TABLE iv_bool (id int, flag boolean) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_bool'::regclass);
+
+INSERT INTO iv_bool VALUES (1, true), (2, false), (3, NULL);
+SELECT * FROM iv_bool ORDER BY id;
+DROP TABLE iv_bool;
+
+-- ============================================================
+-- Test 9: Text/VARCHAR (DuckDB VARCHAR -> BYTEA in inlined table)
+-- ============================================================
+CREATE TABLE iv_text (a text, b varchar) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_text'::regclass);
+
+INSERT INTO iv_text VALUES ('hello', 'world');
+INSERT INTO iv_text VALUES ('', '');
+INSERT INTO iv_text VALUES (NULL, 'only b');
+SELECT * FROM iv_text ORDER BY a NULLS LAST;
+DROP TABLE iv_text;
+
+-- ============================================================
+-- Test 10: Date (DuckDB DATE -> VARCHAR in inlined table)
+-- ============================================================
+CREATE TABLE iv_date (d date) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_date'::regclass);
+
+INSERT INTO iv_date VALUES ('2024-01-15'), ('1970-01-01'), ('2099-12-31');
+SELECT d FROM iv_date ORDER BY d;
+DROP TABLE iv_date;
+
+-- ============================================================
+-- Test 11: Timestamp (DuckDB TIMESTAMP -> VARCHAR in inlined table)
+-- ============================================================
+CREATE TABLE iv_ts (ts timestamp) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_ts'::regclass);
+
+INSERT INTO iv_ts VALUES ('2024-01-15 10:30:00'), ('1970-01-01 00:00:00');
+SELECT ts FROM iv_ts ORDER BY ts;
+DROP TABLE iv_ts;
+
+-- ============================================================
+-- Test 12: Type coercion (int literal into bigint, etc.)
+-- ============================================================
+CREATE TABLE iv_coerce (big bigint, small smallint, txt text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_coerce'::regclass);
+
+-- Integer literal 42 coerced to bigint; 1 coerced to smallint
+INSERT INTO iv_coerce VALUES (42, 1, 'coerced');
+SELECT big, small, txt FROM iv_coerce;
+DROP TABLE iv_coerce;
+
+-- ============================================================
+-- Test 13: Multi-row with mixed NULLs
+-- ============================================================
+CREATE TABLE iv_mixed (id int, val text, flag boolean) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_mixed'::regclass);
+
+INSERT INTO iv_mixed VALUES
+  (1, 'alpha', true),
+  (2, NULL, false),
+  (3, 'gamma', NULL),
+  (4, NULL, NULL);
+SELECT * FROM iv_mixed ORDER BY id;
+DROP TABLE iv_mixed;
+
+-- ============================================================
+-- Test 14: All supported types in one table
+-- ============================================================
+CREATE TABLE iv_all_types (
+  c_bool boolean,
+  c_int2 smallint,
+  c_int4 int,
+  c_int8 bigint,
+  c_float4 real,
+  c_float8 double precision,
+  c_text text,
+  c_varchar varchar,
+  c_date date,
+  c_ts timestamp
+) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_all_types'::regclass);
+
+INSERT INTO iv_all_types VALUES (
+  true, 1, 100, 1000000, 1.5, 2.718281828459045,
+  'hello', 'world', '2024-06-15', '2024-06-15 12:00:00'
+);
+INSERT INTO iv_all_types VALUES (
+  false, -1, -100, -1000000, -1.5, -2.718281828459045,
+  'foo', 'bar', '1970-01-01', '1970-01-01 00:00:00'
+);
+INSERT INTO iv_all_types VALUES (
+  NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL
+);
+
+SELECT * FROM iv_all_types ORDER BY c_int4 NULLS LAST;
+DROP TABLE iv_all_types;
