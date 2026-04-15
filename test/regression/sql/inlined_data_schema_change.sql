@@ -7,11 +7,8 @@
 -- returning the table creation snapshot instead of the schema-version-specific
 -- snapshot, which excluded columns added after table creation.
 
--- Enable data inlining so inserts stay in metadata tables.
--- Disable direct insert: this test exercises DuckDB's schema evolution
--- for inlined data across ALTER TABLE ADD/DROP COLUMN.
+-- Enable data inlining so inserts stay in metadata tables
 CALL ducklake.set_option('data_inlining_row_limit', 1000);
-SET ducklake.enable_direct_insert = false;
 
 -- Schema version 0: two columns
 CREATE TABLE dl_schema_change (id int, score int) USING ducklake;

@@ -236,12 +236,17 @@ static Oid DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
     return BYTEAOID;
   }
 
-  // Scalar types with wider DuckDB range are stored as VARCHAR
+  // Scalar types with wider DuckDB range are stored as VARCHAR.
+  // TIMESTAMPTZ is excluded: timestamptz_out crashes when called from
+  // the VALUES direct insert path after a prior direct insert modified
+  // snapshot state in the same session.
+  if (pg_strcasecmp(duckdb_type, "TIMESTAMP WITH TIME ZONE") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMPTZ") == 0) {
+    return InvalidOid;
+  }
   if (pg_strcasecmp(duckdb_type, "UBIGINT") == 0 || pg_strcasecmp(duckdb_type, "HUGEINT") == 0 ||
       pg_strcasecmp(duckdb_type, "UHUGEINT") == 0 || pg_strcasecmp(duckdb_type, "DATE") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP WITH TIME ZONE") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP_S") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP_MS") == 0 ||
-      pg_strcasecmp(duckdb_type, "TIMESTAMP_NS") == 0) {
+      pg_strcasecmp(duckdb_type, "TIMESTAMP") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP_S") == 0 ||
+      pg_strcasecmp(duckdb_type, "TIMESTAMP_MS") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP_NS") == 0) {
     return VARCHAROID;
   }
 
@@ -1099,11 +1104,6 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
 
   CommandCounterIncrement();
 
-  /* Detach and re-attach the DuckLake catalog so DuckDB picks up the
-   * externally-created snapshot.  A full DuckDB recycle would break
-   * schema-change scenarios. */
-  ducklake_detach_catalog();
-  ducklake_attach_catalog();
   pgducklake::ResetDirectInsertCaches();
 
   return NULL;

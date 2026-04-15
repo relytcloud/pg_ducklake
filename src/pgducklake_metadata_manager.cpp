@@ -671,6 +671,28 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
     }
   }
 
+  /* Guard 2: schema version check.
+   * Compare the inlined table's schema_version (already in *schema_version_out)
+   * with the latest snapshot's schema_version.  If they differ the table has
+   * been ALTER-ed -- fall back to the DuckDB path which handles schema
+   * evolution correctly. */
+  if (result) {
+    ret = SPI_execute("SELECT schema_version "
+                      "FROM ducklake.ducklake_snapshot "
+                      "ORDER BY snapshot_id DESC LIMIT 1",
+                      true, 1);
+    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+      bool isnull;
+      Datum sv_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+      if (!isnull) {
+        uint64_t latest_schema_version = DatumGetInt64(sv_datum);
+        if (latest_schema_version != *schema_version_out) {
+          result = false;
+        }
+      }
+    }
+  }
+
   SPI_finish();
   return result;
 }
