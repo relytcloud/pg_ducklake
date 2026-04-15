@@ -4,6 +4,49 @@
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 
 -- =============================================================
+-- flush_inlined_data (regclass)
+-- =============================================================
+
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+
+CREATE TABLE maint_flush (a int, b text) USING ducklake;
+
+-- These inserts go inline (fewer than 100 rows each)
+INSERT INTO maint_flush VALUES (1, 'one');
+INSERT INTO maint_flush VALUES (2, 'two');
+INSERT INTO maint_flush VALUES (3, 'three');
+
+SELECT * FROM maint_flush ORDER BY a;
+
+-- No data files yet (all data is inlined)
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'maint_flush'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Flush inlined data to parquet
+SELECT * FROM ducklake.flush_inlined_data('maint_flush'::regclass);
+
+-- Data files should now exist
+SELECT count(*)
+FROM ducklake.ducklake_data_file ddf
+JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id
+WHERE dt.table_name = 'maint_flush'
+  AND ds.schema_name = 'public'
+  AND ddf.end_snapshot IS NULL;
+
+-- Data is correct after flush
+SELECT * FROM maint_flush ORDER BY a;
+
+DROP TABLE maint_flush;
+
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+
+-- =============================================================
 -- merge_adjacent_files (regclass)
 -- =============================================================
 

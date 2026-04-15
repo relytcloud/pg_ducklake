@@ -55,9 +55,6 @@ extern "C" {
 #include "utils/syscache.h"
 
 #include "pgduckdb/pgduckdb_ruleutils.h"
-
-// Defined in pgducklake_vacuum.cpp
-extern void ducklake_do_vacuum(Relation onerel, VacuumParams *params, BufferAccessStrategy bstrategy);
 }
 
 /* ================================================================
@@ -311,8 +308,8 @@ static void duckdb_copy_for_cluster(Relation /*OldTable*/, Relation /*NewTable*/
   NOT_IMPLEMENTED();
 }
 
-static void duckdb_vacuum(Relation onerel, VacuumParams *params, BufferAccessStrategy bstrategy) {
-  ducklake_do_vacuum(onerel, params, bstrategy);
+static void duckdb_vacuum(Relation /*onerel*/, VacuumParams * /*params*/, BufferAccessStrategy /*bstrategy*/) {
+  /* Maintenance is handled by the ducklake maintenance background worker. */
 }
 
 #if PG_VERSION_NUM >= 170000

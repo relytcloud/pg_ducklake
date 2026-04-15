@@ -15,6 +15,7 @@
 #include "pgducklake/pgducklake_functions.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_hooks.hpp"
+#include "pgducklake/pgducklake_maintenance.hpp"
 #include "pgduckdb/pgduckdb_contracts.hpp"
 
 extern "C" {
@@ -47,6 +48,9 @@ void _PG_init(void) {
   pgduckdb::RegisterPassthroughType(PGDUCKLAKE_PG_SCHEMA, "variant", "VARIANT");
   // Register DuckLake GUCs
   pgducklake::RegisterGUCs();
+  // Register shared memory and background maintenance launcher
+  pgducklake::InitMaintenanceShmem();
+  pgducklake::RegisterMaintenanceLauncher();
   // Register custom scan node methods
   pgducklake::RegisterDirectInsertNode();
   // Install pg_ducklake planner/utility hooks.
