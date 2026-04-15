@@ -376,7 +376,25 @@ PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction
 PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {
 }
 
+/*
+ * Replace {DATA_PATH} and {METADATA_PATH} from the DuckLakeCatalog when the
+ * query actually contains them.  We guard with find() because GetCatalog()
+ * is not safe during initialization (the AttachedDatabase is not yet
+ * reachable), but these placeholders never appear in init queries.
+ */
+static void SubstitutePathPlaceholders(duckdb::string &query, duckdb::DuckLakeTransaction &transaction) {
+  if (query.find("{DATA_PATH}") == duckdb::string::npos && query.find("{METADATA_PATH}") == duckdb::string::npos) {
+    return;
+  }
+  auto &catalog = transaction.GetCatalog();
+  query =
+      duckdb::StringUtil::Replace(query, "{DATA_PATH}", duckdb::DuckLakeUtil::SQLLiteralToString(catalog.DataPath()));
+  query = duckdb::StringUtil::Replace(query, "{METADATA_PATH}",
+                                      duckdb::DuckLakeUtil::SQLLiteralToString(catalog.MetadataPath()));
+}
+
 duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Query(duckdb::string query) {
+  SubstitutePathPlaceholders(query, transaction);
   SubstituteCatalogPlaceholders(query);
   return CreateSPIResult(query);
 }
@@ -426,6 +444,7 @@ duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Query(duckdb:
 }
 
 duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Execute(duckdb::string query) {
+  SubstitutePathPlaceholders(query, transaction);
   SubstituteCatalogPlaceholders(query);
   return CreateSPIResult(query);
 }
