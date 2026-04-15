@@ -25,6 +25,7 @@ bool RegisterDuckdbExternalTableCheck(DuckdbExternalTableCheck callback);
 void RegisterDuckdbRelationNameCallback(DuckdbRelationNameCallback callback);
 bool DuckdbIsAlterTableInProgress(void);
 bool DuckdbIsInitialized(void);
+void DuckdbRecycleDuckDB(void);
 void DuckdbUnsafeSetNextExpectedCommandId(uint32_t command_id);
 // Allow a PostgreSQL internal subtransaction while a DuckDB transaction is active.
 // pg_ducklake uses this to wrap metadata commit writes so DuckLake's retry loop

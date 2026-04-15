@@ -21,6 +21,8 @@
 
 #include "duckdb.hpp"
 
+#include "pgduckdb/pgduckdb_contracts.hpp"
+
 #include "pgducklake/pgducklake_direct_insert.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
@@ -1097,6 +1099,12 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
                                             state->rows_inserted);
 
   CommandCounterIncrement();
+
+  /* Recycle DuckDB so the next query re-initializes from the latest
+   * snapshot.  Without this, DuckDB's catalog can become stale after
+   * a direct insert (the snapshot was advanced outside DuckDB). */
+  pgduckdb::DuckdbRecycleDuckDB();
+  pgducklake::ResetDirectInsertCaches();
 
   return NULL;
 }

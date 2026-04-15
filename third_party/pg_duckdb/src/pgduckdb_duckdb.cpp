@@ -102,6 +102,13 @@ DuckdbIsInitialized() {
 	return DuckDBManager::IsInitialized();
 }
 
+__attribute__((visibility("default"))) void
+DuckdbRecycleDuckDB() {
+	if (DuckDBManager::IsInitialized()) {
+		DuckDBManager::Reset();
+	}
+}
+
 void
 DuckDBManager::Initialize() {
 	elog(DEBUG2, "(PGDuckDB/DuckDBManager) Creating DuckDB instance");
