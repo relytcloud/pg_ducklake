@@ -72,8 +72,15 @@ void ducklake_detach_catalog() {
 }
 
 void ducklake_attach_catalog() {
-  duckdb::string query = "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
-                         "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED;
+  /* METADATA_CATALOG points the DuckLakeTransaction metadata connection's
+   * search path at the pgducklake catalog itself (instead of the default
+   * __ducklake_metadata_pgducklake, which does not exist because pg_ducklake
+   * keeps metadata in PostgreSQL, not in a separate DuckDB database).
+   * This lets DuckDB-native queries (read_blob, etc.) on the metadata
+   * connection resolve system functions through normal catalog search. */
+  duckdb::string query =
+      "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
+      "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED ", METADATA_CATALOG " PGDUCKLAKE_DUCKDB_CATALOG;
   if (creating_extension) {
     /* First-time init: create local data directory and pass it as DATA_PATH
      * so DuckLake stores it in the catalog metadata. */
