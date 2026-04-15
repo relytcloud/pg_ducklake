@@ -3,6 +3,10 @@
 --   1. Native: inlined as-is (same PG type in inlined table)
 --   2. Not native: ducklake query returns normal values; inlined table uses different PG type
 --   3. No inline: VARIANT (see variant.sql) / GEOMETRY -- no data inlining.
+--
+-- Disable direct insert: this test exercises DuckDB's type mapping for
+-- inlined data, which requires DuckDB to handle the INSERT itself.
+SET ducklake.enable_direct_insert = false;
 --      GEOMETRY has no PG equivalent type and cannot be tested through PG DDL.
 --
 -- See docs/data_types.md for the full type mapping.

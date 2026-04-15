@@ -637,6 +637,40 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
     }
   }
 
+  /* Only allow direct insert when data_inlining_row_limit was
+   * explicitly set to a positive value.  The default (10) triggers
+   * auto-inlining by DuckDB, but DuckDB manages those tables'
+   * schema evolution internally; direct insert bypasses that and
+   * causes crashes after ALTER TABLE ADD/DROP COLUMN.
+   *
+   * First check if ducklake_metadata exists (safe pg_class query),
+   * then query the actual limit. */
+  if (result) {
+    bool limit_explicitly_set = false;
+    ret = SPI_execute("SELECT 1 FROM pg_class c "
+                      "JOIN pg_namespace n ON c.relnamespace = n.oid "
+                      "WHERE n.nspname = 'ducklake' "
+                      "AND c.relname = 'ducklake_metadata'",
+                      true, 1);
+    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+      ret = SPI_execute("SELECT value::bigint "
+                        "FROM ducklake.ducklake_metadata "
+                        "WHERE key = 'data_inlining_row_limit' "
+                        "AND scope IS NULL",
+                        true, 1);
+      if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+        bool isnull;
+        Datum limit_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+        if (!isnull && DatumGetInt64(limit_datum) > 0) {
+          limit_explicitly_set = true;
+        }
+      }
+    }
+    if (!limit_explicitly_set) {
+      result = false;
+    }
+  }
+
   SPI_finish();
   return result;
 }

@@ -21,9 +21,8 @@
 
 #include "duckdb.hpp"
 
-#include "pgduckdb/pgduckdb_contracts.hpp"
-
 #include "pgducklake/pgducklake_direct_insert.hpp"
+#include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
@@ -1100,10 +1099,11 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
 
   CommandCounterIncrement();
 
-  /* Recycle DuckDB so the next query re-initializes from the latest
-   * snapshot.  Without this, DuckDB's catalog can become stale after
-   * a direct insert (the snapshot was advanced outside DuckDB). */
-  pgduckdb::DuckdbRecycleDuckDB();
+  /* Detach and re-attach the DuckLake catalog so DuckDB picks up the
+   * externally-created snapshot.  A full DuckDB recycle would break
+   * schema-change scenarios. */
+  ducklake_detach_catalog();
+  ducklake_attach_catalog();
   pgducklake::ResetDirectInsertCaches();
 
   return NULL;
