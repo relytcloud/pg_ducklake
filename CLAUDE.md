@@ -59,6 +59,18 @@ Everything registered on `db.instance` is lost on recycle and
 re-created by `ducklake_load_extension`. Per-transaction
 `PgDuckLakeMetadataManager` instances also belong here.
 
+#### 4. Background maintenance worker
+
+Registered by `_PG_init()` via `RegisterBackgroundWorker()`. The
+launcher (`ducklake_maintenance_launcher`) is a persistent process
+that spawns short-lived workers (`ducklake_maintenance_worker`) per
+database. Workers run two phases: in-process maintenance (flush
+inlined data, expire snapshots) and compaction (rewrite data files,
+merge adjacent files, cleanup old files). VACUUM on ducklake tables
+is a no-op; all maintenance goes through the background worker.
+
+See `src/pgducklake_maintenance.cpp` for the implementation.
+
 #### @scope convention
 
 Each source file declares its scopes in the header comment:

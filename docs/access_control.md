@@ -14,7 +14,7 @@ for multi-role environments. See also the upstream
 | Check | Mechanism |
 |---|---|
 | DDL ownership (ALTER/DROP TABLE) | Standard PostgreSQL ownership check |
-| VACUUM ownership | Standard PostgreSQL ownership check |
+| VACUUM ownership | Standard PostgreSQL ownership check (VACUUM is a no-op on DuckLake tables) |
 | `duckdb_group` membership | pg_duckdb rejects DuckDB execution for non-members |
 | Local filesystem access | `pg_read_server_files` / `pg_write_server_files` required for local storage |
 

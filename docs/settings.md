@@ -13,6 +13,12 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 | :--- | :------ | :----- |
 | [`ducklake.default_table_path`](#ducklakedefault_table_path) | `""` | Per-session |
 | [`ducklake.enable_direct_insert`](#ducklakeenable_direct_insert) | `true` | Per-session |
+| [`ducklake.maintenance_enabled`](#ducklakemaintenance_enabled) | `true` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_naptime`](#ducklakemaintenance_naptime) | `60` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_max_workers`](#ducklakemaintenance_max_workers) | `3` | Requires restart |
+| [`ducklake.maintenance_flush_inlined_data`](#ducklakemaintenance_flush_inlined_data) | `true` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_expire_snapshots`](#ducklakemaintenance_expire_snapshots) | `true` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_cleanup_old_files`](#ducklakemaintenance_cleanup_old_files) | `false` | Reload (`SIGHUP`) |
 | [`ducklake.reader_role`](#ducklakereader_role) | `"ducklake_reader"` | Requires restart |
 | [`ducklake.superuser_role`](#ducklakesuperuser_role) | `"ducklake_superuser"` | Requires restart |
 | [`ducklake.vacuum_delete_threshold`](#ducklakevacuum_delete_threshold) | `0.1` | Per-session |
@@ -47,9 +53,53 @@ Default directory path for DuckLake tables. If set, tables will be created under
 - **Default**: `""` (empty -- uses local storage)
 - **Access**: Per-session
 
+### `ducklake.maintenance_enabled`
+
+Enable the background maintenance worker. When enabled, a launcher process periodically spawns workers that run the full maintenance pipeline (flush inlined data, rewrite data files, merge adjacent files, expire snapshots, cleanup old files) on every database with pg_ducklake installed.
+
+- **Default**: `true`
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.maintenance_naptime`
+
+Seconds between maintenance cycles. The launcher sleeps this long between scans of `pg_database`.
+
+- **Default**: `60`
+- **Range**: 1 -- 86400
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.maintenance_max_workers`
+
+Maximum number of concurrent maintenance workers across all databases.
+
+- **Default**: `3`
+- **Range**: 1 -- 8
+- **Access**: Requires restart
+
+### `ducklake.maintenance_flush_inlined_data`
+
+Flush inlined data to Parquet files during background maintenance. Disable to skip this step if inlined data should remain in the metadata catalog.
+
+- **Default**: `true`
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.maintenance_expire_snapshots`
+
+Expire old snapshots during background maintenance. The retention window is controlled by the `expire_older_than` DuckLake catalog option.
+
+- **Default**: `true`
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.maintenance_cleanup_old_files`
+
+Clean up unreferenced data files from storage during background maintenance.
+
+- **Default**: `false`
+- **Access**: Reload (`SIGHUP`)
+
 ### `ducklake.vacuum_delete_threshold`
 
-Minimum fraction of deleted rows before VACUUM rewrites a data file.
+Minimum fraction of deleted rows before the maintenance worker rewrites a data file. Also used when calling `ducklake.rewrite_data_files()` directly. Note: `VACUUM` on DuckLake tables is a no-op; compaction is handled by the background maintenance worker.
 
 - **Default**: `0.1`
 - **Range**: 0.0 -- 1.0

@@ -395,7 +395,7 @@ SELECT * FROM ducklake.cleanup_orphaned_files();
 
 #### <a name="merge_adjacent_files"></a>`ducklake.merge_adjacent_files()` / `ducklake.merge_adjacent_files(scope regclass)` / `ducklake.merge_adjacent_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
 
-Merges small adjacent Parquet files into larger ones for better scan performance. Without arguments, merges files across the entire catalog. With a table argument, merges only that table's files. Returns the number of files processed and created per table. This is the same operation that `VACUUM` performs, exposed as a standalone function.
+Merges small adjacent Parquet files into larger ones for better scan performance. Without arguments, merges files across the entire catalog. With a table argument, merges only that table's files. Returns the number of files processed and created per table. This operation is run automatically by the background maintenance worker; this function allows triggering it manually.
 
 ```sql
 -- Merge all tables
@@ -410,7 +410,7 @@ SELECT * FROM ducklake.merge_adjacent_files('public', 'my_table');
 
 #### <a name="rewrite_data_files"></a>`ducklake.rewrite_data_files()` / `ducklake.rewrite_data_files(scope regclass)` / `ducklake.rewrite_data_files(schema_name text, table_name text)` -> `SETOF duckdb.row`
 
-Rewrites data files that contain deleted rows, producing new files without the deletions. Files are rewritten when the fraction of deleted rows exceeds the `rewrite_delete_threshold` option (default 0.2). This is the same operation that `VACUUM` performs, exposed as a standalone function.
+Rewrites data files that contain deleted rows, producing new files without the deletions. Files are rewritten when the fraction of deleted rows exceeds the `rewrite_delete_threshold` option (default 0.2). This operation is run automatically by the background maintenance worker; this function allows triggering it manually.
 
 ```sql
 -- Rewrite all tables

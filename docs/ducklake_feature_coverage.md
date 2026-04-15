@@ -92,7 +92,8 @@ Last updated: 2026-04-10
 
 ## Maintenance
 
-- [x] `VACUUM` (merge + rewrite): `VACUUM tablename`
+- [x] Background maintenance worker: automatically runs flush, rewrite, merge, expire, cleanup
+- [x] `VACUUM`: No-op on DuckLake tables (maintenance handled by background worker)
 - [x] `ducklake_merge_adjacent_files()`: `ducklake.merge_adjacent_files()`
 - [x] `ducklake_expire_snapshots()`: `ducklake.expire_snapshots()`
 - [x] `ducklake_cleanup_old_files()`: `ducklake.cleanup_old_files()`
