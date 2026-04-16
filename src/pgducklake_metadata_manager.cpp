@@ -622,14 +622,32 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
   char *schema_name = NameStr(nstup->nspname);
   ReleaseSysCache(ntp);
 
+  /* Single SPI query that returns all the information we need:
+   *   col 0: table_id          -- from ducklake_table
+   *   col 1: inlined schema_version -- from ducklake_inlined_data_tables
+   *   col 2: data_inlining_row_limit -- from ducklake_metadata (NULL if unset)
+   *   col 3: max per-table schema_version -- from ducklake_schema_versions
+   *
+   * Returns 0 rows when the table doesn't exist or has no inlined
+   * data entry.  A NULL in col 2 means the limit was not explicitly
+   * set; a NULL in col 3 means no ALTER has ever been performed on
+   * this table (safe to proceed). */
   StringInfoData query;
   initStringInfo(&query);
   appendStringInfo(&query,
-                   "SELECT dt.table_id, idt.schema_version "
+                   "SELECT dt.table_id, "
+                   "       idt.schema_version, "
+                   "       (SELECT m.value::bigint "
+                   "        FROM ducklake.ducklake_metadata m "
+                   "        WHERE m.key = 'data_inlining_row_limit' "
+                   "        AND m.scope IS NULL), "
+                   "       (SELECT MAX(sv.schema_version) "
+                   "        FROM ducklake.ducklake_schema_versions sv "
+                   "        WHERE sv.table_id = dt.table_id) "
                    "FROM ducklake.ducklake_table dt "
                    "JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id "
-                   "LEFT JOIN ducklake.ducklake_inlined_data_tables idt ON idt.table_id = "
-                   "dt.table_id "
+                   "LEFT JOIN ducklake.ducklake_inlined_data_tables idt "
+                   "  ON idt.table_id = dt.table_id "
                    "WHERE dt.table_name = '%s' "
                    "AND ds.schema_name = '%s' "
                    "AND dt.end_snapshot IS NULL "
@@ -642,75 +660,41 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
     HeapTuple tuple = SPI_tuptable->vals[0];
     bool isnull;
 
+    /* col 0: table_id */
     Datum table_id_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
-    if (!isnull) {
-      uint64_t table_id = DatumGetInt64(table_id_datum);
+    if (isnull)
+      goto done;
+    uint64_t table_id = DatumGetInt64(table_id_datum);
 
-      Datum schema_version_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
-      if (!isnull) {
-        uint64_t schema_version = DatumGetInt64(schema_version_datum);
-        *table_id_out = table_id;
-        *schema_version_out = schema_version;
-        result = true;
-      }
-    }
+    /* col 1: inlined schema_version (NULL if not inlined) */
+    Datum sv_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
+    if (isnull)
+      goto done;
+    uint64_t schema_version = DatumGetInt64(sv_datum);
+
+    /* col 2: data_inlining_row_limit must be explicitly set > 0 */
+    Datum limit_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull);
+    if (isnull || DatumGetInt64(limit_datum) <= 0)
+      goto done;
+
+    /* col 3: per-table schema version check.
+     * NULL means no ALTER has been performed -- safe to proceed.
+     * Non-NULL must match the inlined table's schema_version.
+     *
+     * Previously this compared against the global schema_version in
+     * ducklake_snapshot, which caused false negatives: a DDL on any
+     * other table would bump the global version and block direct
+     * insert for all unrelated tables. */
+    Datum max_sv_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull);
+    if (!isnull && (uint64_t)DatumGetInt64(max_sv_datum) != schema_version)
+      goto done;
+
+    *table_id_out = table_id;
+    *schema_version_out = schema_version;
+    result = true;
   }
 
-  /* Only allow direct insert when data_inlining_row_limit was
-   * explicitly set to a positive value.  The default (10) triggers
-   * auto-inlining by DuckDB, but DuckDB manages those tables'
-   * schema evolution internally; direct insert bypasses that and
-   * causes crashes after ALTER TABLE ADD/DROP COLUMN.
-   *
-   * First check if ducklake_metadata exists (safe pg_class query),
-   * then query the actual limit. */
-  if (result) {
-    bool limit_explicitly_set = false;
-    ret = SPI_execute("SELECT 1 FROM pg_class c "
-                      "JOIN pg_namespace n ON c.relnamespace = n.oid "
-                      "WHERE n.nspname = 'ducklake' "
-                      "AND c.relname = 'ducklake_metadata'",
-                      true, 1);
-    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
-      ret = SPI_execute("SELECT value::bigint "
-                        "FROM ducklake.ducklake_metadata "
-                        "WHERE key = 'data_inlining_row_limit' "
-                        "AND scope IS NULL",
-                        true, 1);
-      if (ret == SPI_OK_SELECT && SPI_processed > 0) {
-        bool isnull;
-        Datum limit_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-        if (!isnull && DatumGetInt64(limit_datum) > 0) {
-          limit_explicitly_set = true;
-        }
-      }
-    }
-    if (!limit_explicitly_set) {
-      result = false;
-    }
-  }
-
-  /* Guard 2: schema version check.
-   * Compare the inlined table's schema_version (already in *schema_version_out)
-   * with the latest snapshot's schema_version.  If they differ the table has
-   * been ALTER-ed -- fall back to the DuckDB path which handles schema
-   * evolution correctly. */
-  if (result) {
-    ret = SPI_execute("SELECT schema_version "
-                      "FROM ducklake.ducklake_snapshot "
-                      "ORDER BY snapshot_id DESC LIMIT 1",
-                      true, 1);
-    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
-      bool isnull;
-      Datum sv_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-      if (!isnull) {
-        uint64_t latest_schema_version = DatumGetInt64(sv_datum);
-        if (latest_schema_version != *schema_version_out) {
-          result = false;
-        }
-      }
-    }
-  }
+done:
 
   SPI_finish();
   return result;

@@ -208,3 +208,64 @@ INSERT INTO iv_all_types VALUES (
 
 SELECT * FROM iv_all_types ORDER BY c_int4 NULLS LAST;
 DROP TABLE iv_all_types;
+
+-- ============================================================
+-- Test 15: DDL on unrelated table must not block direct insert
+-- A DDL on table B bumps the global schema_version in
+-- ducklake_snapshot but must not disable direct insert on
+-- table A whose per-table schema has not changed.
+--
+-- Use a dedicated schema so leftover DuckDB catalog entries
+-- don't leak into import_foreign_schema tests.
+-- ============================================================
+CREATE SCHEMA iv_schema;
+SET search_path = iv_schema;
+
+CREATE TABLE iv_target (id int, val text) USING ducklake;
+CREATE TABLE iv_other (x int) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_target'::regclass);
+
+-- Direct insert works before any DDL
+EXPLAIN INSERT INTO iv_target VALUES (1, 'before');
+INSERT INTO iv_target VALUES (1, 'before');
+
+-- Touch iv_other so DuckDB registers it, then ALTER it
+INSERT INTO iv_other VALUES (1);
+ALTER TABLE iv_other ADD COLUMN y text;
+
+-- Direct insert on iv_target must still use the fast path
+EXPLAIN INSERT INTO iv_target VALUES (2, 'after');
+INSERT INTO iv_target VALUES (2, 'after');
+
+SELECT id, val FROM iv_target ORDER BY id;
+
+DROP TABLE iv_other;
+DROP TABLE iv_target;
+
+-- ============================================================
+-- Test 16: DDL on the SAME table must disable direct insert
+-- ALTER TABLE on iv_self bumps its per-table schema_version,
+-- so EXPLAIN must NOT show the DuckLakeDirectInsert plan.
+-- ============================================================
+CREATE TABLE iv_self (id int, val text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_self'::regclass);
+
+-- Direct insert works before ALTER
+EXPLAIN INSERT INTO iv_self VALUES (1, 'before');
+INSERT INTO iv_self VALUES (1, 'before');
+
+-- ALTER the same table
+ALTER TABLE iv_self ADD COLUMN extra int;
+
+-- Direct insert must NOT be used (schema version mismatch)
+EXPLAIN INSERT INTO iv_self (id, val, extra) VALUES (2, 'after', 42);
+
+-- Data still works via the DuckDB path
+INSERT INTO iv_self (id, val, extra) VALUES (2, 'after', 42);
+SELECT id, val, extra FROM iv_self ORDER BY id;
+
+DROP TABLE iv_self;
+
+-- Cleanup dedicated schema
+RESET search_path;
+DROP SCHEMA iv_schema;
