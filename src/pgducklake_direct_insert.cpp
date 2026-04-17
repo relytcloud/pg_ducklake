@@ -1099,8 +1099,7 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
   node->ss.ps.state->es_processed = state->rows_inserted;
 
   pgducklake::SkipSnapshotSyncGuard sync_guard;
-  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->schema_version, state->table_id,
-                                            state->rows_inserted);
+  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted);
 
   CommandCounterIncrement();
 

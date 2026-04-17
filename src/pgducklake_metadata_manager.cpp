@@ -779,28 +779,30 @@ uint64_t GetNextSnapshotId() {
   return next_snapshot_id;
 }
 
-void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version, uint64_t table_id,
-                                   int64_t rows_inserted) {
+void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted) {
   int ret;
 
-  elog(DEBUG1,
-       "CreateSnapshotForDirectInsert: creating snapshot %llu with "
-       "schema_version %llu",
-       (unsigned long long)snapshot_id, (unsigned long long)schema_version);
+  elog(DEBUG1, "CreateSnapshotForDirectInsert: creating snapshot %llu", (unsigned long long)snapshot_id);
 
   if ((ret = SPI_connect()) < 0) {
     elog(ERROR, "CreateSnapshotForDirectInsert: SPI_connect failed: %d", ret);
     return;
   }
 
-  // Use the latest snapshot's values via primary-key index backward scan (O(1))
-  // rather than MAX() over the full table.
-  const char *query_state = "SELECT COALESCE(next_catalog_id, 1), COALESCE(next_file_id, 0) "
+  /* Read the latest snapshot via primary-key index backward scan (O(1))
+   * rather than MAX() over the full table.  We carry its schema_version
+   * forward: direct insert is a data-only change, so the new snapshot
+   * must preserve the global catalog view (which tables are visible).
+   * Using a per-table schema_version here would effectively roll back
+   * the catalog and hide tables created after this one. */
+  const char *query_state = "SELECT COALESCE(next_catalog_id, 1), COALESCE(next_file_id, 0), "
+                            "       COALESCE(schema_version, 0) "
                             "FROM ducklake.ducklake_snapshot "
                             "ORDER BY snapshot_id DESC LIMIT 1";
 
   uint64_t next_catalog_id = 1;
   uint64_t next_file_id = 0;
+  uint64_t schema_version = 0;
 
   ret = SPI_execute(query_state, true, 1);
   if (ret == SPI_OK_SELECT && SPI_processed > 0) {
@@ -816,6 +818,11 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version
     Datum file_id_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
     if (!isnull) {
       next_file_id = DatumGetInt64(file_id_datum);
+    }
+
+    Datum schema_version_datum = SPI_getbinval(tuple, tupdesc, 3, &isnull);
+    if (!isnull) {
+      schema_version = DatumGetInt64(schema_version_datum);
     }
   }
 

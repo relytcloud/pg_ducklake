@@ -266,6 +266,27 @@ SELECT id, val, extra FROM iv_self ORDER BY id;
 
 DROP TABLE iv_self;
 
+-- ============================================================
+-- Test 17: Direct insert must preserve the global catalog view
+-- ducklake_snapshot.schema_version is global: setting it to a
+-- per-table value would roll back the catalog and hide tables
+-- created after the direct-insert target.  Regression test for
+-- #182 where a later SELECT on a sibling table failed with
+-- "Table with name X does not exist" after a direct insert.
+-- ============================================================
+CREATE TABLE iv_first (id int) USING ducklake;
+CREATE TABLE iv_second (id int) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_first'::regclass);
+
+-- Direct insert into iv_first -- must not rewind the global schema_version
+INSERT INTO iv_first VALUES (1);
+
+-- iv_second was created after iv_first; a rolled-back snapshot would hide it
+SELECT count(*) FROM iv_second;
+
+DROP TABLE iv_first;
+DROP TABLE iv_second;
+
 -- Cleanup dedicated schema
 RESET search_path;
 DROP SCHEMA iv_schema;

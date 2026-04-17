@@ -52,7 +52,6 @@ protected:
 bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schema_version_out);
 uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version);
 uint64_t GetNextSnapshotId();
-void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t schema_version, uint64_t table_id,
-                                   int64_t rows_inserted);
+void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted);
 
 } // namespace pgducklake

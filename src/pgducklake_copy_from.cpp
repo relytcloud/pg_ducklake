@@ -234,7 +234,7 @@ uint64 DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 
   if (rows_inserted > 0) {
     SkipSnapshotSyncGuard sync_guard;
-    CreateSnapshotForDirectInsert(begin_snapshot, schema_version, table_id, rows_inserted);
+    CreateSnapshotForDirectInsert(begin_snapshot, table_id, rows_inserted);
     CommandCounterIncrement();
   }
 
