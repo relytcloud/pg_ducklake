@@ -197,3 +197,38 @@ DROP TABLE maint_cleanup_orphan;
 
 -- Restore default
 CALL ducklake.set_option('data_inlining_row_limit', 0);
+
+-- =============================================================
+-- Background maintenance worker smoke test (issue #183)
+--
+-- Verifies the launcher/worker pair can run a full cycle without
+-- crashing. If the worker segfaults, the postmaster terminates all
+-- backends and this test's connection dies with a FATAL error.
+-- =============================================================
+
+CREATE TABLE maint_bgw_smoke (a int) USING ducklake;
+INSERT INTO maint_bgw_smoke VALUES (1), (2), (3);
+
+ALTER SYSTEM SET ducklake.maintenance_naptime = 1;
+ALTER SYSTEM SET ducklake.maintenance_enabled = on;
+SELECT pg_reload_conf();
+
+-- Wait long enough for the launcher to wake on SIGHUP, spawn a worker,
+-- and for at least one worker to run to completion.
+SELECT pg_sleep(4);
+
+-- The launcher must still be alive; if a worker had segfaulted, the
+-- postmaster would have torn down all backends by now.
+SELECT count(*) = 1 AS launcher_alive
+FROM pg_stat_activity
+WHERE backend_type = 'ducklake maintenance launcher';
+
+ALTER SYSTEM RESET ducklake.maintenance_enabled;
+ALTER SYSTEM RESET ducklake.maintenance_naptime;
+SELECT pg_reload_conf();
+
+-- Give the launcher a cycle to observe maintenance_enabled=off so no
+-- new worker is spawned against a table we're about to drop.
+SELECT pg_sleep(2);
+
+DROP TABLE maint_bgw_smoke;
