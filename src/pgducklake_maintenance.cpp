@@ -322,10 +322,11 @@ PGDLLEXPORT void ducklake_maintenance_worker_main(Datum main_arg) {
       tables = (char **)palloc(ntables * sizeof(char *));
       for (int i = 0; i < ntables; i++) {
         bool isnull;
+        /* nspname and relname are `name`, not `text`: decode via DatumGetName/NameStr. */
         Datum s = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
         Datum t = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 2, &isnull);
-        schemas[i] = pstrdup(TextDatumGetCString(s));
-        tables[i] = pstrdup(TextDatumGetCString(t));
+        schemas[i] = pstrdup(NameStr(*DatumGetName(s)));
+        tables[i] = pstrdup(NameStr(*DatumGetName(t)));
       }
       MemoryContextSwitchTo(old_ctx);
     }
