@@ -591,6 +591,26 @@ SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_duckdb', 'duckdb_only_function'
 LANGUAGE C;
 
+-- Diagnostics -------------------------------------------------------
+
+-- native SRF: planner/exec counters for the direct-insert optimization.
+-- Rows are one per (pattern, reason) bucket actually tracked:
+--   matched_unnest, ok
+--   matched_values, ok
+--   unmatched, <every non-ok reason>
+-- Counters live in shared memory; counts persist across backends until
+-- the postmaster restarts or ducklake.reset_direct_insert_stats() runs.
+CREATE FUNCTION ducklake.direct_insert_stats()
+    RETURNS TABLE (pattern text, reason text, count bigint)
+    AS 'MODULE_PATHNAME', 'ducklake_direct_insert_stats'
+    LANGUAGE C STRICT VOLATILE;
+
+-- native: zero all direct-insert counters.
+CREATE FUNCTION ducklake.reset_direct_insert_stats()
+    RETURNS void
+    AS 'MODULE_PATHNAME', 'ducklake_reset_direct_insert_stats'
+    LANGUAGE C VOLATILE;
+
 -- Freeze ------------------------------------------------------------
 
 -- native proc: export metadata to a standalone .ducklake file.

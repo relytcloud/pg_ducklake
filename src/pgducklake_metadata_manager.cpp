@@ -592,19 +592,21 @@ duckdb::string PgDuckLakeMetadataManager::GetInlinedTableQueries(duckdb::DuckLak
 }
 
 // Helper functions for direct insert optimization
-bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schema_version_out) {
+
+TableInliningState GetTableInliningState(Oid table_oid, uint64_t *table_id_out, uint64_t *schema_version_out,
+                                         int64_t *row_limit_out) {
   int ret;
-  bool result = false;
+  TableInliningState state = TI_NO_TABLE;
 
   if ((ret = SPI_connect()) < 0) {
     elog(ERROR, "SPI_connect failed: %d", ret);
-    return false;
+    return TI_NO_TABLE;
   }
 
   HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(table_oid));
   if (!HeapTupleIsValid(tp)) {
     SPI_finish();
-    return false;
+    return TI_NO_TABLE;
   }
 
   Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
@@ -615,7 +617,7 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
   HeapTuple ntp = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(schema_oid));
   if (!HeapTupleIsValid(ntp)) {
     SPI_finish();
-    return false;
+    return TI_NO_TABLE;
   }
 
   Form_pg_namespace nstup = (Form_pg_namespace)GETSTRUCT(ntp);
@@ -660,22 +662,29 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
     HeapTuple tuple = SPI_tuptable->vals[0];
     bool isnull;
 
-    /* col 0: table_id */
+    /* col 0: table_id (must be present; NULL here means no ducklake row) */
     Datum table_id_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
-    if (isnull)
+    if (isnull) {
+      state = TI_NO_TABLE;
       goto done;
+    }
     uint64_t table_id = DatumGetInt64(table_id_datum);
 
-    /* col 1: inlined schema_version (NULL if not inlined) */
+    /* col 1: inlined schema_version (NULL if no inlined_data_tables row) */
     Datum sv_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
-    if (isnull)
+    if (isnull) {
+      state = TI_NO_INLINED_TABLE;
       goto done;
+    }
     uint64_t schema_version = DatumGetInt64(sv_datum);
 
     /* col 2: data_inlining_row_limit must be explicitly set > 0 */
     Datum limit_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull);
-    if (isnull || DatumGetInt64(limit_datum) <= 0)
+    if (isnull || DatumGetInt64(limit_datum) <= 0) {
+      state = TI_NO_INLINED_TABLE;
       goto done;
+    }
+    int64_t row_limit = DatumGetInt64(limit_datum);
 
     /* col 3: per-table schema version check.
      * NULL means no ALTER has been performed -- safe to proceed.
@@ -686,18 +695,26 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
      * other table would bump the global version and block direct
      * insert for all unrelated tables. */
     Datum max_sv_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull);
-    if (!isnull && (uint64_t)DatumGetInt64(max_sv_datum) != schema_version)
+    if (!isnull && (uint64_t)DatumGetInt64(max_sv_datum) != schema_version) {
+      state = TI_SCHEMA_VERSION_MISMATCH;
       goto done;
+    }
 
     *table_id_out = table_id;
     *schema_version_out = schema_version;
-    result = true;
+    if (row_limit_out)
+      *row_limit_out = row_limit;
+    state = TI_OK;
   }
 
 done:
 
   SPI_finish();
-  return result;
+  return state;
+}
+
+bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schema_version_out) {
+  return GetTableInliningState(table_oid, table_id_out, schema_version_out, NULL) == TI_OK;
 }
 
 uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {

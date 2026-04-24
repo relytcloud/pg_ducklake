@@ -17,6 +17,7 @@ test: gucs
 test: default_table_path
 test: options
 test: data_inlining_row_limit
+test: direct_insert_stats
 test: inlined_data_schema_change
 test: types
 test: decimal_precision

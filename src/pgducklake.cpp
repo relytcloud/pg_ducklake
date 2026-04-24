@@ -10,6 +10,7 @@
 #include "storage/ducklake_metadata_manager.hpp"
 
 #include "pgducklake/pgducklake_direct_insert.hpp"
+#include "pgducklake/pgducklake_direct_insert_stats.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_fdw.hpp"
 #include "pgducklake/pgducklake_functions.hpp"
@@ -51,6 +52,8 @@ void _PG_init(void) {
   // Register shared memory and background maintenance launcher
   pgducklake::InitMaintenanceShmem();
   pgducklake::RegisterMaintenanceLauncher();
+  // Register shared memory for direct-insert planner/exec counters
+  pgducklake::InitDirectInsertStatsShmem();
   // Register custom scan node methods
   pgducklake::RegisterDirectInsertNode();
   // Install pg_ducklake planner/utility hooks.

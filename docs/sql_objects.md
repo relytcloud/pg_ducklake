@@ -88,6 +88,8 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 | | [`ducklake.filename()`](#filename) | passthrough | - |
 | | [`ducklake.file_row_number()`](#file_row_number) | passthrough | - |
 | | [`ducklake.file_index()`](#file_index) | passthrough | - |
+| Diagnostics | [`ducklake.direct_insert_stats()`](#direct_insert_stats) | native | - |
+| | [`ducklake.reset_direct_insert_stats()`](#reset_direct_insert_stats) | native | - |
 | Freeze | [`ducklake.freeze(text)`](#freeze) | native proc | - |
 
 **Kind legend:**
@@ -95,8 +97,43 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 - **rewrite** -- planner rewrites `regclass` to `(schema_name, table_name)` then routes to the passthrough version
 - **duckdb-only proc** -- CALL is intercepted by utility hook and executed in DuckDB
 - **native proc** -- procedure runs in PostgreSQL (C language)
+- **native** -- function runs in PostgreSQL (C language)
 - **pure SQL** -- executes entirely in PostgreSQL against DuckLake metadata tables
 - **index intercept** -- utility hook intercepts CREATE/DROP INDEX and translates to DuckDB ALTER TABLE
+
+### <a id="direct_insert_stats"></a>`ducklake.direct_insert_stats()`
+
+Set-returning function that reports the running count of outcomes for
+the direct-insert planner / executor path.  Counters live in shared
+memory and persist across backends until the postmaster restarts or
+[`ducklake.reset_direct_insert_stats()`](#reset_direct_insert_stats) is
+called.
+
+Returns `(pattern text, reason text, count bigint)`.  The row set is
+stable across resets: two `matched_*` rows plus one `unmatched` row per
+non-`ok` reason.
+
+| Pattern | Reason | Bumped when ... |
+|---------|--------|-----------------|
+| `matched_unnest` | `ok` | an `INSERT ... SELECT UNNEST($n), ...` was executed via the direct path |
+| `matched_values` | `ok` | an `INSERT ... VALUES (const, ...)` was executed via the direct path |
+| `unmatched` | `no_inlined_table` | `data_inlining_row_limit` is unset or there is no `ducklake_inlined_data_tables` row for the target |
+| `unmatched` | `schema_version_mismatch` | the inlined table's `schema_version` is behind the target's per-table max (a DDL happened, inlined data hasn't been flushed) |
+| `unmatched` | `col_types_unsupported` | the target has a column whose DuckDB type cannot be inlined (nested types, `VARIANT`, `TIMESTAMPTZ`, ...) |
+| `unmatched` | `greater_than_limit` | the batch row count exceeds `data_inlining_row_limit` |
+| `unmatched` | `unsupported_insert_shape` | neither `UNNEST` nor `VALUES` detector matched (e.g. `INSERT ... SELECT` from a table, `RETURNING`, `ON CONFLICT`, non-const `VALUES`) |
+| `unmatched` | `invalid_rte` | the `FROM` clause's RTE kind isn't recognized by the UNNEST detector (rare) |
+| `unmatched` | `retry` | *reserved* -- reserved for a future retry-on-snapshot-conflict counter |
+
+Counts are **only** bumped for `INSERT` statements that pass these
+gates (non-counted early exits):
+1. `ducklake.enable_direct_insert = true`
+2. not inside an explicit `BEGIN ... COMMIT` block
+3. the target table uses the `ducklake` access method
+
+### <a id="reset_direct_insert_stats"></a>`ducklake.reset_direct_insert_stats()`
+
+Zeroes all counters.  Returns `void`.
 
 ## Bootstrap
 

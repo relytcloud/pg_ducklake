@@ -22,6 +22,7 @@
 #include "duckdb.hpp"
 
 #include "pgducklake/pgducklake_direct_insert.hpp"
+#include "pgducklake/pgducklake_direct_insert_stats.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
 #include "pgducklake/pgducklake_guc.hpp"
@@ -77,6 +78,7 @@ namespace pgducklake {
 struct InliningInfoCache {
   uint64_t table_id;
   uint64_t schema_version;
+  int64_t row_limit;
 };
 
 struct InlinedColumnTypesCache {
@@ -195,13 +197,17 @@ struct InsertPreconditionResult {
   Oid target_oid;
   uint64_t table_id;
   uint64_t schema_version;
+  int64_t row_limit;
   Relation target_rel; // caller must close
 };
 
 // Helper functions
-static bool CheckInsertPreconditions(Query *parse, InsertPreconditionResult *result_out);
-static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_params, DirectInsertContext *context_out);
-static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *context_out);
+static bool CheckInsertPreconditions(Query *parse, InsertPreconditionResult *result_out, DirectInsertReason *reason_out,
+                                     bool *is_ducklake_out);
+static bool TryMatchUnnest(Query *parse, ParamListInfo bound_params, const InsertPreconditionResult *precond,
+                           DirectInsertContext *context_out, DirectInsertReason *reason_out);
+static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond, ValuesInsertContext *context_out,
+                           DirectInsertReason *reason_out);
 static bool IsUnnestOfParam(Node *node, int *param_id_out, Oid *param_type_out);
 static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids, int *expected_row_count_out);
 static PlannedStmt *CreateDirectInsertPlan(Query *parse, DirectInsertContext *context);
@@ -340,32 +346,37 @@ void RegisterDirectInsertNode() {
  * ---------------------------------------------------------------- */
 
 /*
- * Check preconditions shared by UNNEST and VALUES patterns:
- *   1. CMD_INSERT
- *   2. Not in explicit transaction block
- *   3. Target RTE is RTE_RELATION
- *   4. Target table uses ducklake AM
- *   5. Table has inlined data (GetTableInliningInfo)
+ * Check preconditions for direct insert.  Two kinds of failure:
+ *
+ *   1. Gating (is_ducklake_out = false): not a CMD_INSERT, in tx block,
+ *      bad result relation, non-ducklake AM.  Callers do NOT count these.
+ *   2. Inlineability (is_ducklake_out = true): target is ducklake but
+ *      can't be inlined (no_inlined_table or schema_version_mismatch).
+ *      Callers DO count these as unmatched rejections.
  *
  * On success, result_out->target_rel is open with AccessShareLock --
  * the caller MUST close it.
  */
-static bool CheckInsertPreconditions(Query *parse, InsertPreconditionResult *result_out) {
+static bool CheckInsertPreconditions(Query *parse, InsertPreconditionResult *result_out, DirectInsertReason *reason_out,
+                                     bool *is_ducklake_out) {
+  *is_ducklake_out = false;
+  *reason_out = DI_R_OK;
+
   if (parse->commandType != CMD_INSERT) {
-    return false;
+    return false; /* gating */
   }
 
   if (IsTransactionBlock()) {
-    return false;
+    return false; /* gating */
   }
 
   if (parse->resultRelation == 0 || list_length(parse->rtable) < parse->resultRelation) {
-    return false;
+    return false; /* gating: bad INSERT shape, can't identify target */
   }
 
   RangeTblEntry *target_rte = (RangeTblEntry *)list_nth(parse->rtable, parse->resultRelation - 1);
   if (target_rte->rtekind != RTE_RELATION) {
-    return false;
+    return false; /* gating: target isn't a relation */
   }
 
   Oid target_oid = target_rte->relid;
@@ -374,32 +385,52 @@ static bool CheckInsertPreconditions(Query *parse, InsertPreconditionResult *res
   if (!OidIsValid(ducklake_am_oid))
     ducklake_am_oid = get_am_oid("ducklake", true);
   if (!OidIsValid(ducklake_am_oid))
-    return false;
+    return false; /* gating: extension not fully initialized */
 
   Relation target_rel = relation_open(target_oid, AccessShareLock);
   Oid am_oid = target_rel->rd_rel->relam;
 
   if (am_oid != ducklake_am_oid) {
     relation_close(target_rel, AccessShareLock);
-    return false;
+    return false; /* gating: not a ducklake table */
   }
 
-  uint64_t table_id, schema_version;
+  /* Past this point target IS a ducklake table -- any further failure
+   * is a counted "unmatched" outcome. */
+  *is_ducklake_out = true;
+
+  uint64_t table_id = 0;
+  uint64_t schema_version = 0;
+  int64_t row_limit = 0;
+
   auto cache_it = inlining_info_cache.find(target_oid);
   if (cache_it != inlining_info_cache.end()) {
     table_id = cache_it->second.table_id;
     schema_version = cache_it->second.schema_version;
+    row_limit = cache_it->second.row_limit;
   } else {
-    if (!pgducklake::GetTableInliningInfo(target_oid, &table_id, &schema_version)) {
+    TableInliningState state = pgducklake::GetTableInliningState(target_oid, &table_id, &schema_version, &row_limit);
+    if (state != TI_OK) {
       relation_close(target_rel, AccessShareLock);
+      switch (state) {
+      case TI_SCHEMA_VERSION_MISMATCH:
+        *reason_out = DI_R_SCHEMA_VERSION_MISMATCH;
+        break;
+      case TI_NO_TABLE:
+      case TI_NO_INLINED_TABLE:
+      default:
+        *reason_out = DI_R_NO_INLINED_TABLE;
+        break;
+      }
       return false;
     }
-    inlining_info_cache[target_oid] = {table_id, schema_version};
+    inlining_info_cache[target_oid] = {table_id, schema_version, row_limit};
   }
 
   result_out->target_oid = target_oid;
   result_out->table_id = table_id;
   result_out->schema_version = schema_version;
+  result_out->row_limit = row_limit;
   result_out->target_rel = target_rel;
   return true;
 }
@@ -441,27 +472,76 @@ static bool GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_versi
  * Entry point: try both UNNEST and VALUES patterns
  * ---------------------------------------------------------------- */
 
+/* Higher value = more informative / more specific. Used when both
+ * detectors fail so we can surface the most useful reason. */
+static int ReasonRank(DirectInsertReason r) {
+  switch (r) {
+  case DI_R_COL_TYPES_UNSUPPORTED:
+    return 4;
+  case DI_R_GREATER_THAN_LIMIT:
+    return 3;
+  case DI_R_INVALID_RTE:
+    return 2;
+  case DI_R_UNSUPPORTED_INSERT_SHAPE:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+static DirectInsertReason PickMoreSpecific(DirectInsertReason a, DirectInsertReason b) {
+  return ReasonRank(a) >= ReasonRank(b) ? a : b;
+}
+
 PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params) {
+  /* Gating: these outcomes are NOT counted in the stats. */
+  if (parse->commandType != CMD_INSERT)
+    return nullptr;
+  if (IsTransactionBlock())
+    return nullptr;
+  if (!pgducklake::enable_direct_insert)
+    return nullptr;
+
+  bool is_ducklake = false;
+  DirectInsertReason precond_reason = DI_R_OK;
+  InsertPreconditionResult precond = {};
+  if (!CheckInsertPreconditions(parse, &precond, &precond_reason, &is_ducklake)) {
+    if (!is_ducklake)
+      return nullptr; /* gating: non-ducklake target */
+    DirectInsertStatsBump(DI_PAT_UNMATCHED, precond_reason);
+    return nullptr;
+  }
+
+  /* precond.target_rel is now open; must close on every remaining path. */
+
   /* Try UNNEST pattern first (requires bound parameters) */
   DirectInsertContext context = {};
-  if (TryDetectDirectInsertPattern(parse, bound_params, &context)) {
+  DirectInsertReason unnest_reason = DI_R_UNSUPPORTED_INSERT_SHAPE;
+  if (TryMatchUnnest(parse, bound_params, &precond, &context, &unnest_reason)) {
+    relation_close(precond.target_rel, AccessShareLock);
     ereport(DEBUG1, (errmsg("DuckLake direct insert: optimization enabled for "
                             "INSERT UNNEST pattern, "
                             "table_id=%lu, expected_rows=%d",
                             (unsigned long)context.table_id, context.expected_row_count)));
+    DirectInsertStatsBump(DI_PAT_MATCHED_UNNEST, DI_R_OK);
     return CreateDirectInsertPlan(parse, &context);
   }
 
   /* Try VALUES pattern */
   ValuesInsertContext values_ctx = {};
-  if (TryDetectValuesInsertPattern(parse, &values_ctx)) {
+  DirectInsertReason values_reason = DI_R_UNSUPPORTED_INSERT_SHAPE;
+  if (TryMatchValues(parse, &precond, &values_ctx, &values_reason)) {
+    relation_close(precond.target_rel, AccessShareLock);
     ereport(DEBUG1, (errmsg("DuckLake direct insert: optimization enabled for "
                             "INSERT VALUES pattern, "
                             "table_id=%lu, rows=%d",
                             (unsigned long)values_ctx.table_id, values_ctx.num_rows)));
+    DirectInsertStatsBump(DI_PAT_MATCHED_VALUES, DI_R_OK);
     return CreateValuesInsertPlan(parse, &values_ctx);
   }
 
+  relation_close(precond.target_rel, AccessShareLock);
+  DirectInsertStatsBump(DI_PAT_UNMATCHED, PickMoreSpecific(unnest_reason, values_reason));
   return nullptr;
 }
 
@@ -469,25 +549,25 @@ PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params)
  * UNNEST pattern detection (existing, refactored to use shared preconditions)
  * ---------------------------------------------------------------- */
 
-static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_params, DirectInsertContext *context_out) {
-  InsertPreconditionResult precond = {};
-  if (!CheckInsertPreconditions(parse, &precond)) {
-    return false;
-  }
+/*
+ * Caller opens precond->target_rel and closes it after this call
+ * returns (on both success and failure paths).  This function must not
+ * release the lock.
+ */
+static bool TryMatchUnnest(Query *parse, ParamListInfo bound_params, const InsertPreconditionResult *precond,
+                           DirectInsertContext *context_out, DirectInsertReason *reason_out) {
+  *reason_out = DI_R_UNSUPPORTED_INSERT_SHAPE;
 
-  /* From here, precond.target_rel is open -- must close on all paths. */
-  Relation target_rel = precond.target_rel;
+  Relation target_rel = precond->target_rel;
 
   // Check 6: Must have SELECT query as source
   if (!parse->jointree || !parse->jointree->fromlist || list_length(parse->jointree->fromlist) != 1) {
-    relation_close(target_rel, AccessShareLock);
     return false;
   }
 
   // Extract the SELECT subquery
   Node *from_node = (Node *)linitial(parse->jointree->fromlist);
   if (!IsA(from_node, RangeTblRef)) {
-    relation_close(target_rel, AccessShareLock);
     return false;
   }
 
@@ -501,13 +581,12 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
   } else if (from_rte->rtekind == RTE_RELATION) {
     subquery = parse;
   } else {
-    relation_close(target_rel, AccessShareLock);
+    *reason_out = DI_R_INVALID_RTE;
     return false;
   }
 
   // Check 7: Target list must contain only UNNEST(Param) expressions
   if (!subquery->targetList) {
-    relation_close(target_rel, AccessShareLock);
     return false;
   }
 
@@ -527,7 +606,6 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
     int param_id;
     Oid param_type;
     if (!IsUnnestOfParam((Node *)tle->expr, &param_id, &param_type)) {
-      relation_close(target_rel, AccessShareLock);
       return false;
     }
 
@@ -539,7 +617,6 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
     // Get element type
     Oid element_type = get_element_type(param_type);
     if (!OidIsValid(element_type)) {
-      relation_close(target_rel, AccessShareLock);
       return false;
     }
     pinfo->element_type = element_type;
@@ -548,7 +625,6 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
 
     // Get actual column name from target relation
     if (attno >= tupdesc->natts) {
-      relation_close(target_rel, AccessShareLock);
       return false;
     }
     Form_pg_attribute attr = TupleDescAttr(tupdesc, attno);
@@ -556,8 +632,6 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
     target_col_types = lappend_oid(target_col_types, element_type);
     attno++;
   }
-
-  relation_close(target_rel, AccessShareLock);
 
   // Check 8: All parameters must be present and have matching array lengths
   int expected_row_count = 0;
@@ -571,6 +645,13 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
     return false;
   }
 
+  /* Skip direct insert when the batch would overflow
+   * data_inlining_row_limit; let DuckDB's path split/flush instead. */
+  if (precond->row_limit > 0 && (int64_t)expected_row_count > precond->row_limit) {
+    *reason_out = DI_R_GREATER_THAN_LIMIT;
+    return false;
+  }
+
   // Check 9: Inlined column types
   List *element_types = NIL;
   foreach (lc, param_infos) {
@@ -579,19 +660,21 @@ static bool TryDetectDirectInsertPattern(Query *parse, ParamListInfo bound_param
   }
 
   List *inlined_col_types = NIL;
-  if (!GetCachedInlinedColumnTypes(precond.table_id, precond.schema_version, element_types, &inlined_col_types)) {
+  if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, element_types, &inlined_col_types)) {
+    *reason_out = DI_R_COL_TYPES_UNSUPPORTED;
     return false;
   }
 
   // All checks passed, fill context
-  context_out->target_table_oid = precond.target_oid;
-  context_out->table_id = precond.table_id;
-  context_out->schema_version = precond.schema_version;
+  context_out->target_table_oid = precond->target_oid;
+  context_out->table_id = precond->table_id;
+  context_out->schema_version = precond->schema_version;
   context_out->param_infos = param_infos;
   context_out->expected_row_count = expected_row_count;
   context_out->target_col_names = target_col_names;
   context_out->target_col_types = inlined_col_types;
 
+  *reason_out = DI_R_OK;
   return true;
 }
 
@@ -705,17 +788,18 @@ static bool TryEvalConstExpr(Node *expr, Const **const_out) {
   return true;
 }
 
-static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *context_out) {
-  InsertPreconditionResult precond = {};
-  if (!CheckInsertPreconditions(parse, &precond)) {
-    return false;
-  }
+/*
+ * Caller opens precond->target_rel and closes it after this call
+ * returns.  This function does not touch the relation lock.
+ */
+static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond, ValuesInsertContext *context_out,
+                           DirectInsertReason *reason_out) {
+  *reason_out = DI_R_UNSUPPORTED_INSERT_SHAPE;
 
-  Relation target_rel = precond.target_rel;
+  Relation target_rel = precond->target_rel;
 
   /* VALUES-specific bail-outs */
   if (parse->returningList != NIL || parse->onConflict != NULL || parse->cteList != NIL) {
-    relation_close(target_rel, AccessShareLock);
     return false;
   }
 
@@ -741,7 +825,6 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
     /* Single-row VALUES: expressions are in parse->targetList directly.
      * Build a synthetic single-row values_lists from targetList exprs. */
     if (!parse->targetList) {
-      relation_close(target_rel, AccessShareLock);
       return false;
     }
 
@@ -758,7 +841,13 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
   }
   int num_rows = list_length(values_lists);
   if (num_rows == 0) {
-    relation_close(target_rel, AccessShareLock);
+    return false;
+  }
+
+  /* Batch size check -- skip direct insert when the INSERT would
+   * overflow data_inlining_row_limit in one shot. */
+  if (precond->row_limit > 0 && (int64_t)num_rows > precond->row_limit) {
+    *reason_out = DI_R_GREATER_THAN_LIMIT;
     return false;
   }
 
@@ -777,7 +866,6 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
       continue;
     }
     if (tle->resno < 1 || tle->resno > num_table_cols) {
-      relation_close(target_rel, AccessShareLock);
       pfree(col_map);
       return false;
     }
@@ -803,7 +891,6 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
         Node *expr = (Node *)list_nth(row_exprs, mapped);
         Const *c;
         if (!TryEvalConstExpr(expr, &c)) {
-          relation_close(target_rel, AccessShareLock);
           pfree(col_map);
           pfree(consts);
           return false;
@@ -825,17 +912,16 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
     target_col_names = lappend(target_col_names, pstrdup(NameStr(attr->attname)));
   }
 
-  relation_close(target_rel, AccessShareLock);
-
   List *inlined_col_types = NIL;
-  if (!GetCachedInlinedColumnTypes(precond.table_id, precond.schema_version, src_col_types, &inlined_col_types)) {
+  if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, src_col_types, &inlined_col_types)) {
     pfree(consts);
+    *reason_out = DI_R_COL_TYPES_UNSUPPORTED;
     return false;
   }
 
-  context_out->target_table_oid = precond.target_oid;
-  context_out->table_id = precond.table_id;
-  context_out->schema_version = precond.schema_version;
+  context_out->target_table_oid = precond->target_oid;
+  context_out->table_id = precond->table_id;
+  context_out->schema_version = precond->schema_version;
   context_out->num_rows = num_rows;
   context_out->num_cols = num_table_cols;
   context_out->target_col_names = target_col_names;
@@ -843,6 +929,7 @@ static bool TryDetectValuesInsertPattern(Query *parse, ValuesInsertContext *cont
   context_out->src_col_types = src_col_types;
   context_out->consts = consts;
 
+  *reason_out = DI_R_OK;
   return true;
 }
 
@@ -1072,13 +1159,10 @@ static void DirectInsert_BeginCustomScan(CustomScanState *node, EState *estate, 
                    (unsigned long long)state->schema_version);
   state->inlined_table_name = buf.data;
 
-  state->begin_snapshot = pgducklake::GetNextSnapshotId();
-  state->next_row_id = pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
-
-  ereport(DEBUG1, (errmsg("DuckLake direct insert: initialized scan state, table=%s, "
-                          "predicted_snapshot=%llu, next_row_id=%lu",
-                          state->inlined_table_name, (unsigned long long)state->begin_snapshot,
-                          (unsigned long)state->next_row_id)));
+  /* begin_snapshot / next_row_id are assigned inside the retry loop in
+   * DirectInsert_ExecCustomScan -- under concurrent direct inserts the
+   * snapshot_id may already be taken and we need to re-read it after a
+   * unique_violation rollback. */
 }
 
 static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
@@ -1088,6 +1172,15 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
     return NULL;
   }
 
+  state->begin_snapshot = pgducklake::GetNextSnapshotId();
+  state->next_row_id = pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
+  state->rows_inserted = 0;
+
+  ereport(DEBUG1, (errmsg("DuckLake direct insert: exec, table=%s, "
+                          "predicted_snapshot=%llu, next_row_id=%lu",
+                          state->inlined_table_name, (unsigned long long)state->begin_snapshot,
+                          (unsigned long)state->next_row_id)));
+
   if (state->mode == DIRECT_INSERT_UNNEST) {
     DirectInsertIntoInlinedTable(state);
   } else {
@@ -1095,9 +1188,17 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
   }
 
   state->finished = true;
-
   node->ss.ps.state->es_processed = state->rows_inserted;
 
+  /* TODO(#186 follow-up): unique-violation on ducklake_snapshot.snapshot_id
+   * under concurrent direct inserts should bump DI_R_RETRY and retry.
+   * A straightforward BeginInternalSubTransaction wrapper around the
+   * snapshot commit doesn't work with the inner SPI-based functions
+   * (snapshot resowner mismatch on subtx release).  A real retry will
+   * need either (a) pre-reserve snapshot_id before writing any rows,
+   * or (b) restructure CreateSnapshotForDirectInsert into separate
+   * reserve/finalize phases.  For now, concurrent conflicts ERROR as
+   * they did pre-#186. */
   pgducklake::SkipSnapshotSyncGuard sync_guard;
   pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted);
 
