@@ -854,22 +854,61 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
   TupleDesc tupdesc = RelationGetDescr(target_rel);
   int num_table_cols = tupdesc->natts;
 
-  /* Build column map from targetList: col_map[table_attr] = values_list index, or -1 */
-  int *col_map = (int *)palloc(sizeof(int) * num_table_cols);
-  memset(col_map, -1, sizeof(int) * num_table_cols);
+  /* For each table column, choose one source:
+   *   values_col_idx[col] >= 0  -> values_lists[row][values_col_idx[col]]
+   *   target_expr[col] != NULL  -> evaluate this expression once per row
+   *                                (default / explicit constant; same value
+   *                                across rows so eval_const_expressions
+   *                                can fold it)
+   *   neither set               -> typed NULL filler
+   *
+   * Multi-row VALUES distinguishes the two by inspecting each targetList
+   * entry: a Var pointing at the RTE_VALUES is per-row, anything else
+   * (default expr, plain Const) is row-independent.
+   *
+   * Single-row VALUES inlines the source expressions directly into the
+   * targetList, with one entry per non-junk TargetEntry; the synthetic
+   * values_lists we built mirrors that order. */
+  int *values_col_idx = (int *)palloc(sizeof(int) * num_table_cols);
+  Node **target_expr = (Node **)palloc0(sizeof(Node *) * num_table_cols);
+  for (int i = 0; i < num_table_cols; i++)
+    values_col_idx[i] = -1;
 
-  int val_col = 0;
+  int values_rte_varno = 0;
+  if (values_rte) {
+    int idx = 1;
+    ListCell *rtlc;
+    foreach (rtlc, parse->rtable) {
+      if (lfirst(rtlc) == values_rte) {
+        values_rte_varno = idx;
+        break;
+      }
+      idx++;
+    }
+  }
+
+  int single_row_seq = 0;
   ListCell *lc;
   foreach (lc, parse->targetList) {
     TargetEntry *tle = (TargetEntry *)lfirst(lc);
-    if (tle->resjunk) {
+    if (tle->resjunk)
       continue;
-    }
     if (tle->resno < 1 || tle->resno > num_table_cols) {
-      pfree(col_map);
+      pfree(values_col_idx);
+      pfree(target_expr);
       return false;
     }
-    col_map[tle->resno - 1] = val_col++;
+    int col = tle->resno - 1;
+    if (values_rte) {
+      Var *v = IsA(tle->expr, Var) ? (Var *)tle->expr : NULL;
+      if (v && v->varno == values_rte_varno) {
+        values_col_idx[col] = v->varattno - 1;
+      } else {
+        target_expr[col] = (Node *)tle->expr;
+      }
+    } else {
+      values_col_idx[col] = single_row_seq++;
+    }
   }
 
   /* Evaluate all expressions to Const nodes */
@@ -881,17 +920,28 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
 
     for (int col = 0; col < num_table_cols; col++) {
       int flat = row_idx * num_table_cols + col;
-      int mapped = col_map[col];
-      if (mapped < 0) {
-        /* Unspecified column: create a typed NULL Const */
+      Node *expr = NULL;
+      if (values_col_idx[col] >= 0) {
+        if (values_col_idx[col] >= list_length(row_exprs)) {
+          pfree(values_col_idx);
+          pfree(target_expr);
+          pfree(consts);
+          return false;
+        }
+        expr = (Node *)list_nth(row_exprs, values_col_idx[col]);
+      } else if (target_expr[col]) {
+        expr = target_expr[col];
+      }
+      if (expr == NULL) {
+        /* Unspecified column with no default: typed NULL Const. */
         Form_pg_attribute attr = TupleDescAttr(tupdesc, col);
         consts[flat] = makeConst(attr->atttypid, attr->atttypmod, attr->attcollation, attr->attlen, (Datum)0,
                                  true /* isnull */, attr->attbyval);
       } else {
-        Node *expr = (Node *)list_nth(row_exprs, mapped);
         Const *c;
         if (!TryEvalConstExpr(expr, &c)) {
-          pfree(col_map);
+          pfree(values_col_idx);
+          pfree(target_expr);
           pfree(consts);
           return false;
         }
@@ -901,7 +951,8 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
     row_idx++;
   }
 
-  pfree(col_map);
+  pfree(values_col_idx);
+  pfree(target_expr);
 
   /* Collect user-facing column types + names from TupleDesc */
   List *src_col_types = NIL;

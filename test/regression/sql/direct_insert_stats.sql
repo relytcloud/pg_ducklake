@@ -35,6 +35,28 @@ DEALLOCATE dis_unnest;
 SELECT * FROM direct_insert_stats_nonzero;
 
 -- ------------------------------------------------------------------
+-- INSERT INTO t (col-list) VALUES (...)  -- column-list shapes all
+-- match matched_values, with defaults honored and unspecified columns
+-- filled with typed NULL.  Multi-row partial column list with DEFAULT
+-- exercises the values-vs-default discrimination in the planner.
+-- ------------------------------------------------------------------
+CREATE TABLE dis_cols (a INT, b TEXT DEFAULT 'foo', c INT) USING ducklake;
+INSERT INTO dis_cols VALUES (0, 'init', 0);  -- warm up inlined table
+
+SELECT ducklake.reset_direct_insert_stats();
+
+INSERT INTO dis_cols (a, b, c) VALUES (1, 'x', 2);              -- full
+INSERT INTO dis_cols (a, c) VALUES (10, 20);                    -- partial, default for b
+INSERT INTO dis_cols (b) VALUES ('z');                          -- single col
+INSERT INTO dis_cols (a, c) VALUES (30, 31), (32, 33);          -- multi-row partial + default
+INSERT INTO dis_cols DEFAULT VALUES;                            -- all defaults
+
+SELECT * FROM direct_insert_stats_nonzero;
+SELECT a, b, c FROM dis_cols ORDER BY a NULLS FIRST, c NULLS FIRST;
+
+DROP TABLE dis_cols;
+
+-- ------------------------------------------------------------------
 -- Gating: GUC off, tx block, non-ducklake -- NO counters bumped
 -- ------------------------------------------------------------------
 SELECT ducklake.reset_direct_insert_stats();
