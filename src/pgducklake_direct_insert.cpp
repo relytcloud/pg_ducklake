@@ -43,6 +43,7 @@ extern "C" {
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
@@ -139,9 +140,9 @@ struct DirectInsertScanState {
   /* VALUES-specific */
   int values_num_rows;
   int values_num_cols;
-  Datum *values_data;    // flat [row * num_cols + col]
-  bool *values_nulls;    // flat [row * num_cols + col]
-  Oid *values_src_types; // per-column source OID
+  Node **values_exprs;        // flat [row * num_cols + col] expression nodes
+  ExprState **values_estates; // flat [row * num_cols + col]; built in Begin
+  Oid *values_src_types;      // per-column source OID
 
   bool finished;
   int64_t rows_inserted;
@@ -189,7 +190,12 @@ struct ValuesInsertContext {
   List *target_col_names;  // List of char*
   List *inlined_col_types; // List of Oid
   List *src_col_types;     // List of Oid (user-facing PG types)
-  Const **consts;          // flat [num_rows * num_cols] Const nodes
+  /* One expression per cell.  Always non-NULL: unspecified columns are
+   * filled with a typed NULL Const so every cell goes through
+   * ExecInitExpr at executor start.  Const-foldable subexpressions are
+   * already collapsed by eval_const_expressions; STABLE/PARAM-EXTERN-
+   * free expressions stay as FuncExpr and are evaluated per row. */
+  Node **exprs;
 };
 
 /* Shared precondition result for INSERT pattern detection */
@@ -774,18 +780,69 @@ static bool ValidateArrayLengths(ParamListInfo bound_params, List *param_ids, in
  * ---------------------------------------------------------------- */
 
 /*
- * Try to fold an expression to a constant.  Uses PG's eval_const_expressions
- * to handle all immutable coercions (RelabelType, CoerceViaIO, FuncExpr with
- * Const args, etc.).  Returns false if the expression contains anything
- * non-constant (Param, Var, volatile function, SetToDefault, subquery).
+ * Reject expression trees that we can't safely evaluate at executor
+ * start without access to a tuple stream, an outer query, or an SPI
+ * context.  Anything else (Const, RelabelType wrapping a Const, STABLE
+ * function on Const args, etc.) is fine -- ExecInitExpr handles it.
+ *
+ * Reasons to reject:
+ *   Var          - needs a per-row tuple slot
+ *   Param        - bound parameter or correlated-outer reference;
+ *                  conservatively reject for now (a future change can
+ *                  allow PARAM_EXTERN for INSERT INTO t VALUES ($1))
+ *   Aggref / GroupingFunc / WindowFunc - aggregate context
+ *   SubLink / SubPlan / AlternativeSubPlan - subquery
+ *   CurrentOfExpr - WHERE CURRENT OF cursor
+ *   VOLATILE function (FuncExpr/OpExpr/DistinctExpr/NullIfExpr) -
+ *                  output may differ across calls and PG's standard
+ *                  executor evaluates it per-row; we still defer eval
+ *                  to exec time, but rejecting volatile keeps direct
+ *                  insert observably equivalent to the DuckDB path.
  */
-static bool TryEvalConstExpr(Node *expr, Const **const_out) {
-  Node *folded = eval_const_expressions(NULL, expr);
-  if (!IsA(folded, Const)) {
+static bool ValuesExprUnsafeWalker(Node *node, void *unused) {
+  if (node == NULL)
     return false;
+
+  switch (nodeTag(node)) {
+  case T_Var:
+  case T_Param:
+  case T_Aggref:
+  case T_GroupingFunc:
+  case T_WindowFunc:
+  case T_SubLink:
+  case T_SubPlan:
+  case T_AlternativeSubPlan:
+  case T_CurrentOfExpr:
+    return true;
+  default:
+    break;
   }
-  *const_out = (Const *)folded;
-  return true;
+
+  if (IsA(node, FuncExpr)) {
+    FuncExpr *fe = (FuncExpr *)node;
+    if (func_volatile(fe->funcid) == PROVOLATILE_VOLATILE)
+      return true;
+  } else if (IsA(node, OpExpr) || IsA(node, DistinctExpr) || IsA(node, NullIfExpr)) {
+    /* OpExpr, DistinctExpr, NullIfExpr share the same struct prefix;
+     * opfuncid is the underlying function.  func_volatile handles
+     * InvalidOid by returning PROVOLATILE_VOLATILE, which is a safer
+     * default than treating an unresolved op as immutable. */
+    OpExpr *oe = (OpExpr *)node;
+    if (!OidIsValid(oe->opfuncid))
+      return true;
+    if (func_volatile(oe->opfuncid) == PROVOLATILE_VOLATILE)
+      return true;
+  }
+
+#if PG_VERSION_NUM >= 160000
+  return expression_tree_walker(node, ValuesExprUnsafeWalker, unused);
+#else
+  return expression_tree_walker(node, (bool (*)())((void *)ValuesExprUnsafeWalker), unused);
+#endif
+}
+
+static bool IsAcceptableValuesExpr(Node *expr) {
+  return !ValuesExprUnsafeWalker(expr, NULL);
 }
 
 /*
@@ -807,12 +864,43 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
    * multi-row VALUES but inlines single-row VALUES directly into the
    * targetList.  Handle both cases. */
   RangeTblEntry *values_rte = NULL;
-  ListCell *rtlc;
-  foreach (rtlc, parse->rtable) {
-    RangeTblEntry *rte = (RangeTblEntry *)lfirst(rtlc);
-    if (rte->rtekind == RTE_VALUES) {
-      values_rte = rte;
-      break;
+  int values_rte_index = 0;
+  {
+    ListCell *rtlc;
+    int idx = 1;
+    foreach (rtlc, parse->rtable) {
+      RangeTblEntry *rte = (RangeTblEntry *)lfirst(rtlc);
+      if (rte->rtekind == RTE_VALUES) {
+        values_rte = rte;
+        values_rte_index = idx;
+        break;
+      }
+      idx++;
+    }
+  }
+
+  /* Guard: ensure the parse tree is shaped like a pure VALUES INSERT.
+   * A WHERE clause or a FROM clause that isn't the values_rte means
+   * the user wrote INSERT ... SELECT FROM table; we cannot direct-
+   * insert that because the SELECT may produce a different number of
+   * rows than the targetList suggests.  Without this guard, deferred
+   * cell evaluation would silently accept INSERT ... SELECT NULL FROM
+   * t WHERE ... (no Var in the targetList) and produce wrong row
+   * counts. */
+  if (parse->jointree && parse->jointree->quals != NULL) {
+    return false;
+  }
+  {
+    List *fl = parse->jointree ? parse->jointree->fromlist : NIL;
+    if (values_rte == NULL) {
+      if (fl != NIL)
+        return false;
+    } else {
+      if (list_length(fl) != 1)
+        return false;
+      Node *fn = (Node *)linitial(fl);
+      if (!IsA(fn, RangeTblRef) || ((RangeTblRef *)fn)->rtindex != values_rte_index)
+        return false;
     }
   }
 
@@ -911,8 +999,10 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
     }
   }
 
-  /* Evaluate all expressions to Const nodes */
-  Const **consts = (Const **)palloc(sizeof(Const *) * num_rows * num_table_cols);
+  /* Resolve every cell to a Node*.  eval_const_expressions folds what
+   * it can (IMMUTABLE only); everything else flows through to
+   * ExecInitExpr at executor start. */
+  Node **exprs = (Node **)palloc(sizeof(Node *) * num_rows * num_table_cols);
 
   int row_idx = 0;
   foreach (lc, values_lists) {
@@ -925,7 +1015,7 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
         if (values_col_idx[col] >= list_length(row_exprs)) {
           pfree(values_col_idx);
           pfree(target_expr);
-          pfree(consts);
+          pfree(exprs);
           return false;
         }
         expr = (Node *)list_nth(row_exprs, values_col_idx[col]);
@@ -935,18 +1025,18 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
       if (expr == NULL) {
         /* Unspecified column with no default: typed NULL Const. */
         Form_pg_attribute attr = TupleDescAttr(tupdesc, col);
-        consts[flat] = makeConst(attr->atttypid, attr->atttypmod, attr->attcollation, attr->attlen, (Datum)0,
+        expr = (Node *)makeConst(attr->atttypid, attr->atttypmod, attr->attcollation, attr->attlen, (Datum)0,
                                  true /* isnull */, attr->attbyval);
       } else {
-        Const *c;
-        if (!TryEvalConstExpr(expr, &c)) {
+        expr = eval_const_expressions(NULL, expr);
+        if (!IsAcceptableValuesExpr(expr)) {
           pfree(values_col_idx);
           pfree(target_expr);
-          pfree(consts);
+          pfree(exprs);
           return false;
         }
-        consts[flat] = c;
       }
+      exprs[flat] = expr;
     }
     row_idx++;
   }
@@ -965,7 +1055,7 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
 
   List *inlined_col_types = NIL;
   if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, src_col_types, &inlined_col_types)) {
-    pfree(consts);
+    pfree(exprs);
     *reason_out = DI_R_COL_TYPES_UNSUPPORTED;
     return false;
   }
@@ -978,7 +1068,7 @@ static bool TryMatchValues(Query *parse, const InsertPreconditionResult *precond
   context_out->target_col_names = target_col_names;
   context_out->inlined_col_types = inlined_col_types;
   context_out->src_col_types = src_col_types;
-  context_out->consts = consts;
+  context_out->exprs = exprs;
 
   *reason_out = DI_R_OK;
   return true;
@@ -1087,10 +1177,12 @@ static PlannedStmt *CreateValuesInsertPlan(Query *parse, ValuesInsertContext *co
     custom_private = lappend(custom_private, makeInteger((int)lfirst_oid(lc)));
   }
 
-  /* Const nodes: num_rows * num_cols (serializable Node*) */
+  /* Cell expressions: num_rows * num_cols Node*.  Const cells are still
+   * Const; STABLE-coercion cells are FuncExpr/RelabelType/etc.  PG's
+   * out/read funcs handle either. */
   int total = context->num_rows * context->num_cols;
   for (int i = 0; i < total; i++) {
-    custom_private = lappend(custom_private, context->consts[i]);
+    custom_private = lappend(custom_private, context->exprs[i]);
   }
 
   return MakeDirectInsertPlannedStmt(parse, custom_private);
@@ -1173,14 +1265,14 @@ static Node *DirectInsert_CreateCustomScanState(CustomScan *cscan) {
       state->values_src_types[i] = (Oid)intVal(NextPrivate(priv, &lc));
     }
 
-    /* Decode Const nodes -> flat Datum/null arrays */
+    /* Decode cell expressions; ExprStates are built lazily in
+     * DirectInsert_BeginCustomScan once the executor's PlanState is
+     * available. */
     int total = state->values_num_rows * state->values_num_cols;
-    state->values_data = (Datum *)palloc(sizeof(Datum) * total);
-    state->values_nulls = (bool *)palloc(sizeof(bool) * total);
+    state->values_exprs = (Node **)palloc(sizeof(Node *) * total);
+    state->values_estates = NULL;
     for (int i = 0; i < total; i++) {
-      Const *c = (Const *)NextPrivate(priv, &lc);
-      state->values_data[i] = c->constvalue;
-      state->values_nulls[i] = c->constisnull;
+      state->values_exprs[i] = NextPrivate(priv, &lc);
     }
   }
 
@@ -1209,6 +1301,19 @@ static void DirectInsert_BeginCustomScan(CustomScanState *node, EState *estate, 
   appendStringInfo(&buf, "ducklake.ducklake_inlined_data_%llu_%llu", (unsigned long long)state->table_id,
                    (unsigned long long)state->schema_version);
   state->inlined_table_name = buf.data;
+
+  if (state->mode == DIRECT_INSERT_VALUES) {
+    /* Build one ExprState per cell.  Cheap for Const cells (just wraps
+     * the constvalue), and necessary for STABLE coercions / other
+     * non-Const expressions that survived eval_const_expressions. */
+    int total = state->values_num_rows * state->values_num_cols;
+    state->values_estates = (ExprState **)palloc(sizeof(ExprState *) * total);
+    MemoryContext old_ctx = MemoryContextSwitchTo(estate->es_query_cxt);
+    for (int i = 0; i < total; i++) {
+      state->values_estates[i] = ExecInitExpr((Expr *)state->values_exprs[i], &node->ss.ps);
+    }
+    MemoryContextSwitchTo(old_ctx);
+  }
 
   /* begin_snapshot / next_row_id are assigned inside the retry loop in
    * DirectInsert_ExecCustomScan -- under concurrent direct inserts the
@@ -1457,6 +1562,7 @@ struct ValuesColumnConvInfo {
 static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
   int num_rows = state->values_num_rows;
   int num_cols = state->values_num_cols;
+  ExprContext *econtext = state->css.ss.ps.ps_ExprContext;
 
   /* Open inlined data table by name */
   char relname[NAMEDATALEN];
@@ -1552,16 +1658,19 @@ static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
       int flat = row * num_cols + col;
       int dst = col + INLINED_SYSTEM_COLS;
 
-      if (state->values_nulls[flat]) {
+      bool isnull;
+      Datum d = ExecEvalExprSwitchContext(state->values_estates[flat], econtext, &isnull);
+
+      if (isnull) {
         sv[dst] = (Datum)0;
         sn[dst] = true;
       } else if (conv[col].needs_text_conv) {
-        char *str = OutputFunctionCall(&conv[col].typoutput_finfo, state->values_data[flat]);
+        char *str = OutputFunctionCall(&conv[col].typoutput_finfo, d);
         sv[dst] = CStringGetTextDatum(str);
         sn[dst] = false;
         pfree(str);
       } else {
-        sv[dst] = state->values_data[flat];
+        sv[dst] = d;
         sn[dst] = false;
       }
     }
@@ -1575,6 +1684,7 @@ static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
         ExecClearTuple(slots[i]);
       }
       nslots = 0;
+      ResetExprContext(econtext);
     }
   }
 
