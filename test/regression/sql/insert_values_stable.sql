@@ -58,16 +58,15 @@ SELECT n,
 FROM ivs WHERE n IS NOT NULL ORDER BY n;
 
 -- ============================================================
--- Test 5: VOLATILE function inside VALUES is rejected
--- (clock_timestamp is VOLATILE; pg_duckdb does not implement it,
--- so we just check the planner counter -- the fall-back path
--- itself errors which is fine for the assertion that we did NOT
--- direct-insert.)
+-- Test 5: VOLATILE function inside VALUES is rejected.  random()
+-- is VOLATILE; the planner falls back to the pg_duckdb path, which
+-- is observable as an unmatched counter bump.  We use EXPLAIN so
+-- the test does not depend on the fall-back path executing
+-- successfully (and on it not interacting with subsequent tests'
+-- ducklake metadata state).
 -- ============================================================
 SELECT ducklake.reset_direct_insert_stats();
-\set ON_ERROR_STOP off
-INSERT INTO ivs VALUES (clock_timestamp()::timestamp, NULL, 99);
-\set ON_ERROR_STOP on
+EXPLAIN INSERT INTO ivs VALUES (NULL, NULL, (random() * 100)::int);
 SELECT pattern, reason, count
     FROM ducklake.direct_insert_stats() WHERE count > 0
     ORDER BY pattern, reason;
@@ -75,16 +74,14 @@ SELECT pattern, reason, count
 -- ============================================================
 -- Test 6: INSERT ... SELECT FROM <table> with constant target list
 -- must NOT direct-insert (FROM clause means N rows, not 1).  Before
--- the guard we added in this PR, the deferred-eval walker accepted
--- the constant target list and would have inserted exactly one row.
+-- the guard added in this PR, the deferred-eval walker accepted the
+-- constant target list and would have inserted exactly one row.
+-- Same EXPLAIN-only verification.
 -- ============================================================
 CREATE TABLE ivs_src (i int);
-INSERT INTO ivs_src VALUES (1), (2), (3);
 
 SELECT ducklake.reset_direct_insert_stats();
-\set ON_ERROR_STOP off
-INSERT INTO ivs SELECT NULL, NULL, 100 FROM ivs_src;
-\set ON_ERROR_STOP on
+EXPLAIN INSERT INTO ivs SELECT NULL::timestamp, NULL::date, 200 FROM ivs_src;
 SELECT pattern, reason, count
     FROM ducklake.direct_insert_stats() WHERE count > 0
     ORDER BY pattern, reason;
