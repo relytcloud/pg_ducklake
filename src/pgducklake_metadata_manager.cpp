@@ -42,6 +42,8 @@ extern "C" {
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "executor/spi.h"
+#include "miscadmin.h"
+#include "storage/lock.h"
 #include "utils/elog.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
@@ -770,31 +772,43 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
   return next_row_id;
 }
 
+/* File-local helper: take the per-table advisory lock used by
+ * DirectInsertReservation.  Bypasses SPI / the planner because pg_duckdb's
+ * planner hook intercepts inner SELECTs in this execution context and
+ * silently no-ops `SELECT pg_advisory_xact_lock(...)`, which would defeat
+ * the serialization.  Direct LockAcquire on LOCKTAG_ADVISORY produces the
+ * same xact-scoped lock that pg_advisory_xact_lock(int4, int4) does, but
+ * cannot be hijacked. */
+static void AcquireDirectInsertTableLock(uint64_t table_id) {
+  LOCKTAG tag;
+  /* Match pg_advisory_xact_lock(int4, int4) semantics: 4-tuple is
+   * (MyDatabaseId, key1, key2, 2) where the trailing 2 means 2-key form. */
+  SET_LOCKTAG_ADVISORY(tag, MyDatabaseId, (uint32)DUCKLAKE_DIRECT_INSERT_LOCK_NS, (uint32)table_id, 2);
+  (void)LockAcquire(&tag, ExclusiveLock, false, false);
+}
+
 /* File-local helper for DirectInsertReservation: reserve the row_id range
  * under the per-table advisory lock.  Returns row_id_start. */
 static uint64_t ReserveRowIdRangeImpl(uint64_t table_id, uint64_t nrows) {
   int ret;
   uint64_t row_id_start = 0;
 
+  /* Acquire the lock BEFORE SPI_connect so it cannot be intercepted by
+   * any inner-query hook.  Auto-released at the surrounding txn end. */
+  AcquireDirectInsertTableLock(table_id);
+
   if ((ret = SPI_connect()) < 0) {
     elog(ERROR, "SPI_connect failed: %d", ret);
   }
 
-  /* Per-table advisory lock; auto-released at xact end.  Serializes
-   * concurrent direct inserts on the same table so the read+update of
-   * ducklake_table_stats below is atomic without needing a UNIQUE on
-   * table_id. */
-  StringInfoData lock_query;
-  initStringInfo(&lock_query);
-  appendStringInfo(&lock_query, "SELECT pg_advisory_xact_lock(%d::int4, %lld::int4)",
-                   (int)DUCKLAKE_DIRECT_INSERT_LOCK_NS, (long long)table_id);
-  ret = SPI_execute(lock_query.data, false, 0);
-  if (ret != SPI_OK_SELECT) {
-    SPI_finish();
-    elog(ERROR, "DirectInsertReservation: advisory lock acquire failed: %d", ret);
-  }
+  /* Push a fresh MVCC snapshot AFTER acquiring the lock.  Without this,
+   * SPI inherits the caller's outer-statement snapshot, which was taken
+   * before the lock was held and would still hide changes a peer
+   * direct-insert committed while we were blocked.  GetTransactionSnapshot
+   * advances to a fresh statement snapshot under READ COMMITTED. */
+  PushActiveSnapshot(GetTransactionSnapshot());
 
-  /* Read current next_row_id under the lock. */
+  /* Read current next_row_id under the lock + fresh snapshot. */
   StringInfoData read_query;
   initStringInfo(&read_query);
   appendStringInfo(&read_query, "SELECT next_row_id FROM ducklake.ducklake_table_stats WHERE table_id = %llu",
@@ -843,6 +857,7 @@ static uint64_t ReserveRowIdRangeImpl(uint64_t table_id, uint64_t nrows) {
     /* row_id_start stays 0 -- the freshly inserted stats row started at 0. */
   }
 
+  PopActiveSnapshot();
   SPI_finish();
   return row_id_start;
 }
@@ -913,11 +928,18 @@ static uint64_t ReserveSnapshotIdImpl(DirectInsertPattern pattern_for_stats) {
       elog(ERROR, "SPI_connect failed: %d", ret);
     }
 
+    /* Push a fresh statement snapshot so the SELECT subqueries inside the
+     * INSERT see committed peer snapshots.  Without this the outer
+     * transaction's snapshot would hide concurrent commits and we would
+     * loop forever on PK conflicts under contention. */
+    PushActiveSnapshot(GetTransactionSnapshot());
+
     ret = SPI_execute(insert_query, false, 0);
     /* PG returns SPI_OK_INSERT_RETURNING for INSERT ... RETURNING even
      * when ON CONFLICT DO NOTHING resulted in zero rows inserted; the
      * conflict case is signalled by SPI_processed == 0. */
     if (ret != SPI_OK_INSERT_RETURNING) {
+      PopActiveSnapshot();
       SPI_finish();
       elog(ERROR, "DirectInsertReservation: snapshot INSERT failed: %d", ret);
     }
@@ -930,11 +952,13 @@ static uint64_t ReserveSnapshotIdImpl(DirectInsertPattern pattern_for_stats) {
       if (!isnull) {
         snapshot_id = DatumGetInt64(d);
       }
+      PopActiveSnapshot();
       SPI_finish();
       return snapshot_id;
     }
 
     /* Lost the PK race: ON CONFLICT DO NOTHING swallowed our row. */
+    PopActiveSnapshot();
     SPI_finish();
     DirectInsertStatsBump(pattern_for_stats, DI_R_RETRY);
 
