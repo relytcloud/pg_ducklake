@@ -727,8 +727,8 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
   }
 
   /* Read next_row_id from ducklake_table_stats (O(1) index lookup).
-   * CreateSnapshotForDirectInsert keeps this row up to date after
-   * each direct insert.  If no row exists (first insert into this
+   * The COPY FROM commit path keeps this row up to date after
+   * each insert.  If no row exists (first insert into this
    * table), fall back to MAX(row_id) + 1 from the inlined data table. */
   StringInfoData query;
   initStringInfo(&query);
@@ -770,6 +770,83 @@ uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version) {
   return next_row_id;
 }
 
+/* File-local helper for DirectInsertReservation: reserve the row_id range
+ * under the per-table advisory lock.  Returns row_id_start. */
+static uint64_t ReserveRowIdRangeImpl(uint64_t table_id, uint64_t nrows) {
+  int ret;
+  uint64_t row_id_start = 0;
+
+  if ((ret = SPI_connect()) < 0) {
+    elog(ERROR, "SPI_connect failed: %d", ret);
+  }
+
+  /* Per-table advisory lock; auto-released at xact end.  Serializes
+   * concurrent direct inserts on the same table so the read+update of
+   * ducklake_table_stats below is atomic without needing a UNIQUE on
+   * table_id. */
+  StringInfoData lock_query;
+  initStringInfo(&lock_query);
+  appendStringInfo(&lock_query, "SELECT pg_advisory_xact_lock(%d::int4, %lld::int4)",
+                   (int)DUCKLAKE_DIRECT_INSERT_LOCK_NS, (long long)table_id);
+  ret = SPI_execute(lock_query.data, false, 0);
+  if (ret != SPI_OK_SELECT) {
+    SPI_finish();
+    elog(ERROR, "DirectInsertReservation: advisory lock acquire failed: %d", ret);
+  }
+
+  /* Read current next_row_id under the lock. */
+  StringInfoData read_query;
+  initStringInfo(&read_query);
+  appendStringInfo(&read_query, "SELECT next_row_id FROM ducklake.ducklake_table_stats WHERE table_id = %llu",
+                   (unsigned long long)table_id);
+  ret = SPI_execute(read_query.data, true, 1);
+  if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+    HeapTuple tuple = SPI_tuptable->vals[0];
+    bool isnull;
+    Datum d = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+    if (!isnull) {
+      row_id_start = DatumGetInt64(d);
+    }
+  }
+
+  /* Try UPDATE first; on 0 rows this is the first direct insert into
+   * this table and we INSERT the stats row instead.  The advisory lock
+   * makes this read-then-update sequence atomic against concurrent
+   * direct inserts. */
+  StringInfoData stats_update;
+  initStringInfo(&stats_update);
+  appendStringInfo(&stats_update,
+                   "UPDATE ducklake.ducklake_table_stats "
+                   "SET next_row_id  = next_row_id  + %llu, "
+                   "    record_count = record_count + %llu "
+                   "WHERE table_id = %llu",
+                   (unsigned long long)nrows, (unsigned long long)nrows, (unsigned long long)table_id);
+  ret = SPI_execute(stats_update.data, false, 0);
+  if (ret != SPI_OK_UPDATE) {
+    SPI_finish();
+    elog(ERROR, "DirectInsertReservation: stats UPDATE failed: %d", ret);
+  }
+
+  if (SPI_processed == 0) {
+    StringInfoData stats_insert;
+    initStringInfo(&stats_insert);
+    appendStringInfo(&stats_insert,
+                     "INSERT INTO ducklake.ducklake_table_stats "
+                     "(table_id, record_count, next_row_id, file_size_bytes) "
+                     "VALUES (%llu, %llu, %llu, 0)",
+                     (unsigned long long)table_id, (unsigned long long)nrows, (unsigned long long)nrows);
+    ret = SPI_execute(stats_insert.data, false, 0);
+    if (ret != SPI_OK_INSERT) {
+      SPI_finish();
+      elog(ERROR, "DirectInsertReservation: stats INSERT failed: %d", ret);
+    }
+    /* row_id_start stays 0 -- the freshly inserted stats row started at 0. */
+  }
+
+  SPI_finish();
+  return row_id_start;
+}
+
 uint64_t GetNextSnapshotId() {
   int ret;
   uint64_t next_snapshot_id = 1; // Default to 1 if no snapshots exist yet
@@ -796,13 +873,111 @@ uint64_t GetNextSnapshotId() {
   return next_snapshot_id;
 }
 
-void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted) {
+/* File-local helper for DirectInsertReservation: reserve a fresh
+ * snapshot_id via INSERT ... ON CONFLICT DO NOTHING RETURNING with a
+ * bounded retry loop.  `max_retries` is the count of *re-attempts* after
+ * the first try, so 0 means single attempt with no retry.
+ *
+ * The LEFT JOIN against `(SELECT 1)` guarantees the outer SELECT always
+ * produces exactly one row even when ducklake_snapshot is empty (in which
+ * case latest.* are NULL and the COALESCE defaults take over).  All four
+ * reads of `latest` come from the same MVCC instant inside the INSERT, so
+ * schema_version / next_catalog_id / next_file_id stay consistent with
+ * the chosen snapshot_id. */
+static uint64_t ReserveSnapshotIdImpl(DirectInsertPattern pattern_for_stats) {
+  const int max_retries = direct_insert_max_retries;
+
+  static const char *insert_query = "INSERT INTO ducklake.ducklake_snapshot "
+                                    "(snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id) "
+                                    "SELECT COALESCE(latest.snapshot_id,     0) + 1, "
+                                    "       NOW(), "
+                                    "       COALESCE(latest.schema_version,  0), "
+                                    "       COALESCE(latest.next_catalog_id, 1), "
+                                    "       COALESCE(latest.next_file_id,    0) "
+                                    "  FROM (SELECT 1) AS d "
+                                    "  LEFT JOIN ("
+                                    "    SELECT snapshot_id, schema_version, next_catalog_id, next_file_id "
+                                    "      FROM ducklake.ducklake_snapshot "
+                                    "     ORDER BY snapshot_id DESC LIMIT 1"
+                                    "  ) latest ON true "
+                                    "ON CONFLICT (snapshot_id) DO NOTHING "
+                                    "RETURNING snapshot_id";
+
+  uint64_t base_wait_us = 100UL * 1000UL; /* 100 ms */
+
+  /* Loop covers max_retries + 1 attempts: the initial try plus
+   * max_retries re-attempts. */
+  for (int attempt = 0; attempt <= max_retries; attempt++) {
+    int ret;
+    if ((ret = SPI_connect()) < 0) {
+      elog(ERROR, "SPI_connect failed: %d", ret);
+    }
+
+    ret = SPI_execute(insert_query, false, 0);
+    /* PG returns SPI_OK_INSERT_RETURNING for INSERT ... RETURNING even
+     * when ON CONFLICT DO NOTHING resulted in zero rows inserted; the
+     * conflict case is signalled by SPI_processed == 0. */
+    if (ret != SPI_OK_INSERT_RETURNING) {
+      SPI_finish();
+      elog(ERROR, "DirectInsertReservation: snapshot INSERT failed: %d", ret);
+    }
+
+    if (SPI_processed > 0) {
+      uint64_t snapshot_id = 0;
+      HeapTuple tuple = SPI_tuptable->vals[0];
+      bool isnull;
+      Datum d = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+      if (!isnull) {
+        snapshot_id = DatumGetInt64(d);
+      }
+      SPI_finish();
+      return snapshot_id;
+    }
+
+    /* Lost the PK race: ON CONFLICT DO NOTHING swallowed our row. */
+    SPI_finish();
+    DirectInsertStatsBump(pattern_for_stats, DI_R_RETRY);
+
+    if (attempt >= max_retries) {
+      ereport(ERROR, (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+                      errmsg("ducklake direct insert: snapshot_id reservation failed "
+                             "after %d retr%s",
+                             max_retries, max_retries == 1 ? "y" : "ies"),
+                      errhint("Concurrent commit pressure on ducklake_snapshot; "
+                              "retry the statement or raise ducklake.direct_insert_max_retries.")));
+    }
+
+    /* Exponential backoff (1.5x) with +/-25% jitter to avoid thundering
+     * herd.  base_wait_us starts at 100ms and grows; the floor of 4us
+     * defends against future changes that might lower the start point. */
+    if (base_wait_us < 4) {
+      base_wait_us = 4;
+    }
+    long jitter_us = ((long)random() % (long)(base_wait_us / 2)) - (long)(base_wait_us / 4);
+    long sleep_us = (long)base_wait_us + jitter_us;
+    if (sleep_us < 1000) {
+      sleep_us = 1000;
+    }
+    pg_usleep(sleep_us);
+    base_wait_us = base_wait_us + (base_wait_us >> 1); /* *= 1.5 */
+  }
+
+  /* unreachable */
+  return 0;
+}
+
+/* COPY FROM commit path.  Distinct from the direct-insert path because
+ * COPY does not know its row count up-front and cannot use the
+ * DirectInsertReservation API.  Has the same MAX(snapshot_id)+1 and
+ * read-then-update stats races as the pre-#191 direct-insert path; a
+ * chunked reservation migration for COPY FROM is tracked separately. */
+void CreateSnapshotForCopyFrom(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted) {
   int ret;
 
-  elog(DEBUG1, "CreateSnapshotForDirectInsert: creating snapshot %llu", (unsigned long long)snapshot_id);
+  elog(DEBUG1, "CreateSnapshotForCopyFrom: creating snapshot %llu", (unsigned long long)snapshot_id);
 
   if ((ret = SPI_connect()) < 0) {
-    elog(ERROR, "CreateSnapshotForDirectInsert: SPI_connect failed: %d", ret);
+    elog(ERROR, "CreateSnapshotForCopyFrom: SPI_connect failed: %d", ret);
     return;
   }
 
@@ -853,14 +1028,11 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int6
                    (unsigned long long)snapshot_id, (unsigned long long)schema_version,
                    (unsigned long long)next_catalog_id, (unsigned long long)next_file_id);
 
-  elog(DEBUG1, "CreateSnapshotForDirectInsert: executing %s", snapshot_insert.data);
   ret = SPI_execute(snapshot_insert.data, false, 0);
   if (ret != SPI_OK_INSERT) {
-    elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot: %d", ret);
+    elog(ERROR, "CreateSnapshotForCopyFrom: failed to insert snapshot: %d", ret);
   }
 
-  // Build INSERT for ducklake_snapshot_changes
-  // Use a simple description for the changes_made field
   StringInfoData changes_insert;
   initStringInfo(&changes_insert);
   appendStringInfo(&changes_insert,
@@ -869,18 +1041,11 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int6
                    "VALUES (%llu, 'inlined_data_insert', NULL, NULL, NULL)",
                    (unsigned long long)snapshot_id);
 
-  elog(DEBUG1, "CreateSnapshotForDirectInsert: executing %s", changes_insert.data);
   ret = SPI_execute(changes_insert.data, false, 0);
   if (ret != SPI_OK_INSERT) {
-    elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot changes: %d", ret);
+    elog(ERROR, "CreateSnapshotForCopyFrom: failed to insert snapshot changes: %d", ret);
   }
 
-  /* Update ducklake_table_stats, or create it if this is the first insert.
-   * DuckDB normally creates this row on its first data commit, but the
-   * direct-insert path bypasses DuckDB entirely.  When inserting a new
-   * stats row we must also populate ducklake_table_column_stats so that
-   * DuckDB's GetGlobalTableStats LEFT JOIN doesn't produce a NULL
-   * column_id (TransformGlobalStatsRow reads it without a null check). */
   StringInfoData stats_update;
   initStringInfo(&stats_update);
   appendStringInfo(&stats_update,
@@ -892,11 +1057,10 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int6
 
   ret = SPI_execute(stats_update.data, false, 0);
   if (ret != SPI_OK_UPDATE) {
-    elog(ERROR, "CreateSnapshotForDirectInsert: failed to update table stats: %d", ret);
+    elog(ERROR, "CreateSnapshotForCopyFrom: failed to update table stats: %d", ret);
   }
 
   if (SPI_processed == 0) {
-    /* No existing stats row -- first direct insert into this table. */
     StringInfoData stats_insert;
     initStringInfo(&stats_insert);
     appendStringInfo(&stats_insert,
@@ -907,10 +1071,9 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int6
 
     ret = SPI_execute(stats_insert.data, false, 0);
     if (ret != SPI_OK_INSERT) {
-      elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert table stats: %d", ret);
+      elog(ERROR, "CreateSnapshotForCopyFrom: failed to insert table stats: %d", ret);
     }
 
-    /* Populate ducklake_table_column_stats for each active column. */
     StringInfoData col_stats_insert;
     initStringInfo(&col_stats_insert);
     appendStringInfo(&col_stats_insert,
@@ -924,14 +1087,68 @@ void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int6
 
     ret = SPI_execute(col_stats_insert.data, false, 0);
     if (ret != SPI_OK_INSERT) {
-      elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert column stats: %d", ret);
+      elog(ERROR, "CreateSnapshotForCopyFrom: failed to insert column stats: %d", ret);
     }
-
-    elog(DEBUG1, "CreateSnapshotForDirectInsert: created new stats row for table %llu", (unsigned long long)table_id);
   }
 
   SPI_finish();
-  elog(DEBUG1, "CreateSnapshotForDirectInsert: successfully created snapshot %llu", (unsigned long long)snapshot_id);
+}
+
+DirectInsertReservation::DirectInsertReservation(uint64_t table_id, uint64_t nrows, DirectInsertPattern pattern)
+    : table_id_(table_id), row_id_start_(ReserveRowIdRangeImpl(table_id, nrows)),
+      snapshot_id_(ReserveSnapshotIdImpl(pattern)) {
+}
+
+void DirectInsertReservation::Commit() {
+  int ret;
+
+  if ((ret = SPI_connect()) < 0) {
+    elog(ERROR, "DirectInsertReservation::Commit: SPI_connect failed: %d", ret);
+    return;
+  }
+
+  /* The ducklake_snapshot row was already inserted by ReserveSnapshotIdImpl;
+   * ducklake_table_stats was already advanced by ReserveRowIdRangeImpl.
+   * Here we only record the change set, then idempotently bootstrap
+   * ducklake_table_column_stats so DuckLake's stats LEFT JOIN finds the
+   * column rows.  The bootstrap runs unconditionally because the WHERE
+   * NOT EXISTS subselect makes it cheap when rows already exist and the
+   * only correctness risk is a concurrent path racing for the same
+   * (table_id, column_id) pair, which is harmless here. */
+  StringInfoData changes_insert;
+  initStringInfo(&changes_insert);
+  appendStringInfo(&changes_insert,
+                   "INSERT INTO ducklake.ducklake_snapshot_changes "
+                   "(snapshot_id, changes_made, author, commit_message, commit_extra_info) "
+                   "VALUES (%llu, 'inlined_data_insert', NULL, NULL, NULL)",
+                   (unsigned long long)snapshot_id_);
+  ret = SPI_execute(changes_insert.data, false, 0);
+  if (ret != SPI_OK_INSERT) {
+    SPI_finish();
+    elog(ERROR, "DirectInsertReservation::Commit: snapshot_changes INSERT failed: %d", ret);
+  }
+
+  StringInfoData col_stats_insert;
+  initStringInfo(&col_stats_insert);
+  appendStringInfo(&col_stats_insert,
+                   "INSERT INTO ducklake.ducklake_table_column_stats "
+                   "(table_id, column_id, contains_null, contains_nan, "
+                   " min_value, max_value, extra_stats) "
+                   "SELECT %llu, c.column_id, NULL, NULL, NULL, NULL, NULL "
+                   "  FROM ducklake.ducklake_column c "
+                   " WHERE c.table_id = %llu AND c.end_snapshot IS NULL "
+                   "   AND NOT EXISTS ("
+                   "     SELECT 1 FROM ducklake.ducklake_table_column_stats ts "
+                   "      WHERE ts.table_id = c.table_id AND ts.column_id = c.column_id"
+                   "   )",
+                   (unsigned long long)table_id_, (unsigned long long)table_id_);
+  ret = SPI_execute(col_stats_insert.data, false, 0);
+  if (ret != SPI_OK_INSERT) {
+    SPI_finish();
+    elog(ERROR, "DirectInsertReservation::Commit: column_stats INSERT failed: %d", ret);
+  }
+
+  SPI_finish();
 }
 
 } // namespace pgducklake

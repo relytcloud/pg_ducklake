@@ -90,6 +90,7 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 | | [`ducklake.file_index()`](#file_index) | passthrough | - |
 | Diagnostics | [`ducklake.direct_insert_stats()`](#direct_insert_stats) | native | - |
 | | [`ducklake.reset_direct_insert_stats()`](#reset_direct_insert_stats) | native | - |
+| | [`ducklake.direct_insert_lock_ns()`](#direct_insert_lock_ns) | native | - |
 | Freeze | [`ducklake.freeze(text)`](#freeze) | native proc | - |
 
 **Kind legend:**
@@ -123,7 +124,7 @@ non-`ok` reason.
 | `unmatched` | `greater_than_limit` | the batch row count exceeds `data_inlining_row_limit` |
 | `unmatched` | `unsupported_insert_shape` | neither `UNNEST` nor `VALUES` detector matched (e.g. `INSERT ... SELECT` from a table, `RETURNING`, `ON CONFLICT`, non-const `VALUES`) |
 | `unmatched` | `invalid_rte` | the `FROM` clause's RTE kind isn't recognized by the UNNEST detector (rare) |
-| `unmatched` | `retry` | *reserved* -- reserved for a future retry-on-snapshot-conflict counter |
+| `unmatched` | `retry` | a direct insert lost the `ducklake_snapshot.snapshot_id` PK race and re-attempted (see `ducklake.direct_insert_max_retries`) |
 
 Counts are **only** bumped for `INSERT` statements that pass these
 gates (non-counted early exits):
@@ -134,6 +135,16 @@ gates (non-counted early exits):
 ### <a id="reset_direct_insert_stats"></a>`ducklake.reset_direct_insert_stats()`
 
 Zeroes all counters.  Returns `void`.
+
+### <a id="direct_insert_lock_ns"></a>`ducklake.direct_insert_lock_ns()`
+
+Returns the integer namespace key (`int4`) used by direct insert's
+internal advisory lock: every direct insert calls
+`pg_advisory_xact_lock(<this_value>, table_id::int4)` so concurrent
+direct inserts on the same table serialize without needing a UNIQUE
+index on `ducklake_table_stats`.  Exposed for isolation tests that
+need to take the same lock from outside C code; not intended for
+application use.  `IMMUTABLE`.
 
 ## Bootstrap
 

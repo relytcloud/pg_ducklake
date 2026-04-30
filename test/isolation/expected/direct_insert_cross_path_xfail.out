@@ -1,0 +1,27 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1_seed s1_begin s1_delete s2_di s1_commit s1_rollback check_count check_ids
+step s1_seed: INSERT INTO iso_di_xp VALUES (1, 'seed1'), (2, 'seed2'), (3, 'seed3');
+step s1_begin: BEGIN;
+step s1_delete: DELETE FROM iso_di_xp WHERE id IN (1, 2);
+step s2_di: INSERT INTO iso_di_xp VALUES (10, 'new1'), (20, 'new2');
+step s1_commit: COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: (PGDuckDB/pgduckdb_raw_query_cpp) TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
+Unsupported change type inlined_data_insert
+step s1_rollback: ROLLBACK;
+step check_count: SELECT count(*) AS total, count(DISTINCT id) AS unique_ids FROM iso_di_xp;
+total|unique_ids
+-----+----------
+    5|         5
+(1 row)
+
+step check_ids: SELECT id FROM iso_di_xp ORDER BY id;
+id
+--
+ 1
+ 2
+ 3
+10
+20
+(5 rows)
+

@@ -611,6 +611,15 @@ CREATE FUNCTION ducklake.reset_direct_insert_stats()
     AS 'MODULE_PATHNAME', 'ducklake_reset_direct_insert_stats'
     LANGUAGE C VOLATILE;
 
+-- native: integer constant used as the namespace key for
+-- pg_advisory_xact_lock(int4, int4) inside the direct-insert
+-- DirectInsertReservation.  Exposed so isolation tests can take the
+-- same lock without hardcoding the literal.
+CREATE FUNCTION ducklake.direct_insert_lock_ns()
+    RETURNS int4
+    AS 'MODULE_PATHNAME', 'ducklake_direct_insert_lock_ns'
+    LANGUAGE C IMMUTABLE STRICT;
+
 -- Freeze ------------------------------------------------------------
 
 -- native proc: export metadata to a standalone .ducklake file.

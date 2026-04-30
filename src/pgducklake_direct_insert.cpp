@@ -1328,14 +1328,33 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
     return NULL;
   }
 
-  state->begin_snapshot = pgducklake::GetNextSnapshotId();
-  state->next_row_id = pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
+  /* Suppress the AFTER INSERT trigger on ducklake_snapshot for the
+   * lifetime of this direct insert.  The reverse-sync trigger is meant
+   * for DuckDB-driven commits, not direct insert.  Hoisted above the
+   * reservation so the snapshot_id INSERT inside the constructor is
+   * also covered (mirrors pgducklake_copy_from.cpp). */
+  pgducklake::SkipSnapshotSyncGuard sync_guard;
+
+  /* Both modes know the exact row count up-front: UNNEST validates array
+   * lengths at planning time, VALUES counts list elements. */
+  uint64_t nrows =
+      (uint64_t)((state->mode == DIRECT_INSERT_UNNEST) ? state->expected_row_count : state->values_num_rows);
+  pgducklake::DirectInsertPattern pattern =
+      (state->mode == DIRECT_INSERT_UNNEST) ? pgducklake::DI_PAT_MATCHED_UNNEST : pgducklake::DI_PAT_MATCHED_VALUES;
+
+  /* Reserve both ids atomically before any inlined row is written.  The
+   * constructor takes the per-table advisory lock and runs the
+   * snapshot_id retry loop.  See DirectInsertReservation in
+   * pgducklake_metadata_manager.hpp for the lifecycle contract. */
+  pgducklake::DirectInsertReservation reservation(state->table_id, nrows, pattern);
+  state->next_row_id = reservation.RowIdStart();
+  state->begin_snapshot = reservation.SnapshotId();
   state->rows_inserted = 0;
 
   ereport(DEBUG1, (errmsg("DuckLake direct insert: exec, table=%s, "
-                          "predicted_snapshot=%llu, next_row_id=%lu",
+                          "snapshot=%llu, row_id_start=%lu, nrows=%llu",
                           state->inlined_table_name, (unsigned long long)state->begin_snapshot,
-                          (unsigned long)state->next_row_id)));
+                          (unsigned long)state->next_row_id, (unsigned long long)nrows)));
 
   if (state->mode == DIRECT_INSERT_UNNEST) {
     DirectInsertIntoInlinedTable(state);
@@ -1346,17 +1365,7 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
   state->finished = true;
   node->ss.ps.state->es_processed = state->rows_inserted;
 
-  /* TODO(#186 follow-up): unique-violation on ducklake_snapshot.snapshot_id
-   * under concurrent direct inserts should bump DI_R_RETRY and retry.
-   * A straightforward BeginInternalSubTransaction wrapper around the
-   * snapshot commit doesn't work with the inner SPI-based functions
-   * (snapshot resowner mismatch on subtx release).  A real retry will
-   * need either (a) pre-reserve snapshot_id before writing any rows,
-   * or (b) restructure CreateSnapshotForDirectInsert into separate
-   * reserve/finalize phases.  For now, concurrent conflicts ERROR as
-   * they did pre-#186. */
-  pgducklake::SkipSnapshotSyncGuard sync_guard;
-  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted);
+  reservation.Commit();
 
   CommandCounterIncrement();
 
@@ -1715,3 +1724,15 @@ static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
 }
 
 } // namespace pgducklake
+
+extern "C" {
+
+/* SQL-visible accessor for DUCKLAKE_DIRECT_INSERT_LOCK_NS so isolation
+ * tests can take the same advisory lock as DirectInsertReservation
+ * without duplicating the magic number. */
+PG_FUNCTION_INFO_V1(ducklake_direct_insert_lock_ns);
+Datum ducklake_direct_insert_lock_ns(PG_FUNCTION_ARGS) {
+  PG_RETURN_INT32(pgducklake::DUCKLAKE_DIRECT_INSERT_LOCK_NS);
+}
+
+} // extern "C"

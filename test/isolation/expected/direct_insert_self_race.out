@@ -1,0 +1,72 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1_di s2_di check_user_count check_select check_storage_rows
+step s1_di: INSERT INTO iso_di_self VALUES (1, 'a1'), (2, 'a2'), (3, 'a3');
+step s2_di: INSERT INTO iso_di_self VALUES (10, 'b1'), (20, 'b2');
+step check_user_count: 
+  SELECT count(*) AS total, count(DISTINCT id) AS unique_ids FROM iso_di_self;
+
+total|unique_ids
+-----+----------
+    5|         5
+(1 row)
+
+step check_select: SELECT id FROM iso_di_self ORDER BY id;
+id
+--
+ 1
+ 2
+ 3
+10
+20
+(5 rows)
+
+step check_storage_rows: SELECT * FROM iso_di_self_storage_check('iso_di_self');
+row_count|distinct_row_ids
+---------+----------------
+        5|               5
+(1 row)
+
+
+starting permutation: s1_hold_lock s2_di s1_release s1_di check_user_count check_select check_storage_rows
+step s1_hold_lock: 
+  BEGIN;
+  SELECT pg_advisory_xact_lock(
+           ducklake.direct_insert_lock_ns(),
+           (SELECT table_id FROM ducklake.ducklake_table
+             WHERE table_name = 'iso_di_self' AND end_snapshot IS NULL)::int4
+         );
+
+pg_advisory_xact_lock
+---------------------
+                     
+(1 row)
+
+step s2_di: INSERT INTO iso_di_self VALUES (10, 'b1'), (20, 'b2'); <waiting ...>
+step s1_release: COMMIT;
+step s2_di: <... completed>
+step s1_di: INSERT INTO iso_di_self VALUES (1, 'a1'), (2, 'a2'), (3, 'a3');
+step check_user_count: 
+  SELECT count(*) AS total, count(DISTINCT id) AS unique_ids FROM iso_di_self;
+
+total|unique_ids
+-----+----------
+    5|         5
+(1 row)
+
+step check_select: SELECT id FROM iso_di_self ORDER BY id;
+id
+--
+ 1
+ 2
+ 3
+10
+20
+(5 rows)
+
+step check_storage_rows: SELECT * FROM iso_di_self_storage_check('iso_di_self');
+row_count|distinct_row_ids
+---------+----------------
+        5|               5
+(1 row)
+

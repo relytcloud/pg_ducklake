@@ -1,0 +1,43 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1_seed s1_begin s1_delete s1_commit s2_di check_count check_ids
+step s1_seed: INSERT INTO iso_di_del VALUES (1, 'seed1'), (2, 'seed2'), (3, 'seed3');
+step s1_begin: BEGIN;
+step s1_delete: DELETE FROM iso_di_del WHERE id IN (1, 2);
+step s1_commit: COMMIT;
+step s2_di: INSERT INTO iso_di_del VALUES (10, 'new1'), (20, 'new2');
+step check_count: SELECT count(*) AS total FROM iso_di_del;
+total
+-----
+    3
+(1 row)
+
+step check_ids: SELECT id FROM iso_di_del ORDER BY id;
+id
+--
+ 3
+10
+20
+(3 rows)
+
+
+starting permutation: s1_seed s2_di s1_begin s1_delete s1_commit check_count check_ids
+step s1_seed: INSERT INTO iso_di_del VALUES (1, 'seed1'), (2, 'seed2'), (3, 'seed3');
+step s2_di: INSERT INTO iso_di_del VALUES (10, 'new1'), (20, 'new2');
+step s1_begin: BEGIN;
+step s1_delete: DELETE FROM iso_di_del WHERE id IN (1, 2);
+step s1_commit: COMMIT;
+step check_count: SELECT count(*) AS total FROM iso_di_del;
+total
+-----
+    3
+(1 row)
+
+step check_ids: SELECT id FROM iso_di_del ORDER BY id;
+id
+--
+ 3
+10
+20
+(3 rows)
+

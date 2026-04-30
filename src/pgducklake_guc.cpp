@@ -21,6 +21,7 @@ namespace pgducklake {
 char *default_table_path = strdup("");
 double vacuum_delete_threshold = 0.1;
 bool enable_direct_insert = true;
+int direct_insert_max_retries = 10;
 bool ctas_skip_data = false;
 
 bool enable_metadata_sync = true;
@@ -51,6 +52,13 @@ void RegisterGUCs() {
                            "Enable direct insert optimization for INSERT ... "
                            "SELECT UNNEST($n) statements.",
                            NULL, &enable_direct_insert, true, PGC_USERSET, 0, NULL, NULL, NULL);
+
+  DefineCustomIntVariable("ducklake.direct_insert_max_retries",
+                          "Maximum retry attempts when a direct insert loses the snapshot_id "
+                          "allocation race against a concurrent commit.  After exhaustion, the "
+                          "statement fails with SQLSTATE 40001 (serialization_failure) so the "
+                          "client can retry at the application layer.",
+                          NULL, &direct_insert_max_retries, 10, 0, 1000, PGC_USERSET, 0, NULL, NULL, NULL);
 
   DefineCustomBoolVariable("ducklake.enable_metadata_sync",
                            "Enable reverse metadata sync from DuckDB to PostgreSQL. "

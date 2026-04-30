@@ -5,6 +5,7 @@ namespace pgducklake {
 extern char *default_table_path;
 extern double vacuum_delete_threshold;
 extern bool enable_direct_insert;
+extern int direct_insert_max_retries;
 extern bool ctas_skip_data;
 
 extern bool enable_metadata_sync;

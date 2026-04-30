@@ -1,0 +1,64 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1_seed s1_begin s1_alter s1_commit s2_di_new check_count check_ids
+step s1_seed: INSERT INTO iso_di_alt VALUES (1, 'pre');
+step s1_begin: BEGIN;
+step s1_alter: ALTER TABLE iso_di_alt ADD COLUMN extra int DEFAULT 0;
+step s1_commit: COMMIT;
+step s2_di_new: INSERT INTO iso_di_alt(id, val, extra) VALUES (30, 'c1', 100);
+step check_count: SELECT count(*) AS total FROM iso_di_alt;
+total
+-----
+    2
+(1 row)
+
+step check_ids: SELECT id FROM iso_di_alt ORDER BY id;
+id
+--
+ 1
+30
+(2 rows)
+
+
+starting permutation: s1_seed s2_di_old s1_begin s1_alter s1_commit check_count check_ids
+step s1_seed: INSERT INTO iso_di_alt VALUES (1, 'pre');
+step s2_di_old: INSERT INTO iso_di_alt VALUES (10, 'b1'), (20, 'b2');
+step s1_begin: BEGIN;
+step s1_alter: ALTER TABLE iso_di_alt ADD COLUMN extra int DEFAULT 0;
+step s1_commit: COMMIT;
+step check_count: SELECT count(*) AS total FROM iso_di_alt;
+total
+-----
+    3
+(1 row)
+
+step check_ids: SELECT id FROM iso_di_alt ORDER BY id;
+id
+--
+ 1
+10
+20
+(3 rows)
+
+
+starting permutation: s1_seed s1_begin s1_alter s2_di_old s1_commit check_count check_ids
+step s1_seed: INSERT INTO iso_di_alt VALUES (1, 'pre');
+step s1_begin: BEGIN;
+step s1_alter: ALTER TABLE iso_di_alt ADD COLUMN extra int DEFAULT 0;
+step s2_di_old: INSERT INTO iso_di_alt VALUES (10, 'b1'), (20, 'b2'); <waiting ...>
+step s1_commit: COMMIT;
+step s2_di_old: <... completed>
+step check_count: SELECT count(*) AS total FROM iso_di_alt;
+total
+-----
+    3
+(1 row)
+
+step check_ids: SELECT id FROM iso_di_alt ORDER BY id;
+id
+--
+ 1
+10
+20
+(3 rows)
+

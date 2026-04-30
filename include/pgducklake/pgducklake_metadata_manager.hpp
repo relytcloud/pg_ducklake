@@ -11,6 +11,12 @@
 #include <storage/ducklake_metadata_manager.hpp>
 #include <storage/ducklake_transaction.hpp>
 
+/* MUST come after the DuckLake/DuckDB headers above: this header
+ * transitively pulls in postgres.h, whose FATAL macro clobbers
+ * DuckDB's ExceptionType::FATAL when DuckDB headers are parsed
+ * afterwards. */
+#include "pgducklake/pgducklake_direct_insert_stats.hpp"
+
 namespace pgducklake {
 
 class PgDuckLakeMetadataManager : public duckdb::PostgresMetadataManager {
@@ -72,6 +78,69 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
 
 uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version);
 uint64_t GetNextSnapshotId();
-void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted);
+
+/* COPY FROM commit path.  Distinct from the direct-insert path because COPY
+ * does not know its row count up-front and cannot use the atomic reservation
+ * API.  Inserts the snapshot row, the snapshot_changes row, and
+ * updates/inserts the stats row from a pre-allocated snapshot_id and
+ * post-hoc rows_inserted count.  Has the same MAX(snapshot_id)+1 and
+ * read-then-update concurrency hazards as the pre-#191 direct-insert path;
+ * a chunked reservation migration for COPY FROM is tracked separately. */
+void CreateSnapshotForCopyFrom(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted);
+
+/* Advisory-lock namespace for direct-insert per-table row_id reservation.
+ * Used as the first argument of pg_advisory_xact_lock(int4, int4); the
+ * second argument is table_id cast to int4 (DuckLake table_ids are
+ * monotonically issued from 1, so 32 bits is ample in practice).  Different
+ * tables get distinct keys and remain parallel; concurrent direct inserts
+ * on the same table serialize on this lock.  The constant is arbitrary but
+ * fixed: 'pDLK' in ASCII = 0x70444C4B.  Exposed to SQL via
+ * ducklake.direct_insert_lock_ns() so isolation specs do not duplicate the
+ * literal. */
+static constexpr int32_t DUCKLAKE_DIRECT_INSERT_LOCK_NS = 0x70444C4B;
+
+/* RAII handle for a direct-insert metadata reservation.  Encodes the
+ * three-step protocol -- reserve row_ids, reserve snapshot_id, commit --
+ * at the type level so callers cannot misuse it.
+ *
+ * Lifecycle (all within one Postgres transaction; direct insert is
+ * autocommit, so that is automatic):
+ *   1. Construct: takes a per-table advisory lock, atomically advances
+ *      ducklake_table_stats.next_row_id by `nrows`, then reserves a fresh
+ *      snapshot_id via INSERT ... ON CONFLICT (snapshot_id) DO NOTHING
+ *      with a bounded retry loop (cap: ducklake.direct_insert_max_retries).
+ *      Each lost race bumps DI_R_RETRY for `pattern`.  Raises ERROR
+ *      with SQLSTATE 40001 if retries are exhausted.
+ *   2. Caller writes inlined rows tagged with RowIdStart()..+nrows-1
+ *      and SnapshotId().
+ *   3. Commit(): writes ducklake_snapshot_changes and idempotently
+ *      bootstraps ducklake_table_column_stats via WHERE NOT EXISTS
+ *      (safe to run on every direct insert; cheap when rows already
+ *      exist).
+ *
+ * If the caller throws or returns without calling Commit(), the
+ * surrounding Postgres transaction will abort and roll back the
+ * reservation rows; the advisory lock auto-releases at xact end. */
+class DirectInsertReservation {
+public:
+  DirectInsertReservation(uint64_t table_id, uint64_t nrows, DirectInsertPattern pattern);
+
+  uint64_t RowIdStart() const {
+    return row_id_start_;
+  }
+  uint64_t SnapshotId() const {
+    return snapshot_id_;
+  }
+
+  void Commit();
+
+  DirectInsertReservation(const DirectInsertReservation &) = delete;
+  DirectInsertReservation &operator=(const DirectInsertReservation &) = delete;
+
+private:
+  uint64_t table_id_;
+  uint64_t row_id_start_;
+  uint64_t snapshot_id_;
+};
 
 } // namespace pgducklake
