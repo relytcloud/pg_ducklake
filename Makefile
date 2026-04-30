@@ -2,7 +2,7 @@
 	check-isolation clean-isolation \
 	ducklake clean-ducklake \
 	pg_duckdb install-pg_duckdb clean-pg_duckdb \
-	bench-direct-insert \
+	bench-direct-insert bench-concurrent-direct-insert \
 	format check-format
 
 MODULE_big = pg_ducklake
@@ -107,6 +107,13 @@ clean-isolation:
 
 bench-direct-insert: all install
 	bash test/benchmark/bench_direct_insert.sh
+
+# Concurrency stress: 4 sessions x 60 inserts x 125 rows = 30k rows total.
+# Asserts row count, snapshot count, and storage-level row_id uniqueness;
+# failure indicates a concurrency regression in DirectInsertReservation.
+bench-concurrent-direct-insert: all install
+	NUM_SESSIONS=4 INSERTS_PER_SESSION=60 BATCH_SIZE=125 \
+	  bash test/benchmark/bench_concurrent_direct_insert.sh
 
 # ---------------------------------------------------------------------------
 # Submodule (duckdb)

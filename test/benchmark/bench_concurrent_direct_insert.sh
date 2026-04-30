@@ -169,7 +169,7 @@ echo "Batch size:       $BATCH_SIZE"
 echo "Total inserts:    $TOTAL_INSERTED rows in $TOTAL_BATCHES direct-insert batches"
 echo ""
 
-START_NS=$(date +%s)
+START=$(python3 -c 'import time; print(time.monotonic())')
 for s in $(seq 1 "$NUM_SESSIONS"); do
   (
     if "$PSQL" -h "$BENCHDIR" -p "$PGPORT" -d "$DBNAME" -X -q \
@@ -182,9 +182,8 @@ for s in $(seq 1 "$NUM_SESSIONS"); do
   ) &
 done
 wait
-END_NS=$(date +%s)
-ELAPSED_S=$((END_NS - START_NS))
-[ "$ELAPSED_S" -lt 1 ] && ELAPSED_S=1
+END=$(python3 -c 'import time; print(time.monotonic())')
+ELAPSED_MS=$(python3 -c "print(round(($END - $START) * 1000, 1))")
 
 # ---------------------------------------------------------------------------
 # Verify
@@ -211,7 +210,7 @@ RETRY_COUNT=$(run_sql_t -c \
 OK_COUNT=$(run_sql_t -c \
   "SELECT count FROM ducklake.direct_insert_stats() WHERE pattern = 'matched_values' AND reason = 'ok';")
 
-THROUGHPUT=$(awk "BEGIN {printf \"%.0f\", $TOTAL_INSERTED / $ELAPSED_S}")
+THROUGHPUT=$(python3 -c "print(round($TOTAL_INSERTED / ($ELAPSED_MS / 1000), 0))")
 
 # ---------------------------------------------------------------------------
 # Report + verdict
@@ -228,7 +227,7 @@ result() {
 }
 
 echo ""
-echo "Throughput:           ${THROUGHPUT} rows/sec  (${ELAPSED_S}s elapsed)"
+echo "Throughput:           ${THROUGHPUT} rows/sec  (${ELAPSED_MS} ms elapsed)"
 echo ""
 result "Failed sessions"      "$errors"          "0"
 result "User row count"       "$USER_COUNT"      "$TOTAL_INSERTED"
