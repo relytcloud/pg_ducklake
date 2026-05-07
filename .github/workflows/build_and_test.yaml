@@ -138,6 +138,10 @@ jobs:
         run: make bench-direct-insert
         continue-on-error: true
 
+      - name: Run concurrent direct insert stress
+        working-directory: pg_ducklake
+        run: make bench-concurrent-direct-insert
+
       - name: Print pg_ducklake regression.diffs
         if: failure() && steps.installcheck.outcome == 'failure'
         run: cat pg_ducklake/test/regression/regression.diffs && false

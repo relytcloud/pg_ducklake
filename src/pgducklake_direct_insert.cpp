@@ -1328,38 +1328,48 @@ static TupleTableSlot *DirectInsert_ExecCustomScan(CustomScanState *node) {
     return NULL;
   }
 
-  state->begin_snapshot = pgducklake::GetNextSnapshotId();
-  state->next_row_id = pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
-  state->rows_inserted = 0;
+  /* Concurrent direct inserts can both compute the same MAX(snapshot_id)+1
+   * and one will lose the PK race with 23505.  Translate that to 40001 so
+   * client retry adapters (pgx, jdbc, pgbench --max-tries) handle it
+   * transparently; the autocommit txn rollback discards the inlined rows
+   * we tagged, so the retry runs from a fresh next_row_id with no overlap. */
+  MemoryContext old_ctx = CurrentMemoryContext;
+  PG_TRY();
+  {
+    state->begin_snapshot = pgducklake::GetNextSnapshotId();
+    state->next_row_id = pgducklake::GetNextRowIdForTable(state->table_id, state->schema_version);
+    state->rows_inserted = 0;
 
-  ereport(DEBUG1, (errmsg("DuckLake direct insert: exec, table=%s, "
-                          "predicted_snapshot=%llu, next_row_id=%lu",
-                          state->inlined_table_name, (unsigned long long)state->begin_snapshot,
-                          (unsigned long)state->next_row_id)));
+    if (state->mode == DIRECT_INSERT_UNNEST) {
+      DirectInsertIntoInlinedTable(state);
+    } else {
+      DirectInsertValuesIntoInlinedTable(state);
+    }
 
-  if (state->mode == DIRECT_INSERT_UNNEST) {
-    DirectInsertIntoInlinedTable(state);
-  } else {
-    DirectInsertValuesIntoInlinedTable(state);
+    pgducklake::SkipSnapshotSyncGuard sync_guard;
+    pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted);
   }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(old_ctx);
+    ErrorData *edata = CopyErrorData();
+    if (edata->sqlerrcode == ERRCODE_UNIQUE_VIOLATION) {
+      FreeErrorData(edata);
+      FlushErrorState();
+      DirectInsertStatsBump(pgducklake::DI_PAT_UNMATCHED, pgducklake::DI_R_RETRY);
+      ereport(ERROR, (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+                      errmsg("ducklake direct insert: snapshot_id allocation lost the race"),
+                      errhint("Retry the statement.")));
+    }
+    FreeErrorData(edata);
+    PG_RE_THROW();
+  }
+  PG_END_TRY();
 
   state->finished = true;
   node->ss.ps.state->es_processed = state->rows_inserted;
 
-  /* TODO(#186 follow-up): unique-violation on ducklake_snapshot.snapshot_id
-   * under concurrent direct inserts should bump DI_R_RETRY and retry.
-   * A straightforward BeginInternalSubTransaction wrapper around the
-   * snapshot commit doesn't work with the inner SPI-based functions
-   * (snapshot resowner mismatch on subtx release).  A real retry will
-   * need either (a) pre-reserve snapshot_id before writing any rows,
-   * or (b) restructure CreateSnapshotForDirectInsert into separate
-   * reserve/finalize phases.  For now, concurrent conflicts ERROR as
-   * they did pre-#186. */
-  pgducklake::SkipSnapshotSyncGuard sync_guard;
-  pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted);
-
   CommandCounterIncrement();
-
   pgducklake::ResetDirectInsertCaches();
 
   return NULL;
