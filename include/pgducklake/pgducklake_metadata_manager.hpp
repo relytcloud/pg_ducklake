@@ -34,6 +34,10 @@ public:
   ReadInlinedData(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
                   const duckdb::vector<duckdb::string> &columns_to_read) override;
 
+  duckdb::unique_ptr<duckdb::QueryResult>
+  ReadAllInlinedDataForFlush(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
+                             const duckdb::vector<duckdb::string> &columns_to_read) override;
+
   static bool IsInitialized();
   bool IsInitialized(duckdb::DuckLakeOptions & /*options*/) override;
   void InitializeDuckLake(bool has_explicit_schema, duckdb::DuckLakeEncryption encryption) override;

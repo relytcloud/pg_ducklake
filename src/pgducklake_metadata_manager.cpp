@@ -437,6 +437,29 @@ ORDER BY row_id;)",
   return transaction.Query(query);
 }
 
+/*
+ * ReadAllInlinedDataForFlush override: same routing as ReadInlinedData -- go
+ * through DuckDB so PostgresTableReader streams in 32-tuple batches instead
+ * of SPI materializing the full result into the PG heap.  The flush query
+ * differs from ReadInlinedData by including deleted rows (no end_snapshot
+ * filter) so deletion vectors can be applied downstream.
+ */
+duckdb::unique_ptr<duckdb::QueryResult>
+PgDuckLakeMetadataManager::ReadAllInlinedDataForFlush(duckdb::DuckLakeSnapshot snapshot,
+                                                      const duckdb::string &inlined_table_name,
+                                                      const duckdb::vector<duckdb::string> &columns_to_read) {
+  auto projection = BuildProjection(columns_to_read);
+  auto query = duckdb::StringUtil::Format(R"(
+SELECT %s
+FROM pgduckdb."%s".%s inlined_data
+WHERE %llu >= begin_snapshot
+ORDER BY row_id;)",
+                                          projection, PGDUCKLAKE_PG_SCHEMA, duckdb::SQLIdentifier(inlined_table_name),
+                                          (unsigned long long)snapshot.snapshot_id);
+  elog(DEBUG1, "ReadAllInlinedDataForFlush via DuckDB: %s", query.c_str());
+  return transaction.Query(query);
+}
+
 duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot,
                                                                          duckdb::string query) {
   DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
