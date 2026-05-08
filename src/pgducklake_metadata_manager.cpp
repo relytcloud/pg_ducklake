@@ -21,7 +21,10 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/connection.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/main/pending_query_result.hpp"
+#include "duckdb/main/query_parameters.hpp"
 #include <duckdb/common/string_util.hpp>
 
 #include "common/ducklake_util.hpp"
@@ -438,11 +441,27 @@ ORDER BY row_id;)",
 }
 
 /*
- * ReadAllInlinedDataForFlush override: same routing as ReadInlinedData -- go
- * through DuckDB so PostgresTableReader streams in 32-tuple batches instead
- * of SPI materializing the full result into the PG heap.  The flush query
- * differs from ReadInlinedData by including deleted rows (no end_snapshot
- * filter) so deletion vectors can be applied downstream.
+ * ReadAllInlinedDataForFlush override: route through DuckDB *streaming*. Unlike
+ * the regular read path (ReadInlinedData), flushes can grow to many GB; the
+ * default transaction.Query() materializes the full result into a
+ * MaterializedQueryResult, after which TransformInlinedData re-buffers the
+ * same data into a ColumnDataCollection -- O(table) peak memory, OOM at scale
+ * (issue #194).
+ *
+ * Use Connection::PendingQuery(allow_stream_result) -> Execute() so the call
+ * returns a StreamQueryResult. DuckLakeInlinedDataReader detects the
+ * STREAM_RESULT type, skips TransformInlinedData / CDC entirely, and pulls
+ * chunks one at a time during Scan -- peak memory becomes O(chunk).
+ *
+ * ORDER BY row_id is required for correctness, not just convention: Finalize
+ * issues a separate ROW_NUMBER() OVER (ORDER BY row_id) query to compute each
+ * deleted row's output_position in the freshly-written parquet. If the parquet
+ * rows are written in any other order, the deletion file marks the wrong
+ * positions. Heap scan order on the inlined table does NOT match row_id order
+ * once any DELETE has run, because Postgres' MVCC relocates the
+ * end_snapshot-updated tuples. We pay for the explicit sort, but DuckDB spills
+ * it to duckdb.temporary_directory via BufferManager, so peak resident memory
+ * is bounded by duckdb.memory_limit -- not by the inline-table size.
  */
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ReadAllInlinedDataForFlush(duckdb::DuckLakeSnapshot snapshot,
@@ -456,8 +475,14 @@ WHERE %llu >= begin_snapshot
 ORDER BY row_id;)",
                                           projection, PGDUCKLAKE_PG_SCHEMA, duckdb::SQLIdentifier(inlined_table_name),
                                           (unsigned long long)snapshot.snapshot_id);
-  elog(DEBUG1, "ReadAllInlinedDataForFlush via DuckDB: %s", query.c_str());
-  return transaction.Query(query);
+  elog(DEBUG1, "ReadAllInlinedDataForFlush via DuckDB stream: %s", query.c_str());
+
+  auto &connection = transaction.GetConnection();
+  auto pending = connection.PendingQuery(query, duckdb::QueryResultOutputType::ALLOW_STREAMING);
+  if (pending->HasError()) {
+    return duckdb::make_uniq<duckdb::MaterializedQueryResult>(pending->GetErrorObject());
+  }
+  return pending->Execute();
 }
 
 duckdb::unique_ptr<duckdb::QueryResult> PgDuckLakeMetadataManager::Query(duckdb::DuckLakeSnapshot snapshot,

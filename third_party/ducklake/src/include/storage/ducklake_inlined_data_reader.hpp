@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/multi_file/base_file_reader.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "storage/ducklake_inlined_data.hpp"
 #include "common/ducklake_snapshot.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -52,6 +53,12 @@ private:
 	vector<column_t> scan_column_ids;
 	ColumnDataScanState state;
 	DataChunk scan_chunk;
+	//! Streaming source for SCAN_FOR_FLUSH paths whose metadata manager returns a
+	//! StreamQueryResult. When set, scan pulls chunks from this stream instead of
+	//! draining a ColumnDataCollection -- making peak memory O(chunk).
+	unique_ptr<QueryResult> stream_result;
+	//! Target types for the streaming path (per-chunk casts in Scan match these).
+	vector<LogicalType> stream_expected_types;
 	//! Expression executors for expression_map entries, keyed by column_t (from column_ids)
 	unordered_map<column_t, unique_ptr<ExpressionExecutor>> expression_executors;
 };

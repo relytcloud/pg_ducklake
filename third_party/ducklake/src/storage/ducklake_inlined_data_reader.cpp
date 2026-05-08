@@ -123,6 +123,36 @@ bool DuckLakeInlinedDataReader::TryInitializeScan(ClientContext &context, Global
 		default:
 			throw InternalException("Unknown DuckLake scan type");
 		}
+
+		// Streaming path: metadata managers may return a StreamQueryResult to avoid
+		// materializing the entire inlined table into a ColumnDataCollection. We
+		// detect this and skip the TransformInlinedData/CDC build entirely; per-chunk
+		// type casts run inside Scan(). Streaming requires no deletion_filter,
+		// because that path scans all rows once to map row_ids to ordinals (a
+		// two-pass operation incompatible with a single-shot stream).
+		if (query_result->type == QueryResultType::STREAM_RESULT) {
+			if (deletion_filter) {
+				throw NotImplementedException(
+				    "DuckLakeInlinedDataReader: deletion_filter is not supported with a streaming inlined data result");
+			}
+			stream_expected_types = expected_types;
+			// Force the scan_chunk path so Scan() routes through the virtual_columns
+			// mapping below (which is the only code path that knows how to consume
+			// scan_chunk into the output chunk).
+			if (virtual_columns.empty()) {
+				for (idx_t i = 0; i < expected_types.size(); i++) {
+					scan_column_ids.push_back(i);
+					virtual_columns.push_back(InlinedVirtualColumn::NONE);
+				}
+			}
+			scan_chunk.Initialize(context, expected_types);
+			stream_result = std::move(query_result);
+			for (auto &entry : expression_map) {
+				expression_executors[entry.first] = make_uniq<ExpressionExecutor>(context, *entry.second);
+			}
+			return true;
+		}
+
 		data = metadata_manager.TransformInlinedData(*query_result, expected_types);
 		if (!virtual_columns.empty()) {
 			auto scan_types = data->data->Types();
@@ -203,9 +233,34 @@ bool DuckLakeInlinedDataReader::TryEvaluateExpression(ClientContext &context, id
 
 AsyncResult DuckLakeInlinedDataReader::Scan(ClientContext &context, GlobalTableFunctionState &global_state,
                                             LocalTableFunctionState &local_state, DataChunk &chunk) {
-	if (!virtual_columns.empty()) {
+	if (stream_result) {
+		// Streaming inlined data: fetch raw chunks and apply per-column casts to
+		// match expected_types. Mirrors PostgresMetadataManager::TransformInlinedData
+		// but per-chunk -- peak memory is O(chunk) instead of O(table).
+		auto raw_chunk = stream_result->Fetch();
+		if (!raw_chunk || raw_chunk->size() == 0) {
+			return AsyncResult(SourceResultType::FINISHED);
+		}
+		scan_chunk.Reset();
+		scan_chunk.SetCardinality(raw_chunk->size());
+		for (idx_t col_idx = 0; col_idx < raw_chunk->ColumnCount(); col_idx++) {
+			auto &source_vector = raw_chunk->data[col_idx];
+			auto &target_vector = scan_chunk.data[col_idx];
+			if (source_vector.GetType() == target_vector.GetType()) {
+				target_vector.Reference(source_vector);
+			} else if (source_vector.GetType().id() == LogicalTypeId::BLOB &&
+			           target_vector.GetType().id() == LogicalTypeId::VARCHAR) {
+				// Postgres stores VARCHAR as BYTEA in inlined tables -- same binary repr.
+				target_vector.Reinterpret(source_vector);
+			} else {
+				VectorOperations::Cast(context, source_vector, target_vector, raw_chunk->size());
+			}
+		}
+	} else if (!virtual_columns.empty()) {
 		scan_chunk.Reset();
 		data->data->Scan(state, scan_chunk);
+	}
+	if (!virtual_columns.empty()) {
 		idx_t source_idx = 0;
 		for (idx_t c = 0; c < virtual_columns.size(); c++) {
 			switch (virtual_columns[c]) {

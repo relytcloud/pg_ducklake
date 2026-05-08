@@ -66,3 +66,21 @@ SELECT COUNT(*) AS row_count_after_flush FROM test_inlining;
 
 -- Cleanup
 DROP TABLE test_inlining;
+
+-- Test 7: flush with prior deletes on an inlined table
+-- Exercises streaming flush + deletion-vector-write path: the inlined source
+-- streams every row (deleted and live), Finalize then writes a delete file
+-- using ROW_NUMBER() OVER (ORDER BY row_id) -- this regression test catches
+-- mismatches between the streamed scan order and the deletion-position math.
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+CREATE TABLE flush_with_deletes (i INT, j TEXT) USING ducklake;
+INSERT INTO flush_with_deletes
+SELECT g, 'row-' || g FROM generate_series(1, 200) g;
+DELETE FROM flush_with_deletes WHERE i % 7 = 0;
+SELECT count(*) FROM flush_with_deletes;
+SELECT * FROM ducklake.flush_inlined_data('flush_with_deletes'::regclass);
+SELECT count(*) FROM flush_with_deletes;
+SELECT min(i), max(i), sum(i) FROM flush_with_deletes;
+SELECT * FROM flush_with_deletes WHERE i BETWEEN 13 AND 15 ORDER BY i;
+DROP TABLE flush_with_deletes;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
