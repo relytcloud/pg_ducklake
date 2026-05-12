@@ -649,30 +649,34 @@ TableInliningState GetTableInliningState(Oid table_oid, uint64_t *table_id_out, 
 
   /* Single SPI query that returns all the information we need:
    *   col 0: table_id          -- from ducklake_table
-   *   col 1: inlined schema_version -- from ducklake_inlined_data_tables
+   *   col 1: inlined schema_version -- MAX over ducklake_inlined_data_tables
    *   col 2: data_inlining_row_limit -- from ducklake_metadata (NULL if unset)
-   *   col 3: max per-table schema_version -- from ducklake_schema_versions
    *
-   * Returns 0 rows when the table doesn't exist or has no inlined
-   * data entry.  A NULL in col 2 means the limit was not explicitly
-   * set; a NULL in col 3 means no ALTER has ever been performed on
-   * this table (safe to proceed). */
+   * On a schema-bumping DDL (ADD COLUMN, SET PARTITION KEY, ...)
+   * DuckLake's commit path inserts a new ducklake_inlined_data_tables
+   * row at the new schema_version *and* keeps the old one, then routes
+   * subsequent inlined writes to the latest by selecting the row with
+   * MAX(schema_version) for the table_id (see DuckLakeMetadataManager::
+   * WriteNewInlinedData in third_party/ducklake).  We mirror that here:
+   * always read the row with MAX(schema_version) so we plan against the
+   * inlined heap table DuckLake itself would write to.  An earlier
+   * version also compared this against MAX(ducklake_schema_versions.
+   * schema_version) and rejected with TI_SCHEMA_VERSION_MISMATCH, but
+   * that was stricter than DuckLake's own contract and broke every
+   * direct insert after any schema-bumping ALTER (issue #197). */
   StringInfoData query;
   initStringInfo(&query);
   appendStringInfo(&query,
                    "SELECT dt.table_id, "
-                   "       idt.schema_version, "
+                   "       (SELECT MAX(idt.schema_version) "
+                   "        FROM ducklake.ducklake_inlined_data_tables idt "
+                   "        WHERE idt.table_id = dt.table_id), "
                    "       (SELECT m.value::bigint "
                    "        FROM ducklake.ducklake_metadata m "
                    "        WHERE m.key = 'data_inlining_row_limit' "
-                   "        AND m.scope IS NULL), "
-                   "       (SELECT MAX(sv.schema_version) "
-                   "        FROM ducklake.ducklake_schema_versions sv "
-                   "        WHERE sv.table_id = dt.table_id) "
+                   "        AND m.scope IS NULL) "
                    "FROM ducklake.ducklake_table dt "
                    "JOIN ducklake.ducklake_schema ds ON dt.schema_id = ds.schema_id "
-                   "LEFT JOIN ducklake.ducklake_inlined_data_tables idt "
-                   "  ON idt.table_id = dt.table_id "
                    "WHERE dt.table_name = '%s' "
                    "AND ds.schema_name = '%s' "
                    "AND dt.end_snapshot IS NULL "
@@ -693,7 +697,7 @@ TableInliningState GetTableInliningState(Oid table_oid, uint64_t *table_id_out, 
     }
     uint64_t table_id = DatumGetInt64(table_id_datum);
 
-    /* col 1: inlined schema_version (NULL if no inlined_data_tables row) */
+    /* col 1: MAX inlined schema_version (NULL if no inlined_data_tables row) */
     Datum sv_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull);
     if (isnull) {
       state = TI_NO_INLINED_TABLE;
@@ -708,20 +712,6 @@ TableInliningState GetTableInliningState(Oid table_oid, uint64_t *table_id_out, 
       goto done;
     }
     int64_t row_limit = DatumGetInt64(limit_datum);
-
-    /* col 3: per-table schema version check.
-     * NULL means no ALTER has been performed -- safe to proceed.
-     * Non-NULL must match the inlined table's schema_version.
-     *
-     * Previously this compared against the global schema_version in
-     * ducklake_snapshot, which caused false negatives: a DDL on any
-     * other table would bump the global version and block direct
-     * insert for all unrelated tables. */
-    Datum max_sv_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull);
-    if (!isnull && (uint64_t)DatumGetInt64(max_sv_datum) != schema_version) {
-      state = TI_SCHEMA_VERSION_MISMATCH;
-      goto done;
-    }
 
     *table_id_out = table_id;
     *schema_version_out = schema_version;

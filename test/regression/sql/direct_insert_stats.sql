@@ -76,7 +76,10 @@ DROP TABLE dis_heap;
 SELECT count(*) AS gated_count FROM direct_insert_stats_nonzero;
 
 -- ------------------------------------------------------------------
--- unmatched / schema_version_mismatch
+-- ALTER that bumps schema_version must NOT trip schema_version_mismatch.
+-- DuckLake creates a new ducklake_inlined_data_tables row at the new
+-- schema_version on commit; we plan against MAX(sv) and stay matched.
+-- (Regression guard for issue #197.)
 -- ------------------------------------------------------------------
 CREATE TABLE dis_sv (i INT) USING ducklake;
 INSERT INTO dis_sv VALUES (0);          -- inlined at sv=N

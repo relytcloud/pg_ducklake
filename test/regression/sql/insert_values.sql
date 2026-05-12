@@ -243,9 +243,11 @@ DROP TABLE iv_other;
 DROP TABLE iv_target;
 
 -- ============================================================
--- Test 16: DDL on the SAME table must disable direct insert
--- ALTER TABLE on iv_self bumps its per-table schema_version,
--- so EXPLAIN must NOT show the DuckLakeDirectInsert plan.
+-- Test 16: DDL on the SAME table must NOT disable direct insert.
+-- DuckLake creates a new ducklake_inlined_data_tables row at the
+-- bumped schema_version, and pg_ducklake now plans against
+-- MAX(idt.schema_version) (issue #197).  EXPLAIN must still show
+-- the DuckLakeDirectInsert plan after the ALTER.
 -- ============================================================
 CREATE TABLE iv_self (id int, val text) USING ducklake;
 SELECT count(*) FROM ducklake.ensure_inlined_data_table('iv_self'::regclass);
@@ -257,10 +259,11 @@ INSERT INTO iv_self VALUES (1, 'before');
 -- ALTER the same table
 ALTER TABLE iv_self ADD COLUMN extra int;
 
--- Direct insert must NOT be used (schema version mismatch)
+-- Direct insert is still used after ALTER (writes go to the new
+-- ducklake_inlined_data_<id>_<new_sv> heap table that DuckLake creates
+-- on the schema bump).
 EXPLAIN INSERT INTO iv_self (id, val, extra) VALUES (2, 'after', 42);
 
--- Data still works via the DuckDB path
 INSERT INTO iv_self (id, val, extra) VALUES (2, 'after', 42);
 SELECT id, val, extra FROM iv_self ORDER BY id;
 
