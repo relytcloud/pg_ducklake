@@ -11,6 +11,7 @@
  * PostgreSQL to DuckDB.
  */
 
+#include "pgducklake/pgducklake_create_options.hpp"
 #include "pgducklake/pgducklake_defs.hpp"
 #include "pgducklake/pgducklake_duckdb.hpp"
 #include "pgducklake/pgducklake_duckdb_query.hpp"
@@ -592,9 +593,15 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
   AtEOXact_GUC(false, save_nestlevel);
   SPI_finish();
 
+  // Drain the WITH (ducklake.*) scratchpad set by the utility hook. When
+  // empty (no WITH clause), the calls below are no-ops.
+  pgducklake::PendingCreateOptions pending = pgducklake::TakePendingCreateOptions();
+
   // Sync ducklake.default_table_path GUC to DuckDB extension option so
-  // DuckLake's CreateTable uses the custom path for data files.
+  // DuckLake's CreateTable uses the custom path for data files. The WITH
+  // override (if any) is applied after Sync so it takes precedence.
   pgducklake::SyncDefaultTablePathToDuckDB();
+  pgducklake::ApplyTablePathBeforeCreate(pending);
 
   // Generate CREATE TABLE DDL for DuckDB
   std::string create_table_ddl(pgduckdb_get_tabledef(relid));
@@ -607,6 +614,10 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("failed to create DuckLake table: %s", error_msg ? error_msg : "unknown error")));
   }
+
+  // Restore DuckDB's ducklake_default_table_path to the PG GUC value so the
+  // WITH override does not leak to later CREATE TABLE statements.
+  pgducklake::RestoreTablePathAfterCreate(pending);
 
   // Handle CREATE TABLE AS (CTAS) - populate data via DuckDB
   if (IsA(parsetree, CreateTableAsStmt) && !pgducklake::ctas_skip_data) {

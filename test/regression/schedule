@@ -18,6 +18,7 @@ test: gucs
 test: default_table_path
 test: options
 test: data_inlining_row_limit
+test: create_with_options
 test: direct_insert_stats
 test: inlined_data_schema_change
 test: types
