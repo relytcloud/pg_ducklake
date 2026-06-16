@@ -70,7 +70,7 @@ PostgresTableReader::InitUnsafe(const char *table_scan_query, bool count_tuples_
 	table_scan_query_desc = CreateQueryDesc(planned_stmt, table_scan_query, GetActiveSnapshot(), InvalidSnapshot,
 	                                        None_Receiver, nullptr, nullptr, 0);
 
-	ExecutorStart(table_scan_query_desc, 0);
+	standard_ExecutorStart(table_scan_query_desc, 0);
 
 	table_scan_planstate = ExecInitNode(planned_stmt->planTree, table_scan_query_desc->estate, 0);
 
@@ -181,8 +181,8 @@ PostgresTableReader::CleanupUnsafe() {
 	}
 
 	if (table_scan_query_desc) {
-		ExecutorFinish(table_scan_query_desc);
-		ExecutorEnd(table_scan_query_desc);
+		standard_ExecutorFinish(table_scan_query_desc);
+		standard_ExecutorEnd(table_scan_query_desc);
 		FreeQueryDesc(table_scan_query_desc);
 		table_scan_query_desc = nullptr;
 	}
