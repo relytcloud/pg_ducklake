@@ -6,79 +6,39 @@ user-invocable: true
 
 # Version Management
 
-How pg_ducklake numbers versions and maps them onto git branches and tags.
+Semantic versioning `v<major>.<minor>.<patch>`: major = breaking, minor = new
+feature, patch = bug fix only. The git tag (`vX.Y.Z`) and the extension's
+`default_version` always agree.
 
-## Version scheme
+- `main` -- next unreleased version; takes anything.
+- branch `vX.Y` -- one per minor line; bug fixes only, never features.
+- tag `vX.Y.Z` -- one per patch; immutable. Fix a bad release with a new patch
+  tag, never by re-tagging. Pushing a `v*` tag is what fires release CI.
 
-Versions are `v<major>.<minor>.<patch>` (semantic versioning):
+## Cut a minor release `vX.Y.0`
 
-- **major** -- breaking changes (incompatible SQL, catalog, or behavior).
-- **minor** -- new features, backward compatible.
-- **patch** -- bug fixes only, no new features and no breaking changes.
+Version touchpoints are already `X.Y.0` on `main` (bumped after the previous
+release). Then three things:
 
-The same number appears in the git tag (prefixed `v`) and in the extension's
-`default_version`. They must always agree.
+1. Push branch: `git branch vX.Y main && git push origin vX.Y`
+2. Push tag: `git tag vX.Y.0 vX.Y && git push origin vX.Y.0`  (release CI runs)
+3. Bump `main` to the next dev version (`vX.(Y+1).0`, or `v(X+1).0.0` if a
+   breaking change has landed) -- see touchpoints below.
 
-## Branches and tags
+## Ship a patch `vX.Y.Z` (Z > 0)
 
-| Ref | Form | Purpose | Accepts |
-|-----|------|---------|---------|
-| `main` | -- | the next, unreleased version | features + breaking changes + fixes |
-| release branch | `v<major>.<minor>` (e.g. `v1.0`) | one per minor line | bug fixes only |
-| tag | `v<major>.<minor>.<patch>` (e.g. `v1.0.1`) | one per patch release | immutable |
-
-- **`main` is always ahead of every release branch.** After `v1.0.x` ships,
-  `main` targets the next minor (`v1.1.0`) by default; it becomes the next major
-  (`v2.0.0`) as soon as a breaking change merges. Decide major-vs-minor by the
-  changes that have actually landed on `main`, not in advance.
-- **Release branches never take features.** A `v1.0` branch only ever receives
-  bug fixes destined for the next `v1.0.z` patch.
-- **Tags are immutable.** Once `v1.0.0` is pushed, never move or delete it.
-  Anything wrong with a release is corrected by a new patch tag, never by
-  re-tagging.
-
-## Release CI
-
-Release CI is triggered by pushing a `v*` tag (see the `tags: ["v*"]` triggers in
-`.github/workflows/build_and_test.yaml` and `docker.yaml`); a tag push fires the
-full multi-version, multi-arch build and image publish. `main` pushes run a
-lighter CI. **Pushing a version tag is what cuts a release** -- do it only when
-the branch is ready to ship.
-
-## Cutting a new minor release (`vX.Y.0`)
-
-1. On `main`, set the version touchpoints (below) to `X.Y.0` and verify the build
-   and tests are green.
-2. Branch `vX.Y` from `main`.
-3. Push tag `vX.Y.0` on `vX.Y` -> release CI runs.
-4. On `main`, bump to the next development version (`vX.(Y+1).0`, or
-   `v(X+1).0.0` once a breaking change is present).
-
-## Shipping a patch (`vX.Y.Z`, `Z > 0`)
-
-1. Land the fix on `main` first if the bug also exists there, so the next minor
-   does not regress.
-2. Backport (cherry-pick) it onto each affected `vX.Y` release branch. A
-   release-only fix (bug absent from `main`) is made on the branch and
-   forward-ported if relevant.
-3. On the release branch, bump the version touchpoints to `X.Y.Z`.
-4. Push tag `vX.Y.Z` -> release CI runs.
+1. Land the fix on `main` first if the bug is there too; cherry-pick onto each
+   affected `vX.Y` branch.
+2. On the `vX.Y` branch, bump touchpoints to `X.Y.Z`.
+3. Push tag `vX.Y.Z` (release CI runs).
 
 ## Version touchpoints
 
-Bump these together, in one commit, whenever the version changes:
+Per bump, in one commit:
 
 - `pg_ducklake/pg_ducklake.control` -- `default_version`.
-- `pg_ducklake/sql/pg_ducklake--<X.Y.Z>.sql` -- the install script for the new
-  version.
-- `pg_ducklake/sql/pg_ducklake--<old>--<X.Y.Z>.sql` -- a migration script so
-  `ALTER EXTENSION pg_ducklake UPDATE` works from the previous version (required
-  for every patch and minor that changes SQL objects).
+- `pg_ducklake/sql/pg_ducklake--<old>--<X.Y.Z>.sql` -- update script (empty
+  placeholder if the release has no SQL object changes).
 
-## Invariants
-
-- A tag is never moved or deleted.
-- A release branch never gains a feature.
-- A fix that applies to both `main` and a release branch lands on both; the
-  branches must not silently diverge.
-- The git tag, `default_version`, and the install-script filename agree.
+Keep one base install script (`pg_ducklake--1.0.0.sql`); PostgreSQL reaches
+`default_version` by installing it and applying the `--<old>--<new>` chain.
