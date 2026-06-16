@@ -176,20 +176,21 @@ jobs:
 
       - name: Run ClickBench
         working-directory: clickbench/pg_ducklake
+        env:
+          # upstream install reads the image from $PGDUCK_IMAGE
+          PGDUCK_IMAGE: pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
         run: |
-          # Replace docker image in benchmark.sh with our test image
-          sed -i "s|pgducklake/pgducklake:18-main|pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}|g" benchmark.sh
-          # Docker is pre-installed on GitHub Actions runners (via containerd.io);
-          # docker.io conflicts with it, so remove it from the install line.
-          sed -i 's/docker\.io //' benchmark.sh
-
-          chmod +x benchmark.sh
-          set -o pipefail
+          # docker.io conflicts with the runner's docker; the image is already
+          # pulled above, so drop the apt docker.io and install's own pull.
+          sed -i 's/docker\.io //' install
+          sed -i '/docker pull/d' install
           ./benchmark.sh 2>&1 | tee benchmark.log
-          # benchmark.sh runs `./run.sh 2>&1 | tee log.txt` without pipefail,
-          # so query failures are masked. Fail explicitly if any query errored.
-          if grep -q 'psql: error' log.txt 2>/dev/null; then
-            echo "ClickBench queries failed"; exit 1
+          # an errored query is recorded as a null timing, not a failure exit
+          if ! grep -qE '^\[' benchmark.log; then
+            echo "ClickBench produced no query results"; exit 1
+          fi
+          if grep -E '^\[' benchmark.log | grep -q null; then
+            echo "ClickBench produced null timings (a query failed)"; exit 1
           fi
 
   data_inlining_bench:
