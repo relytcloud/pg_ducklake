@@ -2,45 +2,48 @@
 
 # pg_ducklake
 
-PostgreSQL Extension for DuckLake
+Native data lakehouse in PostgreSQL, powered by [DuckLake](https://ducklake.select/) (a lakehouse format built on SQL database and Parquet files).
 
 [![dockerhub](https://img.shields.io/docker/pulls/pgducklake/pgducklake?logo=docker)](https://hub.docker.com/r/pgducklake/pgducklake)
 [![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/relytcloud/pg_ducklake/blob/main/LICENSE)
 
 </div>
 
-_This project is under high development and is not yet ready for production use._
-
-**pg_ducklake** brings a native datalake experience into PostgreSQL, powered by [DuckLake](https://ducklake.select/) (a DuckDB lakehouse format with SQL catalog metadata and open Parquet data files).
-
 ## Key Features
 
-- **Managed DuckLake tables**: Create/Write/Query DuckLake tables in PostgreSQL via SQL (e.g., psql/JDBC).
-- **HTAP support**: incremental heap-to-ducklake conversion with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe).
+- **Managed DuckLake tables**: create, write, and query DuckLake tables in PostgreSQL via SQL (e.g. psql/JDBC), with full lakehouse features -- time travel, transactions, partitioning, and sort keys.
+- **Fast Analytics**: DuckLake tables are stored columnar and analyzed by DuckDB. Hybrid queries that join them with heap tables are also supported.
+- **Realtime Ingestion**: with data inlining, small writes are buffered in the catalog (fast, avoids the small files problem) and are immediately visible to all readers.
+- **CDC Support**: incremental heap-to-DuckLake conversion with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe).
 - **DuckDB compatibility**: tables created by `pg_ducklake` are directly queryable from DuckDB clients.
-- **Cloud storage**: store data files in AWS S3 (or GCS, R2) to decouple storage and compute for serverless analytics.
-- **Fast analytics**: columnar storage + DuckDB vectorized execution, with hybrid queries over PostgreSQL heap tables supported.
 
 ## See it in action
 
 ### Your first Data Lake in PostgreSQL
 
 ```sql
--- Or use AWS S3 as data storage.
--- SET ducklake.default_table_path = 's3://my-bucket/prefix/';
-
 CREATE TABLE my_table (
     id INT,
     name TEXT,
     age INT
-) USING ducklake;
+)
+-- WITH (ducklake.table_path = 's3://my-bucket/prefix/') -- Or use AWS S3 as data storage.
+USING ducklake;
 
 INSERT INTO my_table VALUES (1, 'Alice', 25), (2, 'Bob', 30);
 
+-- Each commit is a snapshot; capture the one before the DELETE.
+SELECT max(snapshot_id) AS before_delete FROM ducklake.ducklake_snapshot \gset
+
+DELETE FROM my_table WHERE id = 1;
+
 SELECT * FROM my_table;
+
+-- Time-travel back to the snapshot that still had Alice.
+SELECT * FROM ducklake.time_travel('my_table'::regclass, :before_delete);
 ```
 
-### Access your data with DuckDB
+### Access your data with external DuckDB
 
 ```sql
 INSTALL ducklake;
@@ -48,25 +51,6 @@ LOAD ducklake;
 ATTACH 'ducklake:postgres:dbname=postgres host=localhost' AS my_ducklake (METADATA_SCHEMA 'ducklake');
 SELECT * FROM my_ducklake.public.my_table;
 ```
-
-### Cloud storage credentials
-
-Register an S3 (or GCS/R2/Azure) secret so DuckLake can read and write data files
-on object storage:
-
-```sql
-SELECT ducklake.create_s3_secret(
-    's3', 'AKIA...', 'secret...',
-    region => 'us-east-1', endpoint => 's3.amazonaws.com');
-
-SET ducklake.default_table_path = 's3://my-bucket/prefix/';
-```
-
-Credentials are stored in the PostgreSQL catalog (a `FOREIGN SERVER` + per-user
-`USER MAPPING` on the `ducklake_secret` foreign data wrapper) and applied to
-DuckDB automatically. See [SQL objects -> Secrets](pg_ducklake/docs/sql_objects.md#secrets)
-for the full reference and the raw `CREATE SERVER` / `CREATE USER MAPPING` form,
-or the upstream [DuckLake connection and secrets guide](https://ducklake.select/docs/stable/duckdb/usage/connecting).
 
 ## Quick Start
 
@@ -90,14 +74,14 @@ Requirements:
 ```bash
 git clone https://github.com/relytcloud/pg_ducklake
 cd pg_ducklake
-# (Optional) install pg_duckdb
-# make pg_duckdb/install
 make install
 ```
 
 _See [documentation](pg_ducklake/docs/README.md) for detailed instructions._
 
 ## Usecases
+
+For a detailed comparison of upstream DuckLake features and what pg_ducklake currently supports, see [DuckLake Feature Coverage](pg_ducklake/docs/ducklake_feature_coverage.md).
 
 ### Convert a PostgreSQL heap table into a DuckLake table
 
@@ -131,15 +115,90 @@ FROM titanic
 GROUP BY "Pclass", "Sex";
 ```
 
-## Roadmap
+### Data Inlining
 
-For a detailed comparison of upstream DuckLake features and what pg_ducklake currently supports, see [DuckLake Feature Coverage](pg_ducklake/docs/ducklake_feature_coverage.md).
+Small writes are buffered in the metadata catalog instead of producing a Parquet
+file per insert, then flushed to Parquet in bulk. This keeps high-frequency
+ingestion fast, avoids the small files problem, and the buffered rows are
+immediately visible to every reader. Inlining is on by default (row limit `10`);
+tune it with the `data_inlining_row_limit` option.
 
-### pg_ducklake
+```sql
+CALL ducklake.set_option('data_inlining_row_limit', 100);
 
-- [x] HTAP support for incremental row-store to column-store conversion (PostgreSQL heap to DuckLake) with [pg_duckpipe](https://github.com/relytcloud/pg_duckpipe)
-- [ ] Better transaction concurrency model (based on PostgreSQL XID)
-- [ ] Faster metadata operations via PostgreSQL native functions (e.g., SPI)
+CREATE TABLE events (id INT, kind TEXT) USING ducklake;
+
+-- Inlined rows are immediately visible to every reader.
+INSERT INTO events VALUES (1, 'login'), (2, 'click');
+SELECT * FROM events ORDER BY id;
+
+-- Flush inlined rows out to Parquet (the background worker does this too).
+SELECT * FROM ducklake.flush_inlined_data('events'::regclass);
+```
+
+### Sorted Tables & Bucket Partitioning
+
+Partition data files by column values or transforms (`bucket(N, col)`,
+`year`/`month`/`day`/`hour`) so queries prune irrelevant files, and keep rows
+sorted within each file for faster range scans and better compression.
+
+```sql
+CREATE TABLE measurements (
+    device_id INT,
+    ts TIMESTAMP,
+    reading DOUBLE PRECISION
+) USING ducklake;
+
+-- Distribute files by a hash bucket on device_id and by month of the timestamp.
+CALL ducklake.set_partition('measurements'::regclass, 'bucket(4, device_id)', 'month(ts)');
+
+-- Keep rows ordered within each file (or use CALL ducklake.set_sort(...)).
+CREATE INDEX ON measurements USING ducklake_sorted (device_id, ts);
+
+INSERT INTO measurements VALUES
+    (1, '2024-01-15 10:00', 21.5),
+    (2, '2024-02-20 11:00', 22.1);
+```
+
+### Maintenance
+
+DuckLake tables accumulate small files, deleted rows, and old snapshots over
+time. A background worker compacts them automatically, and the same operations
+are available on demand:
+
+```sql
+-- Compact small adjacent Parquet files into fewer, larger ones.
+SELECT * FROM ducklake.merge_adjacent_files('my_table'::regclass);
+
+-- Expire snapshots beyond a retention window, then delete their files.
+CALL ducklake.set_option('expire_older_than', '7 days');
+SELECT * FROM ducklake.expire_snapshots();
+SELECT * FROM ducklake.cleanup_old_files();
+```
+
+`ducklake.rewrite_data_files()` rewrites files to physically purge rows removed
+by `UPDATE`/`DELETE`. See [Settings](pg_ducklake/docs/settings.md) for the
+maintenance worker GUCs.
+
+### Cloud storage credentials
+
+Register an S3 (or GCS/R2/Azure) secret so DuckLake can read and write data files
+on object storage:
+
+```sql
+SELECT ducklake.create_s3_secret(
+    's3', 'AKIA...', 'secret...',
+    region => 'us-east-1', endpoint => 's3.amazonaws.com');
+
+SET ducklake.default_table_path = 's3://my-bucket/prefix/';
+```
+
+Credentials are stored in the PostgreSQL catalog (a `FOREIGN SERVER` + per-user
+`USER MAPPING` on the `ducklake_secret` foreign data wrapper) and applied to
+DuckDB automatically. The `ducklake.create_s3_secret` / `ducklake.create_azure_secret`
+helpers wrap the raw `CREATE SERVER` / `CREATE USER MAPPING` form; see the upstream
+[DuckLake connection and secrets guide](https://ducklake.select/docs/stable/duckdb/usage/connecting)
+for the full set of options.
 
 ## Documentation
 

@@ -27,21 +27,29 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 
 ## DuckLake Catalog Options
 
-| Name | Scope |
-| :--- | :---- |
-| [`data_inlining_row_limit`](#data_inlining_row_limit) | global, table |
-| [`delete_older_than`](#delete_older_than) | global, table |
-| [`expire_older_than`](#expire_older_than) | global, table |
-| [`hive_file_pattern`](#hive_file_pattern) | global, table |
-| [`parquet_compression`](#parquet_compression) | global, table |
-| [`parquet_compression_level`](#parquet_compression_level) | global, table |
-| [`parquet_row_group_size`](#parquet_row_group_size) | global, table |
-| [`parquet_row_group_size_bytes`](#parquet_row_group_size_bytes) | global, table |
-| [`parquet_version`](#parquet_version) | global, table |
-| [`per_thread_output`](#per_thread_output) | global, table |
-| [`require_commit_message`](#require_commit_message) | global, table |
-| [`rewrite_delete_threshold`](#rewrite_delete_threshold) | global, table |
-| [`target_file_size`](#target_file_size) | global, table |
+Defaults and scopes track the upstream
+[DuckLake configuration reference](https://ducklake.select/docs/stable/duckdb/usage/configuration).
+Every option can be scoped global, schema, or table (most specific wins).
+
+| Name | Default |
+| :--- | :------ |
+| [`auto_compact`](#auto_compact) | `true` |
+| [`created_by`](#created_by) | -- |
+| [`data_inlining_row_limit`](#data_inlining_row_limit) | `10` |
+| [`data_path`](#data_path) | -- |
+| [`delete_older_than`](#delete_older_than) | -- |
+| [`expire_older_than`](#expire_older_than) | -- |
+| [`hive_file_pattern`](#hive_file_pattern) | `true` |
+| [`parquet_compression`](#parquet_compression) | `snappy` |
+| [`parquet_compression_level`](#parquet_compression_level) | `3` |
+| [`parquet_row_group_size`](#parquet_row_group_size) | `122880` |
+| [`parquet_row_group_size_bytes`](#parquet_row_group_size_bytes) | -- |
+| [`parquet_version`](#parquet_version) | `1` |
+| [`per_thread_output`](#per_thread_output) | `false` |
+| [`require_commit_message`](#require_commit_message) | `false` |
+| [`rewrite_delete_threshold`](#rewrite_delete_threshold) | `0.95` |
+| [`sort_on_insert`](#sort_on_insert) | `true` |
+| [`target_file_size`](#target_file_size) | `512MB` |
 
 ## Detailed Descriptions
 
@@ -145,92 +153,115 @@ See [access_control.md](access_control.md) for role usage details.
 
 ### DuckLake Catalog Options
 
-Set via `CALL ducklake.set_option(name, value [, scope])`. The optional `scope` parameter limits the option to a specific table (`'my_table'::regclass`). Without `scope`, the option applies globally.
+Set via `CALL ducklake.set_option(name, value [, scope])`. The optional `scope` parameter limits the option to a specific table (`'my_table'::regclass`) or schema (`'my_schema'::regnamespace`). Without `scope`, the option applies globally; the most specific scope set wins (table > schema > global).
 
 These options are managed by the DuckLake catalog and stored in metadata tables, not in `postgresql.conf`.
 
+### `auto_compact`
+
+Whether a table is targeted when compaction runs without a specific table argument (e.g. by the background maintenance worker).
+
+- **Default**: `true`
+
+### `created_by`
+
+Informational tag recording the tool that wrote the DuckLake. No functional effect.
+
+- **Default**: unset
+
 ### `data_inlining_row_limit`
 
-Number of rows to keep inlined in the metadata catalog before writing to Parquet files. Small inserts are stored inline for better performance.
+Number of rows to keep inlined in the metadata catalog before writing to Parquet files. Small inserts are stored inline for better performance; `0` disables inlining.
 
-- **Default**: `0` (disabled)
-- **Scope**: global, table
+- **Default**: `10`
 
 ```sql
 CALL ducklake.set_option('data_inlining_row_limit', 100);
 CALL ducklake.set_option('data_inlining_row_limit', 50, 'my_table'::regclass);
 ```
 
+### `data_path`
+
+Directory where data files are written. Usually set per-session with the [`ducklake.default_table_path`](#ducklakedefault_table_path) GUC or per-table with `WITH (ducklake.table_path = ...)`.
+
+- **Default**: unset
+
 ### `parquet_compression`
 
 Compression algorithm for newly written Parquet files.
 
+- **Default**: `snappy`
 - **Values**: `uncompressed`, `snappy`, `gzip`, `zstd`, `brotli`, `lz4`, `lz4_raw`
-- **Scope**: global, table
 
 ### `parquet_compression_level`
 
 Compression level (codec-specific, e.g., 1--22 for zstd).
 
-- **Scope**: global, table
+- **Default**: `3`
 
 ### `parquet_version`
 
 Parquet format version.
 
+- **Default**: `1`
 - **Values**: `1`, `2`
-- **Scope**: global, table
 
 ### `parquet_row_group_size`
 
 Number of rows per Parquet row group.
 
-- **Scope**: global, table
+- **Default**: `122880`
 
 ### `parquet_row_group_size_bytes`
 
 Maximum size of a Parquet row group (e.g., `'64MB'`).
 
-- **Scope**: global, table
+- **Default**: unset
 
 ### `target_file_size`
 
-Target size for data files (e.g., `'128MB'`).
+Target size for data files written by insertion and compaction (e.g., `'128MB'`).
 
-- **Scope**: global, table
+- **Default**: `512MB`
 
 ### `per_thread_output`
 
 Whether each thread outputs to separate files during parallel writes.
 
-- **Scope**: global, table
+- **Default**: `false`
 
 ### `hive_file_pattern`
 
-Whether to use Hive-style partitioning directory patterns.
+Whether partitioned data uses a Hive-style folder layout.
 
-- **Scope**: global, table
+- **Default**: `true`
 
 ### `rewrite_delete_threshold`
 
 Fraction of deleted rows (0.0--1.0) before a file is rewritten during maintenance.
 
-- **Scope**: global, table
+- **Default**: `0.95`
+
+### `sort_on_insert`
+
+Whether `INSERT` sorts data according to the table's `SET SORTED BY` order.
+
+- **Default**: `true`
 
 ### `require_commit_message`
 
 Whether to require a commit message when creating snapshots.
 
-- **Scope**: global, table
+- **Default**: `false`
 
 ### `delete_older_than`
 
-Time interval for deleting old files (e.g., `'24 hours'`).
+Required age of unused files before cleanup removes them (e.g., `'24 hours'`).
 
-- **Scope**: global, table
+- **Default**: unset
 
 ### `expire_older_than`
 
-Time interval for expiring old snapshots (e.g., `'7 days'`).
+Required age of snapshots before expiration (e.g., `'7 days'`).
 
-- **Scope**: global, table
+- **Default**: unset

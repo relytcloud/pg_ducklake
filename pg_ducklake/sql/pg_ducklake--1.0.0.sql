@@ -168,10 +168,13 @@ CREATE ACCESS METHOD ducklake
     HANDLER ducklake._am_handler;
 
 -- Sorted-index access method: ducklake_sorted -----------------------
--- The user-facing sort API (ducklake.set_sort / reset_sort / get_sort) lives
--- in the Functions section. The opclasses below are STORAGE-only (no operators
--- or functions) so CREATE INDEX accepts common column types without an
--- explicit opclass.
+-- CREATE INDEX ... USING ducklake_sorted (cols) sets the table's sort order
+-- (catalog-only marker, no stored data); DROP INDEX resets it, and DuckDB's
+-- ALTER TABLE ... SET/RESET SORTED BY syncs back via the snapshot trigger.
+-- Unsupported index options: CONCURRENTLY, UNIQUE, WHERE, INCLUDE, TABLESPACE,
+-- custom opclass, COLLATE. The procedure form is ducklake.set_sort (Functions
+-- section). The opclasses below are STORAGE-only (no operators or functions) so
+-- CREATE INDEX accepts common column types without an explicit opclass.
 
 CREATE FUNCTION ducklake._sorted_am_handler(internal)
     RETURNS index_am_handler
@@ -294,6 +297,9 @@ CREATE FOREIGN DATA WRAPPER ducklake_fdw
 -- Secrets (cloud storage credentials)
 -- A FOREIGN SERVER (public options) + USER MAPPING (secret options) on the
 -- ducklake_secret FDW becomes a DuckDB CREATE SECRET on each connection.
+-- Prefer per-user mappings; a USER MAPPING FOR PUBLIC shares its credentials
+-- with every role. Keep the FDW restricted -- do not GRANT USAGE ON FOREIGN
+-- DATA WRAPPER ducklake_secret TO PUBLIC.
 -- ============================================================
 
 CREATE FUNCTION ducklake._secret_fdw_handler()
@@ -340,6 +346,7 @@ LANGUAGE C AS 'MODULE_PATHNAME', 'ducklake_create_azure_secret';
 -- ============================================================
 
 -- Options -----------------------------------------------------------
+-- Scope precedence when an option is read: table > schema > global.
 
 -- duckdb-only proc
 CREATE PROCEDURE ducklake.set_option(
@@ -403,7 +410,8 @@ SET search_path = pg_catalog, pg_temp
 AS 'MODULE_PATHNAME', 'ducklake_function_mapping'
 LANGUAGE C;
 
--- passthrough
+-- passthrough. Eagerly creates the inlined data table (normally created lazily
+-- on first insert); required before COPY FROM STDIN can write into it.
 CREATE FUNCTION ducklake.ensure_inlined_data_table(schema_name text, table_name text)
 RETURNS SETOF ducklake.row
 SET search_path = pg_catalog, pg_temp

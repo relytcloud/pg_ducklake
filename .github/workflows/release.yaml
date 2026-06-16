@@ -1,0 +1,36 @@
+# Create a draft GitHub release whenever a v<major>.<minor>.<patch> tag is
+# pushed. The release is left as a draft for a maintainer to review.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write  # create GitHub releases
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft-release:
+    name: Draft release for ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it untouched."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --draft \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag

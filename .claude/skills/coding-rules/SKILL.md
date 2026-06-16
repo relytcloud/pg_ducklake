@@ -1,6 +1,6 @@
 ---
 name: coding-rules
-description: "Code style, include order, docs update rules, and submodule policy. MUST consult when: writing or modifying C/C++ files (include order matters), adding/removing/changing ducklake.* SQL functions or procedures (docs/sql_objects.md must be updated), editing third_party/ code, or reviewing code for style."
+description: "Code style, include order, docs update rules, and submodule policy. MUST consult when: writing or modifying C/C++ files (include order matters), adding/removing/changing ducklake.* SQL functions or procedures (keep their inline comments in pg_ducklake--*.sql current), editing third_party/ code, or reviewing code for style."
 ---
 
 # Coding Rules
@@ -29,16 +29,18 @@ To avoid _Docs Rot_, keep docs near the code. Do NOT write separate explanation 
 ```
 README.md
   +-- pg_ducklake
-      +-- docs/README.md              index of all human docs
-            +-- docs/sql_objects.md   all SQL objects, functions, and procedures
-            +-- docs/settings.md      GUCs and DuckLake options
+      +-- sql/pg_ducklake--*.sql       all SQL objects, documented inline
+      +-- docs/README.md               index of all human docs
+            +-- docs/settings.md       GUCs and DuckLake options
             +-- docs/access_control.md
             +-- docs/compilation.md
 ```
 
 Every new doc file must be linked from `docs/README.md`. Keep synced with code:
 
-- When adding, removing, or changing a `ducklake.*` SQL function or procedure in `pg_ducklake--*.sql`, update `docs/sql_objects.md`.
+- SQL objects are documented inline in `pg_ducklake--*.sql` (there is no separate
+  reference doc). When adding, removing, or changing a `ducklake.*` SQL function
+  or procedure, keep its inline comment current.
 - In reference docs, order TOC tables alphabetically; keep detailed descriptions in logical order.
 
 ## Miscellaneous

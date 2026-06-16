@@ -16,8 +16,8 @@ in inlined data tables (the in-catalog row store controlled by
 | | `uint16` | USMALLINT | Native | INTEGER |
 | | `uint32` | UINTEGER | Native | BIGINT |
 | | `uint64` | UBIGINT | Not native | VARCHAR |
-| | `hugeint` | HUGEINT | Not native | VARCHAR |
-| | `uhugeint` | UHUGEINT | Not native | VARCHAR |
+| | `int128` | HUGEINT | Not native | VARCHAR |
+| | `uint128` | UHUGEINT | Not native | VARCHAR |
 | | `float32` | FLOAT | Native | REAL |
 | | `float64` | DOUBLE | Native | DOUBLE PRECISION |
 | | `decimal(P, S)` | DECIMAL | Native | DECIMAL(P, S) |
@@ -44,7 +44,7 @@ in inlined data tables (the in-catalog row store controlled by
 | | `multipoint` | GEOMETRY | No inline | -- |
 | | `multilinestring` | GEOMETRY | No inline | -- |
 | | `multipolygon` | GEOMETRY | No inline | -- |
-| | `linestring z` | GEOMETRY | No inline | -- |
+| | `linestring_z` | GEOMETRY | No inline | -- |
 | | `geometrycollection` | GEOMETRY | No inline | -- |
 
 ## Inlined Data Support Categories

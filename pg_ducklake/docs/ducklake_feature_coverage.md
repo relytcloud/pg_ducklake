@@ -6,7 +6,7 @@ against what pg_ducklake currently exposes or supports.
 
 Legend: `[x]` supported, `[ ]` not supported
 
-Last updated: 2026-04-10
+Last updated: 2026-06-16
 
 ## Core DML Operations
 
@@ -65,7 +65,7 @@ Last updated: 2026-04-10
 - [x] Set partition keys: `ducklake.set_partition()`
 - [x] Reset partition: `ducklake.reset_partition()`
 - [x] Get partition info: `ducklake.get_partition()`
-- [x] Partition transforms (year/month/day/hour)
+- [x] Partition transforms (bucket/year/month/day/hour)
 
 ## Sorted Tables
 
