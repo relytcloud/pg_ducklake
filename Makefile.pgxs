@@ -21,6 +21,13 @@ INCLUDEDIR_SERVER := ${shell $(PG_CONFIG) --includedir-server}
 USE_PGXS = 1
 include $(PGXS)
 
+# Optional compiler cache (e.g. sccache); prepended to PGXS's compile commands.
+COMPILER_LAUNCHER ?=
+ifneq ($(COMPILER_LAUNCHER),)
+COMPILE.c := $(COMPILER_LAUNCHER) $(COMPILE.c)
+COMPILE.cc := $(COMPILER_LAUNCHER) $(COMPILE.cc)
+endif
+
 # All the below stuff is vendored in from Postgres its Makefile.global. It's
 # normally only enabled when --enabled-depend is provided to Postgres its
 # ./configure script. This enables it even if that is not the case, so that
