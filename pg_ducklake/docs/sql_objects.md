@@ -46,8 +46,10 @@ Default operator classes are registered for common types (bool, int2, int4, int8
 | FDW | Handler | Validator |
 |-----|---------|-----------|
 | `ducklake_fdw` | `ducklake._fdw_handler()` | `ducklake._fdw_validator(text[], oid)` |
+| `ducklake_secret` | `ducklake._secret_fdw_handler()` | `ducklake._secret_fdw_validator(text[], oid)` |
 
-See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
+See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide. `ducklake_secret`
+carries cloud-storage credentials (see [Secrets](#secrets) below), not foreign tables.
 
 ## Functions & Procedures
 
@@ -98,6 +100,8 @@ See [Foreign Data Wrapper](foreign_data_wrapper.md) for usage guide.
 | Variant | [`-> / ->> operators`](#variant_operators) | passthrough | - |
 | File Readers | [`ducklake.read_csv(text, ...)`](#read_csv) | passthrough | `(text[], ...)` |
 | | [`ducklake.read_parquet(text, ...)`](#read_parquet) | passthrough | `(text[], ...)` |
+| Secrets | [`ducklake.create_s3_secret(...)`](#create_s3_secret) | native | - |
+| | [`ducklake.create_azure_secret(text, text)`](#create_azure_secret) | native | - |
 | Admin | [`ducklake.query(text)`](#query) | passthrough | - |
 | | [`ducklake.raw_query(text)`](#raw_query) | native | - |
 | | [`ducklake.recycle_ddb()`](#recycle_ddb) | native proc | - |
@@ -553,6 +557,45 @@ Reads one or more Parquet files through DuckDB's Parquet reader. Like
 
 ```sql
 SELECT * FROM ducklake.read_parquet('s3://bucket/prefix/*.parquet');
+```
+
+### <a id="secrets"></a>Secrets (cloud storage credentials)
+
+Credentials for S3/GCS/R2/Azure live in the PostgreSQL catalog as a `FOREIGN
+SERVER` (public options such as `endpoint`/`region`) plus a `USER MAPPING`
+(secret options such as `key_id`/`secret`, hidden from other roles by PostgreSQL
+ACLs) on the `ducklake_secret` FDW. On each DuckDB connection pg_ducklake drops
+and re-emits the matching DuckDB `CREATE SECRET` statements, so credentials are
+per-user, transactional, and survive dump/restore. The `httpfs` extension is
+autoinstalled on first use.
+
+A `USER MAPPING FOR PUBLIC` shares its credentials with every role (standard
+PostgreSQL FDW semantics): each backend loads the mapping for the current user,
+falling back to the `PUBLIC` mapping. Prefer per-user mappings, and do not
+`GRANT USAGE ON FOREIGN DATA WRAPPER ducklake_secret TO PUBLIC` -- creating
+secret servers should stay restricted to trusted roles.
+
+#### <a name="create_s3_secret"></a>`ducklake.create_s3_secret(type text, key_id text, secret text, session_token text DEFAULT '', region text DEFAULT '', url_style text DEFAULT '', provider text DEFAULT '', endpoint text DEFAULT '', scope text DEFAULT '', validation text DEFAULT '', use_ssl text DEFAULT '')` -> `text`
+
+Convenience wrapper for an `s3`, `gcs`, or `r2` secret: creates the SERVER (from
+the non-secret options) and a USER MAPPING for the current user (from `key_id` /
+`secret` / `session_token`), and returns the generated server name. Empty-string
+arguments are omitted. For other secret types or providers, create the SERVER and
+USER MAPPING directly on the `ducklake_secret` FDW.
+
+```sql
+SELECT ducklake.create_s3_secret(
+  's3', 'AKIA...', 'secret...',
+  region => 'us-east-1', endpoint => 's3.amazonaws.com');
+```
+
+#### <a name="create_azure_secret"></a>`ducklake.create_azure_secret(connection_string text, scope text DEFAULT '')` -> `text`
+
+Convenience wrapper for an Azure Blob Storage secret built from a connection
+string; returns the generated server name.
+
+```sql
+SELECT ducklake.create_azure_secret('DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;');
 ```
 
 #### <a name="query"></a>`ducklake.query(query text)` -> `SETOF ducklake.row`

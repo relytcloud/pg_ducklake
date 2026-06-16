@@ -13,13 +13,35 @@ public:
 	static DuckDBManager &Get();
 	static void Reset();
 
+	// Mark cached secrets stale (next GetConnection reloads them). No-op if the
+	// instance is not yet initialized. Called from syscache invalidation.
+	static void InvalidateSecretsIfInitialized();
+
+	// Per-table CREATE ... WITH (ducklake.table_path=...) override. While set, it
+	// takes precedence over the ducklake.default_table_path session GUC in
+	// RefreshConnectionState (which would otherwise re-push the default on the
+	// next GetConnection and clobber the override before the CREATE runs).
+	void SetTablePathOverride(const std::string &path);
+	void ClearTablePathOverride();
+
 protected:
 	void OnPostInit(duckdb::ClientContext &context) override;
-	// Syncs ducklake.default_table_path to DuckDB per GetConnection so a runtime SET
-	// reaches the next CREATE TABLE; OnPostInit runs once per instance and would miss it.
+	// Syncs ducklake.default_table_path and reloads S3/Azure secrets per
+	// GetConnection so a runtime SET / catalog change reaches the next statement;
+	// OnPostInit runs once per instance and would miss it.
 	void RefreshConnectionState(duckdb::ClientContext &context) override;
 
 private:
+	void DropSecrets(duckdb::ClientContext &context);
+	void LoadSecrets(duckdb::ClientContext &context);
+
+	bool secrets_valid_ = false;
+	bool has_table_path_override_ = false;
+	std::string table_path_override_;
+	// Last value pushed to DuckDB's ducklake_default_table_path, so
+	// RefreshConnectionState only issues SET/RESET when it actually changes
+	// (and self-corrects after an override is cleared, even on the error path).
+	std::string last_pushed_table_path_;
 	static duckdb::unique_ptr<DuckDBManager> instance_;
 };
 

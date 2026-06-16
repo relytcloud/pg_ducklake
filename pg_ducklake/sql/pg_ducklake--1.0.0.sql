@@ -291,6 +291,48 @@ CREATE FOREIGN DATA WRAPPER ducklake_fdw
     VALIDATOR ducklake._fdw_validator;
 
 -- ============================================================
+-- Secrets (cloud storage credentials)
+-- A FOREIGN SERVER (public options) + USER MAPPING (secret options) on the
+-- ducklake_secret FDW becomes a DuckDB CREATE SECRET on each connection.
+-- ============================================================
+
+CREATE FUNCTION ducklake._secret_fdw_handler()
+    RETURNS fdw_handler
+    AS 'MODULE_PATHNAME', 'ducklake_secret_fdw_handler'
+    LANGUAGE C STRICT;
+
+CREATE FUNCTION ducklake._secret_fdw_validator(text[], oid)
+    RETURNS void
+    AS 'MODULE_PATHNAME', 'ducklake_secret_fdw_validator'
+    LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FOREIGN DATA WRAPPER ducklake_secret
+    HANDLER ducklake._secret_fdw_handler
+    VALIDATOR ducklake._secret_fdw_validator;
+
+-- Convenience wrapper: creates the SERVER + USER MAPPING for an s3/gcs/r2 secret
+-- and returns the generated server name.
+CREATE FUNCTION ducklake.create_s3_secret(
+    type          TEXT,
+    key_id        TEXT,
+    secret        TEXT,
+    session_token TEXT DEFAULT '',
+    region        TEXT DEFAULT '',
+    url_style     TEXT DEFAULT '',
+    provider      TEXT DEFAULT '',
+    endpoint      TEXT DEFAULT '',
+    scope         TEXT DEFAULT '',
+    validation    TEXT DEFAULT '',
+    use_ssl       TEXT DEFAULT ''
+)
+RETURNS TEXT
+LANGUAGE C AS 'MODULE_PATHNAME', 'ducklake_create_s3_secret';
+
+CREATE FUNCTION ducklake.create_azure_secret(connection_string TEXT, scope TEXT DEFAULT '')
+RETURNS TEXT
+LANGUAGE C AS 'MODULE_PATHNAME', 'ducklake_create_azure_secret';
+
+-- ============================================================
 -- Functions & Procedures
 -- Kinds: passthrough (routed to DuckDB as-is), rewrite (regclass ->
 -- (schema, table) then routed), duckdb-only (CALL run in DuckDB),

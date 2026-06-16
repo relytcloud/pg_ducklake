@@ -103,22 +103,14 @@ ClearPendingCreateOptions() {
 	g_pending = PendingCreateOptions {};
 }
 
-void
-ApplyTablePathBeforeCreate(const PendingCreateOptions &opts) {
-	if (!opts.has_table_path)
-		return;
-	// RefreshConnectionState is a no-op when the session GUC is empty (common case),
-	// so this override survives to the CREATE TABLE.
-	DuckDBQueryOrThrow("SET ducklake_default_table_path = " + duckdb::KeywordHelper::WriteQuoted(opts.table_path));
+TablePathOverrideGuard::TablePathOverrideGuard(const PendingCreateOptions &opts) : active_(opts.has_table_path) {
+	if (active_)
+		DuckDBManager::Get().SetTablePathOverride(opts.table_path);
 }
 
-void
-RestoreTablePathAfterCreate(const PendingCreateOptions &opts) {
-	if (!opts.has_table_path)
-		return;
-	// RESET so the WITH value does not leak to later CREATE TABLEs; the session
-	// GUC (if set) is re-pushed by RefreshConnectionState on the next statement.
-	DuckDBQueryOrThrow("RESET ducklake_default_table_path");
+TablePathOverrideGuard::~TablePathOverrideGuard() {
+	if (active_)
+		DuckDBManager::Get().ClearTablePathOverride();
 }
 
 } // namespace pgducklake

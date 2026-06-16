@@ -47,5 +47,6 @@ test: fdw
 test: frozen_fdw
 test: connection_string
 test: import_foreign_schema
+test: secrets
 test: access_control
 test: quoted_names

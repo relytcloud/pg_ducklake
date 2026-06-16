@@ -1,4 +1,5 @@
 #include "pgducklake/constants.hpp"
+#include "pgducklake/ducklake_secret.hpp"
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/functions.hpp"
 #include "pgducklake/guc.hpp"
@@ -110,17 +111,75 @@ DuckDBManager::OnPostInit(duckdb::ClientContext &context) {
 
 void
 DuckDBManager::RefreshConnectionState(duckdb::ClientContext &context) {
-	// Push ducklake.default_table_path to DuckDB on every GetConnection so a
-	// runtime SET is observed by the next CREATE TABLE. The (context, query)
-	// overload avoids recursing back into GetConnection.
-	if (default_table_path && default_table_path[0] != '\0') {
+	// Reconcile ducklake_default_table_path on every GetConnection: a per-table
+	// WITH override wins over the ducklake.default_table_path session GUC. Only
+	// issue SET/RESET when the desired value changes, so the common (no path)
+	// case is free and a cleared override self-corrects on the next connection.
+	std::string desired_table_path;
+	if (has_table_path_override_) {
+		desired_table_path = table_path_override_;
+	} else if (default_table_path && default_table_path[0] != '\0') {
+		desired_table_path = default_table_path;
+	}
+	if (desired_table_path != last_pushed_table_path_) {
 		try {
-			DuckDBQueryOrThrow(context, "SET ducklake_default_table_path = " +
-			                                duckdb::KeywordHelper::WriteQuoted(std::string(default_table_path)));
+			if (desired_table_path.empty()) {
+				DuckDBQueryOrThrow(context, "RESET ducklake_default_table_path");
+			} else {
+				DuckDBQueryOrThrow(context, "SET ducklake_default_table_path = " +
+				                                duckdb::KeywordHelper::WriteQuoted(desired_table_path));
+			}
+			last_pushed_table_path_ = desired_table_path;
 		} catch (const std::exception &e) {
-			elog(WARNING, "failed to sync ducklake.default_table_path to DuckDB: %s", DuckDBErrorMessage(e).c_str());
+			elog(WARNING, "failed to sync ducklake table path to DuckDB: %s", DuckDBErrorMessage(e).c_str());
 		}
 	}
+
+	// Re-emit S3/Azure secrets from the catalog when a SERVER/USER MAPPING changed.
+	if (!secrets_valid_) {
+		DropSecrets(context);
+		LoadSecrets(context);
+		secrets_valid_ = true;
+	}
+}
+
+void
+DuckDBManager::LoadSecrets(duckdb::ClientContext &context) {
+	auto queries = InvokeCPPFunc(pgducklake::ListCreateSecretQueries);
+	ListCell *lc;
+	foreach (lc, queries) {
+		QueryOrThrow(context, (const char *)lfirst(lc));
+	}
+}
+
+void
+DuckDBManager::DropSecrets(duckdb::ClientContext &context) {
+	auto secrets = QueryOrThrow(context, "SELECT name FROM duckdb_secrets() WHERE name LIKE 'pgducklake_secret_%';");
+	while (auto chunk = secrets->Fetch()) {
+		for (size_t i = 0, s = chunk->size(); i < s; ++i) {
+			QueryOrThrow(context, duckdb::StringUtil::Format("DROP SECRET %s;", chunk->GetValue(0, i).ToString()));
+		}
+	}
+}
+
+void
+DuckDBManager::InvalidateSecretsIfInitialized() {
+	if (IsInitialized()) {
+		instance_->secrets_valid_ = false;
+	}
+}
+
+void
+DuckDBManager::SetTablePathOverride(const std::string &path) {
+	// Flag only; RefreshConnectionState applies it on the CREATE's GetConnection.
+	has_table_path_override_ = true;
+	table_path_override_ = path;
+}
+
+void
+DuckDBManager::ClearTablePathOverride() {
+	has_table_path_override_ = false;
+	table_path_override_.clear();
 }
 
 } // namespace pgducklake
@@ -153,6 +212,12 @@ DuckDBManager::Reset() {
 	instance_->connection = nullptr;
 	delete instance_->database;
 	instance_->database = nullptr;
+	// The fresh instance has none of the state we cached for the old one; force
+	// RefreshConnectionState to re-push secrets and the table path next time.
+	instance_->secrets_valid_ = false;
+	instance_->last_pushed_table_path_.clear();
+	instance_->has_table_path_override_ = false;
+	instance_->table_path_override_.clear();
 }
 
 static duckdb::Connection *

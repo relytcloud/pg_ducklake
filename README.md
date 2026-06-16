@@ -49,7 +49,24 @@ ATTACH 'ducklake:postgres:dbname=postgres host=localhost' AS my_ducklake (METADA
 SELECT * FROM my_ducklake.public.my_table;
 ```
 
-For cloud storage (AWS S3 or Azure Blob Storage), see the [DuckLake connection and secrets guide](https://ducklake.select/docs/stable/duckdb/usage/connecting).
+### Cloud storage credentials
+
+Register an S3 (or GCS/R2/Azure) secret so DuckLake can read and write data files
+on object storage:
+
+```sql
+SELECT ducklake.create_s3_secret(
+    's3', 'AKIA...', 'secret...',
+    region => 'us-east-1', endpoint => 's3.amazonaws.com');
+
+SET ducklake.default_table_path = 's3://my-bucket/prefix/';
+```
+
+Credentials are stored in the PostgreSQL catalog (a `FOREIGN SERVER` + per-user
+`USER MAPPING` on the `ducklake_secret` foreign data wrapper) and applied to
+DuckDB automatically. See [SQL objects -> Secrets](pg_ducklake/docs/sql_objects.md#secrets)
+for the full reference and the raw `CREATE SERVER` / `CREATE USER MAPPING` form,
+or the upstream [DuckLake connection and secrets guide](https://ducklake.select/docs/stable/duckdb/usage/connecting).
 
 ## Quick Start
 

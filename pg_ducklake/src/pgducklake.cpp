@@ -32,6 +32,7 @@ void InitRuleutilsHooks();
 void InitTypeHooks();
 void RegisterXactCallback();
 void InitFDW();
+void InitSecrets();
 
 } // namespace pgducklake
 
@@ -64,6 +65,7 @@ _PG_init(void) {
 	// Mirror PG transaction events to DuckDB's DuckLake transaction.
 	pgducklake::RegisterXactCallback();
 	pgducklake::InitFDW();
+	pgducklake::InitSecrets();
 }
 
 /*

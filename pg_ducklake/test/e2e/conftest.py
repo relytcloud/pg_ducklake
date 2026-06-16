@@ -414,8 +414,75 @@ def s3(minio_server, request):
         pass  # best-effort; the container is removed at session end anyway
 
 
+@pytest.fixture
+def s3_second_bucket(minio_server, request):
+    """A second bucket on the same MinIO -- one endpoint secret covers both."""
+    if minio_server is None:
+        skip_or_fail(getattr(request.session, "minio_skip_reason", "no S3 server"))
+
+    from minio import Minio
+
+    client = Minio(
+        minio_server.endpoint,
+        access_key=minio_server.access_key,
+        secret_key=minio_server.secret_key,
+        secure=False,
+    )
+    bucket = f"e2e-alt-{uuid.uuid4().hex[:12]}"
+    client.make_bucket(bucket)
+    ctx = S3(server=minio_server, bucket=bucket, client=client)
+    yield ctx
+    try:
+        for name in ctx.object_names():
+            client.remove_object(bucket, name)
+        client.remove_bucket(bucket)
+    except Exception:
+        pass
+
+
+@pytest.fixture
+def s3_wrong_creds(minio_server, request):
+    """The right endpoint with a bad secret key: CREATE SECRET still succeeds
+    (shape-only validation) but S3 access fails."""
+    if minio_server is None:
+        skip_or_fail(getattr(request.session, "minio_skip_reason", "no S3 server"))
+    from dataclasses import replace
+
+    return replace(minio_server, secret_key="wrong-secret-key")
+
+
 # ---------------------------------------------------------------------------
 # Lake: one pg_ducklake database plus its storage backend
+
+
+async def set_inlining(conn, row_limit):
+    """Set DuckLake's data_inlining_row_limit on an existing connection. An
+    INSERT/DELETE of at most row_limit rows is stored inline in the PG metadata
+    catalog; larger changes (or row_limit=0) are written as Parquet/delete files.
+    Takes effect for the file direction without a recycle; enabling inline reads
+    on a table requires the table to have been created while inlining was on."""
+    await conn.execute(
+        f"CALL ducklake.set_option('data_inlining_row_limit', {int(row_limit)})"
+    )
+
+
+async def active_file_counts(conn, table_name):
+    """(active data-file count, active delete-file count) for a ducklake table,
+    read straight from the DuckLake metadata catalog. Inline-resident rows have
+    no data/delete file, so these counts confirm which storage path was used."""
+    row = await conn.fetchrow(
+        """
+        SELECT
+          (SELECT count(*) FROM ducklake.ducklake_data_file df
+             WHERE df.table_id = t.table_id AND df.end_snapshot IS NULL) AS data_files,
+          (SELECT count(*) FROM ducklake.ducklake_delete_file xf
+             WHERE xf.table_id = t.table_id AND xf.end_snapshot IS NULL) AS delete_files
+        FROM ducklake.ducklake_table t
+        WHERE t.table_name = $1 AND t.end_snapshot IS NULL
+        """,
+        table_name,
+    )
+    return row["data_files"], row["delete_files"]
 
 
 class Lake:
@@ -433,17 +500,30 @@ class Lake:
         assert self.s3
         return f"s3://{self.s3.bucket}/lake/"
 
-    async def connect(self, configure=True, **kwargs):
+    async def connect(self, configure=True, user="postgres", inlining=None, **kwargs):
+        """Open an asyncpg connection to this lake's database.
+
+        user:     role to connect as (the throwaway cluster trusts local logins).
+        inlining: when not None, enable DuckLake data inlining at this row limit
+                  and recycle the DuckDB instance, so tables CREATED afterwards
+                  read inlined rows back (the recycle-before-create ordering is
+                  load-bearing). Toggle per-statement later with set_inlining().
+        """
         kwargs.setdefault("password", os.environ.get("PGPASSWORD"))
         conn = await asyncpg.connect(
             host=self.cluster.host,
             port=self.cluster.port,
-            user="postgres",
+            user=user,
             database=self.dbname,
             **kwargs,
         )
         if configure and self.s3:
             await self.configure_s3(conn)
+        if inlining is not None:
+            await set_inlining(conn, inlining)
+            await conn.execute("CALL ducklake.recycle_ddb()")
+            if configure and self.s3:
+                await self.configure_s3(conn)  # recycle dropped the secret
         return conn
 
     async def configure_s3(self, conn):
@@ -535,3 +615,13 @@ async def conn(lake):
         yield c
     finally:
         await c.close()
+
+
+@pytest.fixture(params=["local", "s3"])
+def inlining_lake(request, cluster, db):
+    """Like `lake` but for data-inlining tests: it does NOT force inlining off
+    and has no bucket canary, so a test may legitimately keep data inline (in the
+    PG catalog) and never touch S3. Enable inlining per connection with
+    Lake.connect(inlining=...) and toggle per-statement with set_inlining()."""
+    s3ctx = request.getfixturevalue("s3") if request.param == "s3" else None
+    return Lake(cluster, db, s3ctx)

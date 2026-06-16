@@ -511,18 +511,17 @@ DECLARE_PG_FUNCTION(ducklake_create_table_trigger) {
 		                                                        "access method")));
 	}
 
-	// Apply the WITH (ducklake.*) override after GetConnection syncs the session GUC,
-	// so the WITH value wins for this CREATE; empty options make Apply/Restore no-ops.
 	pgducklake::PendingCreateOptions pending = pgducklake::TakePendingCreateOptions();
-	pgducklake::ApplyTablePathBeforeCreate(pending);
+	{
+		// The WITH (ducklake.table_path) override wins for this CREATE; the guard
+		// clears it (on success or error) before the CTAS INSERT runs below.
+		pgducklake::TablePathOverrideGuard table_path_guard(pending);
 
-	std::string create_table_ddl(pgducklake::Ruleutils().get_tabledef(relid));
-	elog(DEBUG1, "Creating DuckLake table: %s", create_table_ddl.c_str());
+		std::string create_table_ddl(pgducklake::Ruleutils().get_tabledef(relid));
+		elog(DEBUG1, "Creating DuckLake table: %s", create_table_ddl.c_str());
 
-	pgducklake::DuckDBQueryOrThrow(create_table_ddl);
-
-	// Restore the session default before the CTAS INSERT so the override does not leak.
-	pgducklake::RestoreTablePathAfterCreate(pending);
+		pgducklake::DuckDBQueryOrThrow(create_table_ddl);
+	}
 
 	if (IsA(parsetree, CreateTableAsStmt) && !pgducklake::ctas_skip_data) {
 		auto ctas_stmt = castNode(CreateTableAsStmt, parsetree);

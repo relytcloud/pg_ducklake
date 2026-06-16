@@ -43,13 +43,17 @@ PendingCreateOptions TakePendingCreateOptions();
 /* Discard any pending scratchpad entry without applying it (hook error path). */
 void ClearPendingCreateOptions();
 
-/* Push opts.table_path into the DuckDB session as ducklake_default_table_path
- * before the generated CREATE TABLE DDL. No-op when !opts.has_table_path. */
-void ApplyTablePathBeforeCreate(const PendingCreateOptions &opts);
-
-/* RESET ducklake_default_table_path after the DDL so the override does not leak
- * to later CREATE TABLEs (RefreshConnectionState re-pushes the GUC next
- * statement). No-op when !opts.has_table_path. */
-void RestoreTablePathAfterCreate(const PendingCreateOptions &opts);
+/* Scoped per-table table_path override around the generated CREATE TABLE DDL:
+ * sets the override on construction and clears it on destruction (so it is
+ * cleared on both the success and exception paths). RefreshConnectionState
+ * applies the override -- which wins over ducklake.default_table_path -- and
+ * self-corrects once it is cleared. No-op when !opts.has_table_path. */
+struct TablePathOverrideGuard {
+	bool active_;
+	explicit TablePathOverrideGuard(const PendingCreateOptions &opts);
+	~TablePathOverrideGuard();
+	TablePathOverrideGuard(const TablePathOverrideGuard &) = delete;
+	TablePathOverrideGuard &operator=(const TablePathOverrideGuard &) = delete;
+};
 
 } // namespace pgducklake

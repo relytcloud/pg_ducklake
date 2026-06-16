@@ -7,6 +7,7 @@
 
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/ducklake_fdw.hpp"
+#include "pgducklake/ducklake_secret.hpp"
 
 #include "pgddb/pgddb_types.hpp"
 
@@ -503,6 +504,12 @@ DucklakeFdwUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_o
 				}
 			}
 		}
+	}
+
+	// Stash the target server's type/oid before the DDL runs, so the
+	// ducklake_secret FDW validator can reach them (it only receives options).
+	if (pstmt->utilityStmt) {
+		pgducklake::CaptureSecretServer(pstmt->utilityStmt);
 	}
 
 	prev_fdw_process_utility_hook(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
