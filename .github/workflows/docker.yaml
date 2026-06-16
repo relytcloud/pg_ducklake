@@ -7,6 +7,7 @@ concurrency:
 permissions:
   id-token: write
   contents: write
+  packages: write  # push/pull CI images to ghcr.io
 
 on:
   push:
@@ -61,6 +62,13 @@ jobs:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -88,13 +96,13 @@ jobs:
           if [ "$BRANCH" = "main" ] || git rev-parse --verify $BRANCH^{tag} > /dev/null 2>&1; then
             TARGET_REPO='pgducklake/pgducklake'
           else
-            TARGET_REPO='pgducklake/ci-builds'
+            TARGET_REPO='ghcr.io/${{ github.repository }}/ci-builds'
           fi
 
           echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
           echo "branch_tag=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "target_repo=$TARGET_REPO" >> "$GITHUB_OUTPUT"
-          echo "latest_image=pgducklake/ci-builds:${{ matrix.postgres }}-${PLATFORM}-${BRANCH}-latest" >> "$GITHUB_OUTPUT"
+          echo "latest_image=ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${PLATFORM}-${BRANCH}-latest" >> "$GITHUB_OUTPUT"
 
       - name: Attempt to pull previous image
         run: |
@@ -117,7 +125,7 @@ jobs:
             *.cache-from=type=registry,ref=${{ steps.params.outputs.latest_image }}
             *.cache-from=type=gha,scope=${{ github.workflow }}
             *.cache-to=type=gha,mode=max,scope=${{ github.workflow }}
-            postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+            postgres.tags=ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
             postgres.tags=${{ steps.params.outputs.latest_image }}
 
       - name: docker bake (slim)
@@ -130,7 +138,7 @@ jobs:
             *.platform=linux/${{ steps.params.outputs.platform }}
             *.cache-from=type=registry,ref=${{ steps.params.outputs.latest_image }}
             *.cache-from=type=gha,scope=${{ github.workflow }}
-            postgres.tags=pgducklake/ci-builds:${{ matrix.postgres }}-slim-${{ steps.params.outputs.platform }}-${{ github.sha }}
+            postgres.tags=ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-slim-${{ steps.params.outputs.platform }}-${{ github.sha }}
             postgres.tags=${{ steps.params.outputs.latest_image }}-slim
 
   clickbench_test:
@@ -153,6 +161,12 @@ jobs:
         with:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compute job parameters
         id: params
@@ -172,13 +186,13 @@ jobs:
 
       - name: Pull test image
         run: |
-          docker pull pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+          docker pull ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
 
       - name: Run ClickBench
         working-directory: clickbench/pg_ducklake
         env:
           # upstream install reads the image from $PGDUCK_IMAGE
-          PGDUCK_IMAGE: pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+          PGDUCK_IMAGE: ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
         run: |
           # docker.io conflicts with the runner's docker; the image is already
           # pulled above, so drop the apt docker.io and install's own pull.
@@ -210,6 +224,12 @@ jobs:
         with:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -225,7 +245,7 @@ jobs:
 
       - name: Pull pg_ducklake image
         run: |
-          docker pull pgducklake/ci-builds:18-amd64-${{ github.sha }}
+          docker pull ghcr.io/${{ github.repository }}/ci-builds:18-amd64-${{ github.sha }}
 
       - name: Start containers
         run: |
@@ -233,7 +253,7 @@ jobs:
             -p 5432:5432 \
             -e POSTGRES_PASSWORD=duckdb \
             -v /tmp/hits_0.parquet:/tmp/hits.parquet:ro \
-            pgducklake/ci-builds:18-amd64-${{ github.sha }}
+            ghcr.io/${{ github.repository }}/ci-builds:18-amd64-${{ github.sha }}
           docker run -d --name bench-pgcatalog \
             -p 5433:5432 \
             -e POSTGRES_PASSWORD=duckdb \
@@ -314,6 +334,12 @@ jobs:
         with:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compute job parameters
         id: params
@@ -327,7 +353,7 @@ jobs:
 
       - name: Pull test image
         run: |
-          docker pull pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+          docker pull ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
 
       - name: Run README scenarios
         run: |
@@ -336,7 +362,7 @@ jobs:
 
           docker run -d --name pgducklake \
             -e POSTGRES_PASSWORD=duckdb \
-            pgducklake/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+            ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
           # Wait for postgres to be ready, at most 60 seconds
           sleep 10
           for i in $(seq 50); do
@@ -385,6 +411,12 @@ jobs:
         with:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Merge multi-arch images
         run: |
@@ -392,13 +424,13 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == refs/tags/* ]]; then
             TARGET_REPO='pgducklake/pgducklake'
           else
-            TARGET_REPO='pgducklake/ci-builds'
+            TARGET_REPO='ghcr.io/${{ github.repository }}/ci-builds'
           fi
 
-          SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}"
-          SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
-          SLIM_SOURCES="pgducklake/ci-builds:${{ matrix.postgres }}-slim-amd64-${{ github.sha }}"
-          SLIM_SOURCES+=" pgducklake/ci-builds:${{ matrix.postgres }}-slim-arm64-${{ github.sha }}"
+          SOURCES="ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}"
+          SOURCES+=" ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
+          SLIM_SOURCES="ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-slim-amd64-${{ github.sha }}"
+          SLIM_SOURCES+=" ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-slim-arm64-${{ github.sha }}"
 
           echo "Promoting full image to ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}"
           docker buildx imagetools create \
@@ -427,6 +459,12 @@ jobs:
         with:
           username: pgducklake
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -438,13 +476,13 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y postgresql-client
 
       - name: Pull test image
-        run: docker pull pgducklake/ci-builds:18-amd64-${{ github.sha }}
+        run: docker pull ghcr.io/${{ github.repository }}/ci-builds:18-amd64-${{ github.sha }}
 
       - name: Start pg_ducklake container (host network)
         run: |
           docker run -d --name pgducklake_e2e --network host \
             -e POSTGRES_PASSWORD=duckdb \
-            pgducklake/ci-builds:18-amd64-${{ github.sha }}
+            ghcr.io/${{ github.repository }}/ci-builds:18-amd64-${{ github.sha }}
           for i in $(seq 60); do pg_isready -h 127.0.0.1 -p 5432 && break || sleep 1; done
           pg_isready -h 127.0.0.1 -p 5432
 

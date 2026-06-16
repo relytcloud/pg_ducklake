@@ -23,7 +23,8 @@ target "postgres" {
   dockerfile = "pg_ducklake/docker/Dockerfile"
 
   contexts = {
-    postgres_base = "docker-image://postgres:${POSTGRES_VERSION}-bookworm"
+    # AWS ECR Public mirror of the official postgres image (no Docker Hub limit).
+    postgres_base = "docker-image://public.ecr.aws/docker/library/postgres:${POSTGRES_VERSION}-bookworm"
   }
 
   args = {
