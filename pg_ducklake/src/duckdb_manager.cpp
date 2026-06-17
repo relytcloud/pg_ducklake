@@ -338,6 +338,18 @@ SetAllowSubtransaction(bool allow) {
 	allow_subtransaction = allow;
 }
 
+static bool force_scan_transaction = false;
+
+void
+SetForceScanTransaction(bool force) {
+	force_scan_transaction = force;
+}
+
+bool
+DuckDBManager::ShouldBeginTransaction() {
+	return ::pgddb::DuckDBManager::ShouldBeginTransaction() || force_scan_transaction;
+}
+
 /*
  * SAVEPOINT guard: while DuckDB holds an active transaction, a SAVEPOINT (or
  * BeginInternalSubTransaction without the allow_subtransaction gate) throws so

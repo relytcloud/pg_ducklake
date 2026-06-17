@@ -388,7 +388,9 @@ DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options, 
 
 	/* Any ducklake-AM table or ducklake-only function routes the whole
 	 * query to DuckDB via libpgddb's CustomScan. */
-	if (QueryReferencesRegisteredTableAm((Node *)parse, NULL) || QueryReferencesDucklakeOnlyFunc((Node *)parse, NULL) ||
+	bool refs_ducklake_only_func = QueryReferencesDucklakeOnlyFunc((Node *)parse, NULL);
+	pgducklake::SetForceScanTransaction(refs_ducklake_only_func);
+	if (QueryReferencesRegisteredTableAm((Node *)parse, NULL) || refs_ducklake_only_func ||
 	    pgducklake::QueryReferencesDucklakeForeignTable(parse)) {
 		return pgddb::PlanNode(parse, cursor_options, /*throw_error=*/true);
 	}

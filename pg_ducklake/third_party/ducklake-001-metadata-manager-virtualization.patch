@@ -634,7 +634,7 @@ index f44f9b90..7cefeec1 100644
  SELECT REPLACE(
             CASE
                 WHEN NOT file_relative THEN file_path
-@@ -4537,19 +4564,44 @@ SELECT REPLACE(
+@@ -4537,19 +4564,45 @@ SELECT REPLACE(
             '{SEPARATOR}'
  ) AS full_path
  FROM {METADATA_CATALOG}.ducklake_files_scheduled_for_deletion f
@@ -658,12 +658,14 @@ index f44f9b90..7cefeec1 100644
 +	// Get active files from metadata
 +	auto active_files = GetActiveFiles(separator);
 +
-+	// Get all files from filesystem using DuckDB's read_blob.
-+	// Use transaction.Query() (DuckDB connection) instead of Query() (metadata
-+	// path) because read_blob is a DuckDB-native function that cannot run
-+	// through external metadata backends (e.g. PostgreSQL SPI).
-+	auto query = "SELECT filename FROM read_blob({DATA_PATH} || '**') WHERE true " + filter;
- 	auto res = transaction.Query(query);
++	// Get all files from filesystem using DuckDB's read_blob. Substitute
++	// placeholders and run on the DuckDB connection (ExecuteRaw), not the metadata
++	// Query() path, since read_blob is DuckDB-native and a metadata override may
++	// route Query() through an external backend (e.g. PostgreSQL SPI).
++	string query = "SELECT filename FROM read_blob({DATA_PATH} || '**') WHERE true " + filter;
++	SubstituteCatalogPlaceholders(query);
++	auto res = transaction.ExecuteRaw(query);
+-	auto res = transaction.Query(query);
  	if (res->HasError()) {
 -		res->GetErrorObject().Throw("Failed to get files scheduled for deletion from DuckLake: ");
 +		res->GetErrorObject().Throw("Failed to get files from filesystem: ");

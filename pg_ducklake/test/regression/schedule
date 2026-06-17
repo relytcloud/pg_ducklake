@@ -28,11 +28,7 @@ test: variant
 test: readme_examples
 test: ddl
 test: vacuum
-# FIXME: maintenance (ducklake.rewrite_data_files) fails with "Scanning a
-# DuckLake table after the transaction has ended" -- a DuckLake transaction
-# lifecycle issue unrelated to the DuckDBManager singleton extraction.
-# Disabled until diagnosed separately.
-# test: maintenance
+test: maintenance
 test: commit_message
 test: partition
 test: sorted_table
