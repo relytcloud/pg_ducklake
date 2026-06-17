@@ -6,7 +6,7 @@ FROM pg_extension WHERE extname IN ('plpgsql', 'pg_ducklake') ORDER BY extname =
    extname   | extowner | extnamespace | extrelocatable | extversion | extconfig | extcondition 
 -------------+----------+--------------+----------------+------------+-----------+--------------
  plpgsql     |       10 |           11 | f              | 1.0        |           | 
- pg_ducklake |       10 |         2200 | f              | 1.0.0      |           | 
+ pg_ducklake |       10 |         2200 | f              | 1.1.0      |           | 
 (2 rows)
 
 SELECT amname FROM pg_am WHERE amname = 'ducklake';
