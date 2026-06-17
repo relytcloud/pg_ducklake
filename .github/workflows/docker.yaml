@@ -20,6 +20,11 @@ on:
   schedule:
     - cron: "44 4 * * *"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git tag/branch/SHA to build and publish (e.g. v1.0.0) to backfill a release. Empty = the dispatched ref."
+        required: false
+        default: ""
 
 jobs:
   # Compute build matrix: main-branch push builds only pg-18 for speed;
@@ -72,6 +77,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: true  # duckdb (repo root) + pg_ducklake/third_party/ducklake
 
       - name: Compute job parameters
@@ -79,7 +85,8 @@ jobs:
         run: |
           # Tag is XX-YYYYY-<branch>-latest so 16 + branch name length
           # since maximum docker tag is 128 characters, we need to truncate the branch name to 112
-          BRANCH=$(echo "${{ github.head_ref || github.ref_name }}" \
+          # workflow_dispatch can pass an explicit ref (e.g. v1.0.0) to backfill a release.
+          BRANCH=$(echo "${{ inputs.ref || github.head_ref || github.ref_name }}" \
               | sed 's/[^a-zA-Z0-9\-\.]/-/g' \
               | cut -c 1-112 | tr '[:upper:]' '[:lower:]' \
               | sed -e 's/-*$//')
@@ -399,7 +406,7 @@ jobs:
   docker_merge:
     name: Merge Docker image for Postgres ${{ matrix.postgres }}
     if: github.event_name != 'pull_request'
-    needs: [setup, readme_test]
+    needs: [setup, docker_build, readme_test]
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.merge_matrix) }}
 
@@ -420,12 +427,11 @@ jobs:
 
       - name: Merge multi-arch images
         run: |
-          BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9\-\.]/-/g' | tr '[:upper:]' '[:lower:]')
-          if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == refs/tags/* ]]; then
-            TARGET_REPO='pgducklake/pgducklake'
-          else
-            TARGET_REPO='ghcr.io/${{ github.repository }}/ci-builds'
-          fi
+          # Reuse the branch tag and target repo computed by docker_build so a
+          # workflow_dispatch with an explicit ref (e.g. v1.0.0) merges to the
+          # right place, not the dispatched branch (main).
+          BRANCH='${{ needs.docker_build.outputs.branch_tag }}'
+          TARGET_REPO='${{ needs.docker_build.outputs.target_repo }}'
 
           SOURCES="ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-amd64-${{ github.sha }}"
           SOURCES+=" ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-arm64-${{ github.sha }}"
