@@ -24,8 +24,6 @@ extern "C" {
 
 namespace pgddb {
 
-namespace {
-
 using duckdb::BoundColumnRefExpression;
 using duckdb::BoundOrderByNode;
 using duckdb::BoundReferenceExpression;
@@ -43,7 +41,7 @@ using duckdb::OptimizerExtensionInput;
 using duckdb::optional_idx;
 using duckdb::unique_ptr;
 
-bool
+static bool
 IndexSupportsOrder(Relation rel, const duckdb::vector<AttrNumber> &order_attrs,
                    const duckdb::vector<PostgresOrderBySpec> &orders) {
 	if (order_attrs.empty()) {
@@ -120,7 +118,7 @@ IndexSupportsOrder(Relation rel, const duckdb::vector<AttrNumber> &order_attrs,
 	return supported;
 }
 
-bool
+static bool
 ExtractColumnIndex(Expression &expr, LogicalGet &get, duckdb::idx_t &column_index) {
 	const auto &column_ids = get.GetColumnIds();
 	switch (expr.GetExpressionClass()) {
@@ -174,7 +172,7 @@ ExtractColumnIndex(Expression &expr, LogicalGet &get, duckdb::idx_t &column_inde
 	}
 }
 
-LogicalGet *
+static LogicalGet *
 FindUnderlyingGet(LogicalOperator &input) {
 	auto *current = &input;
 	while (current->type == LogicalOperatorType::LOGICAL_PROJECTION) {
@@ -190,7 +188,7 @@ FindUnderlyingGet(LogicalOperator &input) {
 	return &current->Cast<LogicalGet>();
 }
 
-bool
+static bool
 ResolveColumnIndex(Expression &expr, LogicalOperator &input, LogicalGet &get, duckdb::idx_t &column_index) {
 	if (input.type == LogicalOperatorType::LOGICAL_GET) {
 		return ExtractColumnIndex(expr, get, column_index);
@@ -223,7 +221,7 @@ ResolveColumnIndex(Expression &expr, LogicalOperator &input, LogicalGet &get, du
 	return ExtractColumnIndex(expr, get, column_index);
 }
 
-bool
+static bool
 TryPushdownOrder(unique_ptr<LogicalOperator> &op) {
 	// Pushdown is unconditional but narrow: it only fires when a btree index can
 	// produce the requested ordering (IndexSupportsOrder below), for both the
@@ -309,7 +307,7 @@ TryPushdownOrder(unique_ptr<LogicalOperator> &op) {
 	return true;
 }
 
-bool
+static bool
 PushdownRecursive(unique_ptr<LogicalOperator> &op) {
 	bool changed = false;
 	for (auto &child : op->children) {
@@ -322,12 +320,10 @@ PushdownRecursive(unique_ptr<LogicalOperator> &op) {
 	return changed;
 }
 
-void
+static void
 OptimizePlan(OptimizerExtensionInput &, unique_ptr<LogicalOperator> &plan) {
 	PushdownRecursive(plan);
 }
-
-} // namespace
 
 PostgresOrderPushdownOptimizer::PostgresOrderPushdownOptimizer() {
 	optimize_function = OptimizePlan;

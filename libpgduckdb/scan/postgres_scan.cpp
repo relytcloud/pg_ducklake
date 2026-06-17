@@ -43,16 +43,11 @@ FilterJoin(duckdb::vector<duckdb::string> &filters, duckdb::string &&delimiter) 
 	                       [&delimiter](duckdb::string l, duckdb::string r) { return l + delimiter + r; });
 }
 
-// " [ASC|DESC] [NULLS FIRST|NULLS LAST]" suffix for one ORDER BY key. SQL omits
-// ASC (the default); the EXPLAIN label spells it out (spell_asc).
+// " ASC|DESC [NULLS FIRST|NULLS LAST]" suffix for one ORDER BY key. The direction
+// is always spelled out so the emitted SQL and the EXPLAIN label are unambiguous.
 duckdb::string
-OrderSuffix(duckdb::OrderType order_type, duckdb::OrderByNullType null_order, bool spell_asc) {
-	duckdb::string out;
-	if (order_type == duckdb::OrderType::DESCENDING) {
-		out += " DESC";
-	} else if (spell_asc) {
-		out += " ASC";
-	}
+OrderSuffix(duckdb::OrderType order_type, duckdb::OrderByNullType null_order) {
+	duckdb::string out = order_type == duckdb::OrderType::DESCENDING ? " DESC" : " ASC";
 	if (null_order == duckdb::OrderByNullType::NULLS_FIRST) {
 		out += " NULLS FIRST";
 	} else if (null_order == duckdb::OrderByNullType::NULLS_LAST) {
@@ -433,7 +428,7 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 			}
 			first_order = false;
 			scan_query << scan_column_names[order_spec.column_index]
-			           << OrderSuffix(order_spec.order_type, order_spec.null_order, /*spell_asc=*/false);
+			           << OrderSuffix(order_spec.order_type, order_spec.null_order);
 		}
 
 		// A Top-N pushdown also carries LIMIT/OFFSET; only meaningful alongside ORDER BY.
@@ -543,7 +538,7 @@ PostgresScanTableFunction::ToString(duckdb::TableFunctionToStringInput &input) {
 			duckdb::string description = order_spec.column_name.empty()
 			                                 ? duckdb::string("#") + std::to_string(order_spec.column_index)
 			                                 : order_spec.column_name;
-			description += OrderSuffix(order_spec.order_type, order_spec.null_order, /*spell_asc=*/true);
+			description += OrderSuffix(order_spec.order_type, order_spec.null_order);
 			order_descriptions.push_back(std::move(description));
 		}
 		result["Order By"] = duckdb::StringUtil::Join(order_descriptions, ", ");
