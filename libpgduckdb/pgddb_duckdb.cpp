@@ -7,6 +7,7 @@
 
 #include "pgddb/catalog/pgddb_storage.hpp"
 #include "pgddb/pg/guc.hpp"
+#include "pgddb/scan/order_pushdown_optimizer.hpp"
 #include "pgddb/pg/transactions.hpp"
 #include "pgddb/utility/signal_guard.hpp"
 
@@ -122,6 +123,7 @@ DuckDBManager::Initialize() {
 	{
 		auto &dbconfig = duckdb::DBConfig::GetConfig(*database->instance);
 		duckdb::StorageExtension::Register(dbconfig, "pgduckdb", duckdb::make_shared_ptr<PostgresStorageExtension>());
+		duckdb::OptimizerExtension::Register(dbconfig, PostgresOrderPushdownOptimizer());
 	}
 	QueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 

@@ -1,3 +1,4 @@
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/planner/filter/optional_filter.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
@@ -40,6 +41,24 @@ duckdb::string
 FilterJoin(duckdb::vector<duckdb::string> &filters, duckdb::string &&delimiter) {
 	return std::accumulate(filters.begin() + 1, filters.end(), filters[0],
 	                       [&delimiter](duckdb::string l, duckdb::string r) { return l + delimiter + r; });
+}
+
+// " [ASC|DESC] [NULLS FIRST|NULLS LAST]" suffix for one ORDER BY key. SQL omits
+// ASC (the default); the EXPLAIN label spells it out (spell_asc).
+duckdb::string
+OrderSuffix(duckdb::OrderType order_type, duckdb::OrderByNullType null_order, bool spell_asc) {
+	duckdb::string out;
+	if (order_type == duckdb::OrderType::DESCENDING) {
+		out += " DESC";
+	} else if (spell_asc) {
+		out += " ASC";
+	}
+	if (null_order == duckdb::OrderByNullType::NULLS_FIRST) {
+		out += " NULLS FIRST";
+	} else if (null_order == duckdb::OrderByNullType::NULLS_LAST) {
+		out += " NULLS LAST";
+	}
+	return out;
 }
 
 std::optional<duckdb::string>
@@ -314,6 +333,7 @@ PostgresScanGlobalState::ExtractQueryFilters(duckdb::TableFilter *filter, const 
 
 void
 PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInitInput &input) {
+	const auto &bind_data = input.bind_data->Cast<PostgresScanFunctionData>();
 	if (input.column_ids.size() == 1 && input.column_ids[0] == UINT64_MAX) {
 		scan_query << "SELECT COUNT(*) FROM " << pgddb::GenerateQualifiedRelationName(rel);
 		count_tuples_only = true;
@@ -339,9 +359,13 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 
 	std::vector<duckdb::pair<AttrNumber, duckdb::idx_t>> columns_to_scan;
 	std::vector<duckdb::TableFilter *> column_filters(input.column_ids.size(), 0);
+	duckdb::vector<duckdb::string> scan_column_names(input.column_ids.size());
 
 	for (auto const &[att_num, duckdb_scanned_index] : pg_column_order) {
 		columns_to_scan.emplace_back(att_num, duckdb_scanned_index);
+
+		auto name_attr = pgddb::GetAttr(table_tuple_desc, att_num - 1);
+		scan_column_names[duckdb_scanned_index] = pgddb::QuoteIdentifier(pgddb::GetAttName(name_attr));
 
 		if (!table_filters) {
 			continue;
@@ -385,9 +409,8 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 			continue;
 		}
 		duckdb::string column_query_filters;
-		auto attr = pgddb::GetAttr(table_tuple_desc, attr_num - 1);
-		auto col = pgddb::QuoteIdentifier(pgddb::GetAttName(attr));
-		if (ExtractQueryFilters(filter, col, column_query_filters, false)) {
+		const duckdb::string &col = scan_column_names[duckdb_scanned_index];
+		if (ExtractQueryFilters(filter, col.c_str(), column_query_filters, false)) {
 			query_filters.emplace_back(column_query_filters);
 		}
 	}
@@ -395,6 +418,31 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 	if (query_filters.size()) {
 		scan_query << " WHERE ";
 		scan_query << FilterJoin(query_filters, " AND ");
+	}
+
+	if (!bind_data.order_bys.empty()) {
+		scan_query << " ORDER BY ";
+		bool first_order = true;
+		for (auto const &order_spec : bind_data.order_bys) {
+			if (order_spec.column_index >= scan_column_names.size()) {
+				throw duckdb::Exception(duckdb::ExceptionType::EXECUTOR,
+				                        "Invalid ORDER BY column index for Postgres scan");
+			}
+			if (!first_order) {
+				scan_query << ", ";
+			}
+			first_order = false;
+			scan_query << scan_column_names[order_spec.column_index]
+			           << OrderSuffix(order_spec.order_type, order_spec.null_order, /*spell_asc=*/false);
+		}
+
+		// A Top-N pushdown also carries LIMIT/OFFSET; only meaningful alongside ORDER BY.
+		if (bind_data.limit.IsValid()) {
+			scan_query << " LIMIT " << bind_data.limit.GetIndex();
+			if (bind_data.offset > 0) {
+				scan_query << " OFFSET " << bind_data.offset;
+			}
+		}
 	}
 }
 
@@ -458,7 +506,7 @@ PostgresScanLocalState::~PostgresScanLocalState() {
 }
 
 PostgresScanFunctionData::PostgresScanFunctionData(Relation _rel, uint64_t _cardinality, Snapshot _snapshot)
-    : complex_filters(), rel(_rel), cardinality(_cardinality), snapshot(_snapshot) {
+    : complex_filters(), order_bys(), limit(), offset(0), rel(_rel), cardinality(_cardinality), snapshot(_snapshot) {
 }
 
 PostgresScanFunctionData::~PostgresScanFunctionData() {
@@ -488,6 +536,25 @@ PostgresScanTableFunction::ToString(duckdb::TableFunctionToStringInput &input) {
 	auto &bind_data = input.bind_data->Cast<PostgresScanFunctionData>();
 	duckdb::InsertionOrderPreservingMap<duckdb::string> result;
 	result["Table"] = pgddb::GetRelationName(bind_data.rel);
+	if (!bind_data.order_bys.empty()) {
+		duckdb::vector<duckdb::string> order_descriptions;
+		order_descriptions.reserve(bind_data.order_bys.size());
+		for (auto const &order_spec : bind_data.order_bys) {
+			duckdb::string description = order_spec.column_name.empty()
+			                                 ? duckdb::string("#") + std::to_string(order_spec.column_index)
+			                                 : order_spec.column_name;
+			description += OrderSuffix(order_spec.order_type, order_spec.null_order, /*spell_asc=*/true);
+			order_descriptions.push_back(std::move(description));
+		}
+		result["Order By"] = duckdb::StringUtil::Join(order_descriptions, ", ");
+	}
+	if (bind_data.limit.IsValid()) {
+		duckdb::string limit_desc = std::to_string(bind_data.limit.GetIndex());
+		if (bind_data.offset > 0) {
+			limit_desc += " OFFSET " + std::to_string(bind_data.offset);
+		}
+		result["Limit"] = limit_desc;
+	}
 	return result;
 }
 

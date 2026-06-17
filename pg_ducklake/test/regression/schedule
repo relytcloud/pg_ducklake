@@ -37,6 +37,7 @@ test: commit_message
 test: partition
 test: sorted_table
 test: hybrid_scan
+test: order_by_pushdown
 test: time_travel
 test: snapshots
 test: data_change_feed

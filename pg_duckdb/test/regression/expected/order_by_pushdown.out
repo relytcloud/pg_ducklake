@@ -1,0 +1,441 @@
+CREATE TABLE pgduckdb_order_pushdown (id INTEGER, payload TEXT);
+INSERT INTO pgduckdb_order_pushdown VALUES (1, 'row-1'), (2, 'row-2'), (null, 'row-3');
+CREATE INDEX ON pgduckdb_order_pushdown (id);
+-- Table without index should not push down ORDER BY
+CREATE TABLE pgduckdb_order_pushdown_no_idx (id INTEGER, payload TEXT);
+INSERT INTO pgduckdb_order_pushdown_no_idx VALUES (1, 'plain-1'), (2, 'plain-2'), (null, 'plain-3');
+-- Baseline: ORDER BY asc should be pushed to Postgres scan
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │         Order By:         │
+ │     id ASC NULLS LAST     │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(20 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id;
+ id | payload 
+----+---------
+  1 | row-1
+  2 | row-2
+    | row-3
+(3 rows)
+
+-- Descending order should also leverage the index
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id DESC;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │         Order By:         │
+ │    id DESC NULLS FIRST    │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(20 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id DESC;
+ id | payload 
+----+---------
+    | row-3
+  2 | row-2
+  1 | row-1
+(3 rows)
+
+-- ORDER BY with incompatible NULLS clause should stay in DuckDB
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id NULLS FIRST;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │          ORDER_BY         │
+ │    ────────────────────   │
+ │ pgduckdb_order_pushdown.id│
+ │             ASC           │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(23 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id NULLS FIRST;
+ id | payload 
+----+---------
+    | row-3
+  1 | row-1
+  2 | row-2
+(3 rows)
+
+-- Table without a supporting index should not push down ORDER BY
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown_no_idx ORDER BY id;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │          ORDER_BY         │
+ │    ────────────────────   │
+ │pgduckdb_order_pushdown_no_│
+ │         idx.id ASC        │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │pgduckdb_order_pushdown_no_│
+ │            idx            │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │        ~1,270 rows        │
+ └───────────────────────────┘
+ 
+ 
+(24 rows)
+
+SELECT * FROM pgduckdb_order_pushdown_no_idx ORDER BY id;
+ id | payload 
+----+---------
+  1 | plain-1
+  2 | plain-2
+    | plain-3
+(3 rows)
+
+-- Complex query: nested subquery with ORDER BY
+EXPLAIN SELECT * FROM ( SELECT id, payload FROM pgduckdb_order_pushdown ) sub_query ORDER BY id;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │         Order By:         │
+ │     id ASC NULLS LAST     │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(20 rows)
+
+SELECT * FROM ( SELECT id, payload FROM pgduckdb_order_pushdown ) sub_query ORDER BY id;
+ id | payload 
+----+---------
+  1 | row-1
+  2 | row-2
+    | row-3
+(3 rows)
+
+-- Complex query: join between indexed and non-indexed tables
+EXPLAIN SELECT a.id, a.payload, b.payload FROM pgduckdb_order_pushdown a JOIN pgduckdb_order_pushdown_no_idx b ON a.id = b.id ORDER BY a.id;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │          ORDER_BY         │
+ │    ────────────────────   │
+ │          a.id ASC         │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │         PROJECTION        │
+ │    ────────────────────   │
+ │             id            │
+ │          payload          │
+ │          payload          │
+ │                           │
+ │        ~1,270 rows        │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │         HASH_JOIN         │
+ │    ────────────────────   │
+ │      Join Type: INNER     │
+ │    Conditions: id = id    ├──────────────┐
+ │                           │              │
+ │        ~1,270 rows        │              │
+ └─────────────┬─────────────┘              │
+ ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  ││   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   ││    ────────────────────   │
+ │           Table:          ││           Table:          │
+ │pgduckdb_order_pushdown_no_││  pgduckdb_order_pushdown  │
+ │            idx            ││                           │
+ │                           ││        Projections:       │
+ │        Projections:       ││             id            │
+ │             id            ││          payload          │
+ │          payload          ││                           │
+ │                           ││                           │
+ │        ~1,270 rows        ││          ~3 rows          │
+ └───────────────────────────┘└───────────────────────────┘
+ 
+ 
+(40 rows)
+
+SELECT a.id, a.payload, b.payload FROM pgduckdb_order_pushdown a JOIN pgduckdb_order_pushdown_no_idx b ON a.id = b.id ORDER BY a.id;
+ id | payload | payload 
+----+---------+---------
+  1 | row-1   | plain-1
+  2 | row-2   | plain-2
+(2 rows)
+
+-- Top-N: ORDER BY + LIMIT should push both the order and the LIMIT into the scan
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id LIMIT 2;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │         Order By:         │
+ │     id ASC NULLS LAST     │
+ │                           │
+ │          Limit: 2         │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          Filters:         │
+ │ optional: Dynamic Filter  │
+ │            (id)           │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(26 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id LIMIT 2;
+ id | payload 
+----+---------
+  1 | row-1
+  2 | row-2
+(2 rows)
+
+-- Top-N with OFFSET
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id LIMIT 1 OFFSET 1;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │         Order By:         │
+ │     id ASC NULLS LAST     │
+ │                           │
+ │     Limit: 1 OFFSET 1     │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          Filters:         │
+ │ optional: Dynamic Filter  │
+ │            (id)           │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(26 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id LIMIT 1 OFFSET 1;
+ id | payload 
+----+---------
+  2 | row-2
+(1 row)
+
+-- Top-N descending
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id DESC LIMIT 2;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │         Order By:         │
+ │    id DESC NULLS FIRST    │
+ │                           │
+ │          Limit: 2         │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          Filters:         │
+ │  optional: id IS NULL OR  │
+ │     Dynamic Filter (id)   │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(26 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id DESC LIMIT 2;
+ id | payload 
+----+---------
+    | row-3
+  2 | row-2
+(2 rows)
+
+-- Top-N with incompatible NULLS clause should stay in DuckDB
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown ORDER BY id NULLS FIRST LIMIT 2;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │           TOP_N           │
+ │    ────────────────────   │
+ │           Top: 2          │
+ │                           │
+ │         Order By:         │
+ │ pgduckdb_order_pushdown.id│
+ │             ASC           │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │  pgduckdb_order_pushdown  │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          Filters:         │
+ │  optional: id IS NULL OR  │
+ │     Dynamic Filter (id)   │
+ │                           │
+ │          ~3 rows          │
+ └───────────────────────────┘
+ 
+ 
+(30 rows)
+
+SELECT * FROM pgduckdb_order_pushdown ORDER BY id NULLS FIRST LIMIT 2;
+ id | payload 
+----+---------
+    | row-3
+  1 | row-1
+(2 rows)
+
+-- Top-N on a table without a supporting index should stay in DuckDB
+EXPLAIN SELECT * FROM pgduckdb_order_pushdown_no_idx ORDER BY id LIMIT 2;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Custom Scan (DuckDBScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │           TOP_N           │
+ │    ────────────────────   │
+ │           Top: 2          │
+ │                           │
+ │         Order By:         │
+ │pgduckdb_order_pushdown_no_│
+ │         idx.id ASC        │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  │
+ │    ────────────────────   │
+ │           Table:          │
+ │pgduckdb_order_pushdown_no_│
+ │            idx            │
+ │                           │
+ │        Projections:       │
+ │             id            │
+ │          payload          │
+ │                           │
+ │          Filters:         │
+ │ optional: Dynamic Filter  │
+ │            (id)           │
+ │                           │
+ │        ~1,270 rows        │
+ └───────────────────────────┘
+ 
+ 
+(31 rows)
+
+SELECT * FROM pgduckdb_order_pushdown_no_idx ORDER BY id LIMIT 2;
+ id | payload 
+----+---------
+  1 | plain-1
+  2 | plain-2
+(2 rows)
+
+DROP TABLE pgduckdb_order_pushdown;
+DROP TABLE pgduckdb_order_pushdown_no_idx;

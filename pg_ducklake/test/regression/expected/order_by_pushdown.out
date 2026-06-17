@@ -1,0 +1,121 @@
+-- The ORDER BY / Top-N -> Postgres-scan pushdown optimizer lives in the shared
+-- libpgduckdb kernel, so it is active in pg_ducklake too. A query that touches a
+-- DuckLake table is offloaded to DuckDB as a whole; when that plan also scans a
+-- regular PG heap table with a matching btree index, the Top-N over that heap
+-- scan is pushed into Postgres (ORDER BY + LIMIT appear inside
+-- PGDUCKDB_POSTGRES_SCAN instead of a DuckDB TOP_N node).
+CREATE TABLE pgducklake_heap_idx (id int PRIMARY KEY, val text);
+INSERT INTO pgducklake_heap_idx SELECT g, 'v' || g FROM generate_series(1, 20) g;
+CREATE TABLE pgducklake_lake (x int) USING ducklake;
+INSERT INTO pgducklake_lake VALUES (1), (2), (3);
+-- Top-N over the indexed heap, joined to a DuckLake table (the DuckLake
+-- reference forces the whole query through DuckDB). The heap scan shows the
+-- pushed "Order By" + "Limit".
+EXPLAIN SELECT h.id, h.val
+FROM (SELECT id, val FROM pgducklake_heap_idx ORDER BY id LIMIT 3) h
+JOIN pgducklake_lake ON h.id = pgducklake_lake.x;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Custom Scan (DuckLakeScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │         PROJECTION        │
+ │    ────────────────────   │
+ │             id            │
+ │            val            │
+ │                           │
+ │          ~3 rows          │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │         HASH_JOIN         │
+ │    ────────────────────   │
+ │      Join Type: INNER     │
+ │     Conditions: id = x    ├──────────────┐
+ │                           │              │
+ │          ~3 rows          │              │
+ └─────────────┬─────────────┘              │
+ ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  ││       DUCKLAKE_SCAN       │
+ │    ────────────────────   ││    ────────────────────   │
+ │           Table:          ││           Table:          │
+ │    pgducklake_heap_idx    ││      pgducklake_lake      │
+ │                           ││                           │
+ │         Order By:         ││       Projections: x      │
+ │     id ASC NULLS LAST     ││                           │
+ │                           ││                           │
+ │          Limit: 3         ││                           │
+ │                           ││                           │
+ │        Projections:       ││                           │
+ │             id            ││                           │
+ │            val            ││                           │
+ │                           ││                           │
+ │          Filters:         ││                           │
+ │ optional: Dynamic Filter  ││                           │
+ │            (id)           ││                           │
+ │                           ││                           │
+ │        ~1,270 rows        ││          ~3 rows          │
+ └───────────────────────────┘└───────────────────────────┘
+ 
+ 
+(42 rows)
+
+SELECT h.id, h.val
+FROM (SELECT id, val FROM pgducklake_heap_idx ORDER BY id LIMIT 3) h
+JOIN pgducklake_lake ON h.id = pgducklake_lake.x
+ORDER BY h.id;
+ id | val 
+----+-----
+  1 | v1
+  2 | v2
+  3 | v3
+(3 rows)
+
+-- Descending Top-N also pushes (btree backward scan).
+EXPLAIN SELECT h.id
+FROM (SELECT id FROM pgducklake_heap_idx ORDER BY id DESC LIMIT 3) h
+JOIN pgducklake_lake ON h.id = pgducklake_lake.x;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Custom Scan (DuckLakeScan)  (cost=0.00..0.00 rows=0 width=0)
+   DuckDB Execution Plan: 
+ 
+ ┌───────────────────────────┐
+ │         PROJECTION        │
+ │    ────────────────────   │
+ │             id            │
+ │                           │
+ │          ~3 rows          │
+ └─────────────┬─────────────┘
+ ┌─────────────┴─────────────┐
+ │         HASH_JOIN         │
+ │    ────────────────────   │
+ │      Join Type: INNER     │
+ │     Conditions: id = x    ├──────────────┐
+ │                           │              │
+ │          ~3 rows          │              │
+ └─────────────┬─────────────┘              │
+ ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+ │   PGDUCKDB_POSTGRES_SCAN  ││       DUCKLAKE_SCAN       │
+ │    ────────────────────   ││    ────────────────────   │
+ │           Table:          ││           Table:          │
+ │    pgducklake_heap_idx    ││      pgducklake_lake      │
+ │                           ││                           │
+ │         Order By:         ││       Projections: x      │
+ │    id DESC NULLS FIRST    ││                           │
+ │                           ││                           │
+ │          Limit: 3         ││                           │
+ │      Projections: id      ││                           │
+ │                           ││                           │
+ │          Filters:         ││                           │
+ │  optional: id IS NULL OR  ││                           │
+ │     Dynamic Filter (id)   ││                           │
+ │                           ││                           │
+ │        ~1,270 rows        ││          ~3 rows          │
+ └───────────────────────────┘└───────────────────────────┘
+ 
+ 
+(38 rows)
+
+DROP TABLE pgducklake_lake;
+DROP TABLE pgducklake_heap_idx;

@@ -2,6 +2,8 @@
 
 #include "duckdb.hpp"
 
+#include "duckdb/common/enums/order_type.hpp"
+
 #include "pgddb/pg/declarations.hpp"
 #include "pgddb/utility/allocator.hpp"
 
@@ -59,10 +61,25 @@ private:
 	PostgresScanLocalState &operator=(const PostgresScanLocalState &) = delete;
 };
 
+struct PostgresOrderBySpec {
+	PostgresOrderBySpec()
+	    : column_index(0), order_type(duckdb::OrderType::ASCENDING), null_order(duckdb::OrderByNullType::ORDER_DEFAULT),
+	      column_name() {
+	}
+	duckdb::idx_t column_index;
+	duckdb::OrderType order_type;
+	duckdb::OrderByNullType null_order;
+	duckdb::string column_name;
+};
+
 struct PostgresScanFunctionData : public duckdb::TableFunctionData {
 	PostgresScanFunctionData(Relation rel, uint64_t cardinality, Snapshot snapshot);
 	~PostgresScanFunctionData() override;
 	duckdb::vector<duckdb::string> complex_filters;
+	duckdb::vector<PostgresOrderBySpec> order_bys;
+	// Set when a Top-N (ORDER BY + LIMIT) is pushed: emit LIMIT/OFFSET in the scan query.
+	duckdb::optional_idx limit;
+	duckdb::idx_t offset;
 	Relation rel;
 	uint64_t cardinality;
 	Snapshot snapshot;
