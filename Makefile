@@ -21,7 +21,7 @@ PGDDB_OBJS := $(PGDDB_CPP_SRCS:.cpp=.o) $(PGDDB_C_SRCS:.c=.o)
 # tagged build dir, statically linked into the extension's .so.
 
 DUCKDB_GEN ?= ninja
-DUCKDB_VERSION = v1.5.3
+DUCKDB_VERSION = v1.5.4
 
 DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=$(DUCKDB_VERSION)
 DUCKDB_DISABLE_ASSERTIONS ?= 0
