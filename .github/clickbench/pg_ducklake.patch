@@ -1,0 +1,20 @@
+# Patches applied to a fresh ClickHouse/ClickBench checkout before running the
+# pg_ducklake benchmark in CI (.github/workflows/docker.yaml clickbench_test).
+#
+# pg_ducklake 1.0.0 moved read_csv/read_parquet into the `ducklake` schema, but
+# ClickBench's pg_ducklake/create.sql calls read_parquet unqualified, so it
+# resolves nothing on the default search_path and the CTAS fails with
+# "function read_parquet(unknown, binary_as_string => boolean) does not exist".
+# Qualify the call as ducklake.read_parquet.
+#
+# TODO: upstream this to ClickHouse/ClickBench, then drop this patch.
+diff --git a/pg_ducklake/create.sql b/pg_ducklake/create.sql
+index a7b1501..0bb7f6d 100644
+--- a/pg_ducklake/create.sql
++++ b/pg_ducklake/create.sql
+@@ -105,4 +105,4 @@ select
+     r['RefererHash'] AS RefererHash,
+     r['URLHash'] AS URLHash,
+     r['CLID'] AS CLID
+-from read_parquet('/tmp/hits.parquet', binary_as_string => true) r;
++from ducklake.read_parquet('/tmp/hits.parquet', binary_as_string => true) r;

@@ -185,11 +185,19 @@ jobs:
           fi
           echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout pg_ducklake
+        uses: actions/checkout@v4
+        with:
+          path: self
+
       - name: Checkout ClickBench repository
         uses: actions/checkout@v4
         with:
           repository: ClickHouse/ClickBench
           path: clickbench
+
+      - name: Apply pg_ducklake patches to ClickBench
+        run: git -C clickbench apply "$GITHUB_WORKSPACE/self/.github/clickbench/pg_ducklake.patch"
 
       - name: Pull test image
         run: |
