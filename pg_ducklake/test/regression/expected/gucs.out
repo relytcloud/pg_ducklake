@@ -17,6 +17,12 @@ SHOW ducklake.enable_direct_insert;
  on
 (1 row)
 
+SHOW ducklake.threads;
+ ducklake.threads 
+------------------
+ -1
+(1 row)
+
 -- Test setting GUCs
 SET ducklake.default_table_path = '/tmp/test_path';
 SHOW ducklake.default_table_path;
@@ -48,6 +54,20 @@ SHOW ducklake.enable_direct_insert;
 (1 row)
 
 RESET ducklake.enable_direct_insert;
+SET ducklake.threads = 4;
+SHOW ducklake.threads;
+ ducklake.threads 
+------------------
+ 4
+(1 row)
+
+RESET ducklake.threads;
+SHOW ducklake.threads;
+ ducklake.threads 
+------------------
+ -1
+(1 row)
+
 SHOW ducklake.enable_metadata_sync;
  ducklake.enable_metadata_sync 
 -------------------------------

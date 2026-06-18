@@ -16,6 +16,8 @@ bool ctas_skip_data = false;
 
 bool enable_metadata_sync = true;
 
+int threads = -1;
+
 char *superuser_role = strdup("ducklake_superuser");
 char *writer_role = strdup("ducklake_writer");
 char *reader_role = strdup("ducklake_reader");
@@ -43,6 +45,12 @@ InitGUCs() {
 	                         "Enable direct insert optimization for INSERT ... "
 	                         "SELECT UNNEST($n) statements.",
 	                         NULL, &enable_direct_insert, true, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+	    "ducklake.threads", "Maximum number of DuckDB threads per Postgres backend (-1 = DuckDB default, all cores).",
+	    "Takes effect when the DuckDB instance initializes; SET before the first DuckLake query in a "
+	    "session, or call ducklake.recycle_ddb() to re-apply.",
+	    &threads, -1, -1, 1024, PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable("ducklake.enable_metadata_sync",
 	                         "Enable reverse metadata sync from DuckDB to PostgreSQL. "

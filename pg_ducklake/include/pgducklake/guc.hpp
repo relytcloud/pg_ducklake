@@ -9,6 +9,8 @@ extern bool ctas_skip_data;
 
 extern bool enable_metadata_sync;
 
+extern int threads;
+
 extern char *superuser_role;
 extern char *writer_role;
 extern char *reader_role;

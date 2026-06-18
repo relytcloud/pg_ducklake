@@ -2,6 +2,7 @@
 SHOW ducklake.default_table_path;
 SHOW ducklake.vacuum_delete_threshold;
 SHOW ducklake.enable_direct_insert;
+SHOW ducklake.threads;
 
 -- Test setting GUCs
 SET ducklake.default_table_path = '/tmp/test_path';
@@ -16,6 +17,11 @@ RESET ducklake.vacuum_delete_threshold;
 SET ducklake.enable_direct_insert = false;
 SHOW ducklake.enable_direct_insert;
 RESET ducklake.enable_direct_insert;
+
+SET ducklake.threads = 4;
+SHOW ducklake.threads;
+RESET ducklake.threads;
+SHOW ducklake.threads;
 
 SHOW ducklake.enable_metadata_sync;
 SET ducklake.enable_metadata_sync = false;

@@ -188,6 +188,13 @@ namespace pgducklake {
 
 duckdb::unique_ptr<DuckDBManager> DuckDBManager::instance_;
 
+static bool g_force_single_thread = false;
+
+void
+ForceSingleThreadedDuckDB() {
+	g_force_single_thread = true;
+}
+
 bool
 DuckDBManager::IsInitialized() {
 	return instance_ != nullptr && instance_->database != nullptr;
@@ -199,6 +206,7 @@ DuckDBManager::Get() {
 		instance_ = duckdb::make_uniq<DuckDBManager>();
 	}
 	if (!instance_->database) {
+		instance_->duckdb_threads = g_force_single_thread ? 1 : threads;
 		instance_->Initialize();
 	}
 	return *instance_;

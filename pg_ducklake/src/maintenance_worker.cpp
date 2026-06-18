@@ -227,6 +227,8 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 
 	BackgroundWorkerInitializeConnectionByOid(database_oid, InvalidOid, 0);
 
+	pgducklake::ForceSingleThreadedDuckDB();
+
 	elog(LOG, "ducklake maintenance worker started for database %u", database_oid);
 
 	/* Update pid in the shmem slot pre-claimed by the launcher */

@@ -68,4 +68,8 @@ namespace pgducklake {
  * (SUBXACT_EVENT_START_SUB guard; e.g. DuckLake FlushChanges retry loop). */
 void SetAllowSubtransaction(bool allow);
 
+/* Pin this process's DuckDB instance to one thread, ignoring ducklake.threads.
+ * Called by the maintenance worker; must run before the instance initializes. */
+void ForceSingleThreadedDuckDB();
+
 } // namespace pgducklake
