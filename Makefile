@@ -92,6 +92,11 @@ $(FULL_DUCKDB_LIB): $(PGDDB_DIR)/.git/modules/duckdb/HEAD $(EXTENSION_CONFIGS)
 		$(foreach n,$(EXTENSION_BUNDLE_EXCLUDE),-not -name 'lib$(n)_extension.a' -not -name 'lib$(n)_duckdb.a') \
 		-exec cp {} $(DUCKDB_BUILD_DIR)/bundle/. \;
 	find $(DUCKDB_BUILD_DIR)/vcpkg_installed -name '*.a' -exec cp {} $(DUCKDB_BUILD_DIR)/bundle/. \;
+	# Extensions vendored via cmake FetchContent (e.g. nanoarrow's libnanoarrow,
+	# libnanoarrow_ipc, libflatccrt) land under _deps/; bundle their archives too.
+	if [ -d $(DUCKDB_BUILD_DIR)/_deps ]; then \
+		find $(DUCKDB_BUILD_DIR)/_deps -name 'lib*.a' -exec cp {} $(DUCKDB_BUILD_DIR)/bundle/. \;; \
+	fi
 	cd $(DUCKDB_BUILD_DIR)/bundle && \
 		find . -name '*.a' -exec mkdir -p {}.objects \; -exec mv {} {}.objects \; && \
 		find . -name '*.a' -execdir $(AR) -x {} \;

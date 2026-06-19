@@ -9,9 +9,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | 
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(6 rows)
+(7 rows)
 
 SELECT last_value FROM duckdb.extensions_table_seq;
  last_value 
@@ -41,9 +42,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | core
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(6 rows)
+(7 rows)
 
 -- Check that we can rerun this without issues
 SELECT duckdb.install_extension('icu');
@@ -67,9 +69,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | core
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(6 rows)
+(7 rows)
 
 SELECT duckdb.install_extension('aws');
  install_extension 
@@ -91,9 +94,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | core
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(7 rows)
+(8 rows)
 
 -- autoload_extension and load_extension function should work as expected
 SELECT * FROM duckdb.query($$ FROM duckdb_extensions() SELECT installed, loaded WHERE extension_name = 'aws' $$);
@@ -160,9 +164,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | core
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(7 rows)
+(8 rows)
 
 -- Reconnecting should cause the extension not to be loaded anymore
 CALL duckdb.recycle_ddb();
@@ -173,9 +178,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | core
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(6 rows)
+(7 rows)
 
 -- TODO: re-enable when community extensions are published for v1.5.2
 -- SELECT duckdb.install_extension('quack', 'community');
@@ -192,9 +198,10 @@ SELECT * FROM duckdb.query($$ SELECT extension_name, loaded, installed, installe
  httpfs         | t      | t         | 
  icu            | t      | t         | core
  json           | t      | t         | 
+ nanoarrow      | t      | t         | 
  parquet        | t      | t         | 
  pgduckdb       | t      | f         | 
-(6 rows)
+(7 rows)
 
 -- cleanup
 TRUNCATE duckdb.extensions;
