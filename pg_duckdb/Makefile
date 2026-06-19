@@ -70,6 +70,19 @@ SHLIB_LINK += $(PG_DUCKDB_LINK_FLAGS)
 
 include $(ROOT_DIR)/Makefile.pgxs
 
+# On macOS, Postgres.app's pgxs requests a universal binary
+# (-arch arm64 -arch x86_64). When the DuckDB bundle and brew libs
+# are single-arch (host = x86_64 under Rosetta), the arm64 slice has
+# no symbols and ld fails. Strip -arch arm64 from pgxs's flags so the
+# build is single-arch x86_64.
+ifeq ($(shell uname -s),Darwin)
+    override CFLAGS := $(subst -arch arm64,,$(CFLAGS))
+    override CXXFLAGS := $(subst -arch arm64,,$(CXXFLAGS))
+    override LDFLAGS := $(subst -arch arm64,,$(LDFLAGS))
+    override LDFLAGS_SL := $(subst -arch arm64,,$(LDFLAGS_SL))
+    override CFLAGS_SL := $(subst -arch arm64,,$(CFLAGS_SL))
+endif
+
 # Only pass the version define to the one file that needs it, so that ccache
 # doesn't invalidate everything on every commit.
 src/pgduckdb.o: PG_CPPFLAGS += -DPG_DUCKDB_VERSION="\"$(PG_DUCKDB_VERSION)\""
