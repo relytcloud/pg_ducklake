@@ -23,7 +23,21 @@ PGDDB_OBJS := $(PGDDB_CPP_SRCS:.cpp=.o) $(PGDDB_C_SRCS:.c=.o)
 DUCKDB_GEN ?= ninja
 DUCKDB_VERSION = v1.5.4
 
-DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=$(DUCKDB_VERSION)
+# Escape hatch for extra cmake vars to forward to the DuckDB build (e.g. to
+# pin the SDK libcurl when /Library/Frameworks/ shadows it on macOS).
+EXTRA_DUCKDB_CMAKE_VARS ?=
+
+# On macOS, alternative libcurl installations under /Library/Frameworks
+# can shadow the SDK libcurl that DuckDB-httpfs's find_package(CURL)
+# expects (e.g. missing CURLSSLOPT_NATIVE_CA). Auto-pin the SDK copy.
+ifeq ($(shell uname -s),Darwin)
+    MACOS_SDK_PATH := $(shell xcrun --show-sdk-path 2>/dev/null)
+    ifneq ($(MACOS_SDK_PATH),)
+        EXTRA_DUCKDB_CMAKE_VARS += -DCURL_INCLUDE_DIR=$(MACOS_SDK_PATH)/usr/include -DCURL_LIBRARY=$(MACOS_SDK_PATH)/usr/lib/libcurl.tbd
+    endif
+endif
+
+DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=$(DUCKDB_VERSION) $(EXTRA_DUCKDB_CMAKE_VARS)
 DUCKDB_DISABLE_ASSERTIONS ?= 0
 
 # Optional compiler cache (e.g. sccache) for the DuckDB build.
