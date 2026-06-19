@@ -35,6 +35,11 @@ ifeq ($(shell uname -s),Darwin)
     ifneq ($(MACOS_SDK_PATH),)
         EXTRA_DUCKDB_CMAKE_VARS += -DCURL_INCLUDE_DIR=$(MACOS_SDK_PATH)/usr/include -DCURL_LIBRARY=$(MACOS_SDK_PATH)/usr/lib/libcurl.tbd
     endif
+    # libpgduckdb's pgddb_duckdb.cpp uses std::filesystem (macOS 10.15+).
+    # Postgres.app ships pgxs with -mmacosx-version-min=10.13, so re-append
+    # 10.15 here (clang takes the last -mmacosx-version-min on the cmdline).
+    override PG_CPPFLAGS += -mmacosx-version-min=10.15
+    override PG_CXXFLAGS += -mmacosx-version-min=10.15
 endif
 
 DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=$(DUCKDB_VERSION) $(EXTRA_DUCKDB_CMAKE_VARS)
