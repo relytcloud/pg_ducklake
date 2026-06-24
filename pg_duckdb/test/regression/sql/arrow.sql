@@ -1,0 +1,22 @@
+-- Apache Arrow support test.
+--
+-- pg_duckdb exposes read_arrow() unconditionally. When pg_duckdb is
+-- built with WITH_NANOARROW=1 the call is routed to DuckDB's bundled
+-- nanoarrow extension; otherwise the C function ereport's with a
+-- build-time hint instructing the user how to enable it.
+--
+-- pg_regress matches expected/arrow.out (default build, hint path) first,
+-- then expected/arrow_1.out (WITH_NANOARROW=1 build, success path).
+
+-- The SQL function ships in both builds (text and text[] overloads).
+SELECT proname, pg_get_function_arguments(p.oid)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE proname = 'read_arrow' AND n.nspname = 'public'
+ORDER BY 2;
+
+-- Calling read_arrow():
+--   * Default build: our C function ereport's with the rebuild hint.
+--   * WITH_NANOARROW build: DuckDB attempts to open the path; the file
+--     does not exist, so DuckDB raises an IOException instead.
+SELECT r['x'] FROM read_arrow('/tmp/pgduckdb_no_such_file.arrows') r;

@@ -23,7 +23,21 @@ PGDDB_OBJS := $(PGDDB_CPP_SRCS:.cpp=.o) $(PGDDB_C_SRCS:.c=.o)
 DUCKDB_GEN ?= ninja
 DUCKDB_VERSION = v1.5.4
 
-DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=$(DUCKDB_VERSION)
+# Optional Apache Arrow support via the bundled nanoarrow DuckDB extension.
+# Default OFF -- when enabled, the cmake EXTENSION_CONFIGS file selects the
+# nanoarrow extension and PG_DUCKDB_WITH_NANOARROW is defined for the C++
+# compile so read_arrow() routes to DuckDB rather than ereport'ing.
+WITH_NANOARROW ?= 0
+
+# Escape hatch for extra cmake vars to forward to the DuckDB build (e.g. to
+# pin SDK libcurl, or to opt in to a third-party extension).
+EXTRA_DUCKDB_CMAKE_VARS ?=
+
+ifeq ($(WITH_NANOARROW),1)
+    EXTRA_DUCKDB_CMAKE_VARS += -DWITH_NANOARROW=ON
+endif
+
+DUCKDB_CMAKE_VARS = -DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DOVERRIDE_GIT_DESCRIBE=$(DUCKDB_VERSION) $(EXTRA_DUCKDB_CMAKE_VARS)
 DUCKDB_DISABLE_ASSERTIONS ?= 0
 
 # Optional compiler cache (e.g. sccache) for the DuckDB build.
@@ -54,7 +68,7 @@ endif
 # duckdb extensions baked in.
 EXTENSION_CONFIGS ?=
 
-DUCKDB_BUILD_TAG := $(if $(EXTENSION_CONFIGS),$(basename $(notdir $(EXTENSION_CONFIGS)))-$(shell shasum -a 256 '$(EXTENSION_CONFIGS)' 2>/dev/null | cut -c1-8),default)
+DUCKDB_BUILD_TAG := $(if $(EXTENSION_CONFIGS),$(basename $(notdir $(EXTENSION_CONFIGS)))-$(shell shasum -a 256 '$(EXTENSION_CONFIGS)' 2>/dev/null | cut -c1-8),default)$(if $(filter 1,$(WITH_NANOARROW)),-arrow,)
 DUCKDB_BUILD_DIR := $(PGDDB_DIR)/duckdb/build/$(DUCKDB_BUILD_TYPE)-$(DUCKDB_BUILD_TAG)
 FULL_DUCKDB_LIB = $(DUCKDB_BUILD_DIR)/libduckdb_bundle.a
 
@@ -92,6 +106,11 @@ $(FULL_DUCKDB_LIB): $(PGDDB_DIR)/.git/modules/duckdb/HEAD $(EXTENSION_CONFIGS)
 		$(foreach n,$(EXTENSION_BUNDLE_EXCLUDE),-not -name 'lib$(n)_extension.a' -not -name 'lib$(n)_duckdb.a') \
 		-exec cp {} $(DUCKDB_BUILD_DIR)/bundle/. \;
 	find $(DUCKDB_BUILD_DIR)/vcpkg_installed -name '*.a' -exec cp {} $(DUCKDB_BUILD_DIR)/bundle/. \;
+	# Extensions vendored via cmake FetchContent (e.g. nanoarrow's libnanoarrow,
+	# libnanoarrow_ipc, libflatccrt) land under _deps/; bundle their archives too.
+	if [ -d $(DUCKDB_BUILD_DIR)/_deps ]; then \
+		find $(DUCKDB_BUILD_DIR)/_deps -name 'lib*.a' -exec cp {} $(DUCKDB_BUILD_DIR)/bundle/. \;; \
+	fi
 	cd $(DUCKDB_BUILD_DIR)/bundle && \
 		find . -name '*.a' -exec mkdir -p {}.objects \; -exec mv {} {}.objects \; && \
 		find . -name '*.a' -execdir $(AR) -x {} \;

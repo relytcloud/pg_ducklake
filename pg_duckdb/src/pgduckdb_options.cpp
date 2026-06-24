@@ -298,6 +298,18 @@ DECLARE_PG_FUNCTION(duckdb_only_function) {
 	elog(ERROR, "Function '%s' only works with DuckDB execution", function_name);
 }
 
+DECLARE_PG_FUNCTION(pgduckdb_read_arrow) {
+#ifdef PG_DUCKDB_WITH_NANOARROW
+	char *function_name = DatumGetCString(DirectFunctionCall1(regprocout, fcinfo->flinfo->fn_oid));
+	elog(ERROR, "Function '%s' only works with DuckDB execution", function_name);
+#else
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+	                errmsg("read_arrow() requires pg_duckdb built with Apache Arrow (nanoarrow) support"),
+	                errhint("Rebuild pg_duckdb with WITH_NANOARROW=1 to enable read_arrow().")));
+#endif
+	PG_RETURN_VOID();
+}
+
 DECLARE_PG_FUNCTION(duckdb_row_subscript) {
 	PG_RETURN_POINTER(&pgddb::pg::duckdb_row_subscript_routines);
 }

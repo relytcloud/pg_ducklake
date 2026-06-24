@@ -153,6 +153,9 @@ BuildDuckdbOnlyFunctions() {
 	                                "iceberg_snapshots",
 	                                "delta_scan",
 	                                "read_json",
+#ifdef PG_DUCKDB_WITH_NANOARROW
+	                                "read_arrow",
+#endif
 	                                "approx_count_distinct",
 	                                "query",
 	                                "view",

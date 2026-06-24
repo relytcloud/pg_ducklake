@@ -58,6 +58,12 @@ COMPILER_FLAGS=-Wno-sign-compare -Wshadow -Wswitch -Wunused-parameter -Wunreacha
 
 override PG_CPPFLAGS += -Iinclude $(PGDDB_INCLUDE) $(PGDDB_DUCKDB_INCLUDE) -isystem $(INCLUDEDIR_SERVER) ${COMPILER_FLAGS}
 override PG_CXXFLAGS += -std=c++17 ${DUCKDB_BUILD_CXX_FLAGS} ${COMPILER_FLAGS} -Wno-register -Weffc++
+
+# Opt-in Apache Arrow support (see root Makefile WITH_NANOARROW).
+ifeq ($(WITH_NANOARROW),1)
+    override PG_CPPFLAGS += -DPG_DUCKDB_WITH_NANOARROW=1
+    override PG_CXXFLAGS += -DPG_DUCKDB_WITH_NANOARROW=1
+endif
 # Ignore declaration-after-statement warnings in our code. Postgres enforces
 # this because their ancient style guide requires it, but we don't care. It
 # would only apply to C files anyway, and we don't have many of those. The only

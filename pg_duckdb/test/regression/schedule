@@ -3,6 +3,7 @@ test: altered_tables
 test: approx_count_distinct
 test: array_problems
 test: array_type_support
+test: arrow
 test: basic
 test: case_insensitivity
 test: concurrency
