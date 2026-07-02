@@ -748,13 +748,15 @@ CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t r
 		elog(ERROR, "CreateSnapshotForDirectInsert: failed to insert snapshot: %d", ret);
 	}
 
+	/* Must be spelled 'inlined_insert:<table_id>': DuckLake's ParseChangesMade
+	 * rejects unknown change types, aborting any concurrent commit retry. */
 	StringInfoData changes_insert;
 	initStringInfo(&changes_insert);
 	appendStringInfo(&changes_insert,
 	                 "INSERT INTO ducklake.ducklake_snapshot_changes "
 	                 "(snapshot_id, changes_made, author, commit_message, commit_extra_info) "
-	                 "VALUES (%llu, 'inlined_data_insert', NULL, NULL, NULL)",
-	                 (unsigned long long)snapshot_id);
+	                 "VALUES (%llu, 'inlined_insert:%llu', NULL, NULL, NULL)",
+	                 (unsigned long long)snapshot_id, (unsigned long long)table_id);
 
 	elog(DEBUG1, "CreateSnapshotForDirectInsert: executing %s", changes_insert.data);
 	ret = SPI_execute(changes_insert.data, false, 0);

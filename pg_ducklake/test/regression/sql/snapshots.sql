@@ -11,9 +11,24 @@ SELECT count(*) FROM ducklake.current_snapshot();
 -- 2. last_committed_snapshot() returns a single row
 SELECT count(*) FROM ducklake.last_committed_snapshot();
 
--- Note: snapshots() is not tested in the full suite because it iterates all
--- catalog snapshots, including those from prior tests that may contain
--- inlined_data_insert changes (an upstream DuckLake limitation).
+-- 3. Direct-insert (fast path) snapshots record changes DuckLake can parse
+-- (issue #215: 'inlined_data_insert' broke flush commit retries and snapshots()).
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+CREATE TABLE snap_inline (id int) USING ducklake;
+INSERT INTO snap_inline VALUES (1);  -- creates the inlined data table
+SELECT ducklake.reset_direct_insert_stats();
+INSERT INTO snap_inline VALUES (2);
+-- confirm the fast path actually handled the insert above
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+SELECT changes_made ~ '^inlined_insert:\d+$' AS direct_insert_changes_parseable
+FROM ducklake.ducklake_snapshot_changes ORDER BY snapshot_id DESC LIMIT 1;
+
+-- 4. snapshots() parses changes_made of every catalog snapshot, including
+-- the direct-insert ones just created
+SELECT count(*) > 0 AS has_snapshots FROM ducklake.snapshots();
+
+CALL ducklake.set_option('data_inlining_row_limit', 0);
 
 -- Cleanup
 DROP TABLE snap_test;
+DROP TABLE snap_inline;

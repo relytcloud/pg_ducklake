@@ -1,0 +1,91 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_pin s1_flush s1_commit s1_count s1_inlined s1_files
+step s1_begin: BEGIN;
+step s1_pin: SELECT count(*) FROM iso_inline_flush_t;
+count
+-----
+    3
+(1 row)
+
+step s1_flush: SELECT * FROM ducklake.flush_inlined_data('iso_inline_flush_t'::regclass);
+schema_name|table_name        |rows_flushed
+-----------+------------------+------------
+public     |iso_inline_flush_t|           3
+(1 row)
+
+step s1_commit: COMMIT;
+step s1_count: SELECT count(*) FROM iso_inline_flush_t;
+count
+-----
+    3
+(1 row)
+
+step s1_inlined: 
+  SELECT row_id, live, id, val FROM iso_inline_flush_inlined ORDER BY row_id;
+
+row_id|live|id|val
+------+----+--+---
+(0 rows)
+
+step s1_files: 
+  SELECT ddf.record_count, ddf.end_snapshot IS NULL AS live
+  FROM ducklake.ducklake_data_file ddf
+  JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+  WHERE dt.table_name = 'iso_inline_flush_t' AND dt.end_snapshot IS NULL
+  ORDER BY ddf.data_file_id;
+
+record_count|live
+------------+----
+           3|t   
+(1 row)
+
+
+starting permutation: s1_begin s1_pin s2_insert s1_flush s1_commit s1_count s2_count s1_inlined s1_files
+step s1_begin: BEGIN;
+step s1_pin: SELECT count(*) FROM iso_inline_flush_t;
+count
+-----
+    3
+(1 row)
+
+step s2_insert: INSERT INTO iso_inline_flush_t VALUES (4, 'd');
+step s1_flush: SELECT * FROM ducklake.flush_inlined_data('iso_inline_flush_t'::regclass);
+schema_name|table_name        |rows_flushed
+-----------+------------------+------------
+public     |iso_inline_flush_t|           3
+(1 row)
+
+step s1_commit: COMMIT;
+step s1_count: SELECT count(*) FROM iso_inline_flush_t;
+count
+-----
+    4
+(1 row)
+
+step s2_count: SELECT count(*) FROM iso_inline_flush_t;
+count
+-----
+    4
+(1 row)
+
+step s1_inlined: 
+  SELECT row_id, live, id, val FROM iso_inline_flush_inlined ORDER BY row_id;
+
+row_id|live|id|val
+------+----+--+---
+     3|t   | 4|d  
+(1 row)
+
+step s1_files: 
+  SELECT ddf.record_count, ddf.end_snapshot IS NULL AS live
+  FROM ducklake.ducklake_data_file ddf
+  JOIN ducklake.ducklake_table dt ON ddf.table_id = dt.table_id
+  WHERE dt.table_name = 'iso_inline_flush_t' AND dt.end_snapshot IS NULL
+  ORDER BY ddf.data_file_id;
+
+record_count|live
+------------+----
+           3|t   
+(1 row)
+

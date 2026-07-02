@@ -130,13 +130,21 @@ Q(const std::string &s) {
 	return duckdb::KeywordHelper::WriteQuoted(s, '\'');
 }
 
-/* Phase 1: in-process maintenance (needs PG backend). */
+/*
+ * Phase 1: in-process maintenance (needs PG backend).
+ *
+ * Every helper returns false on failure and the caller must then ABORT the
+ * PG transaction: DuckLake maintenance functions issue metadata writes via
+ * SPI as they execute (e.g. the flush deletes inlined rows before its
+ * DuckLake commit), so committing after a failure persists those writes
+ * without the rest of the operation -- silent data loss (issue #215).
+ */
 
 /* Flush inlined data from PG metadata tables to parquet files. */
-void
+bool
 MaintainTableInProcess(const char *schema_name, const char *table_name) {
 	if (!pgducklake::maintenance_flush_inlined_data)
-		return;
+		return true;
 
 	std::string query = "SELECT * FROM ducklake_flush_inlined_data(" + Q(PGDUCKLAKE_DUCKDB_CATALOG) +
 	                    ", schema_name=" + Q(schema_name) + ", table_name=" + Q(table_name) + ")";
@@ -145,21 +153,25 @@ MaintainTableInProcess(const char *schema_name, const char *table_name) {
 	} catch (const std::exception &e) {
 		elog(WARNING, "ducklake maintenance: flush_inlined_data failed for \"%s\".\"%s\": %s", schema_name, table_name,
 		     pgducklake::DuckDBErrorMessage(e).c_str());
+		return false;
 	}
+	return true;
 }
 
 /* Expire old snapshots (pure metadata update, no file I/O). */
-void
+bool
 MaintainCatalogInProcess() {
 	if (!pgducklake::maintenance_expire_snapshots)
-		return;
+		return true;
 
 	std::string query = "SELECT * FROM ducklake_expire_snapshots(" + Q(PGDUCKLAKE_DUCKDB_CATALOG) + ")";
 	try {
 		pgducklake::DuckDBQueryOrThrow(query);
 	} catch (const std::exception &e) {
 		elog(WARNING, "ducklake maintenance: expire_snapshots failed: %s", pgducklake::DuckDBErrorMessage(e).c_str());
+		return false;
 	}
+	return true;
 }
 
 /*
@@ -169,7 +181,7 @@ MaintainCatalogInProcess() {
  */
 
 /* Rewrite data files (remove deleted rows) + merge small files. */
-void
+bool
 CompactTable(const char *schema_name, const char *table_name) {
 	std::string db(PGDUCKLAKE_DUCKDB_CATALOG);
 	std::string schema(schema_name);
@@ -184,6 +196,7 @@ CompactTable(const char *schema_name, const char *table_name) {
 		} catch (const std::exception &e) {
 			elog(WARNING, "ducklake maintenance: rewrite_data_files failed for \"%s\".\"%s\": %s", schema_name,
 			     table_name, pgducklake::DuckDBErrorMessage(e).c_str());
+			return false;
 		}
 	}
 
@@ -195,15 +208,17 @@ CompactTable(const char *schema_name, const char *table_name) {
 		} catch (const std::exception &e) {
 			elog(WARNING, "ducklake maintenance: merge_adjacent_files failed for \"%s\".\"%s\": %s", schema_name,
 			     table_name, pgducklake::DuckDBErrorMessage(e).c_str());
+			return false;
 		}
 	}
+	return true;
 }
 
 /* Remove unreferenced data files from storage. */
-void
+bool
 CompactCatalog() {
 	if (!pgducklake::maintenance_cleanup_old_files)
-		return;
+		return true;
 
 	std::string query =
 	    "SELECT * FROM ducklake_cleanup_old_files(" + Q(PGDUCKLAKE_DUCKDB_CATALOG) + ", cleanup_all => true)";
@@ -211,7 +226,9 @@ CompactCatalog() {
 		pgducklake::DuckDBQueryOrThrow(query);
 	} catch (const std::exception &e) {
 		elog(WARNING, "ducklake maintenance: cleanup_old_files failed: %s", pgducklake::DuckDBErrorMessage(e).c_str());
+		return false;
 	}
+	return true;
 }
 
 } // anonymous namespace
@@ -298,16 +315,19 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		CommitTransactionCommand();
 	}
 
-	/* Phase 1: in-process maintenance (must run inside the PG backend). */
+	/* Phase 1: in-process maintenance (must run inside the PG backend).
+	 * On failure ABORT the transaction: the failed operation may have issued
+	 * SPI writes that must not outlive it (see the phase-1 helper comment). */
 	for (int i = 0; i < ntables; i++) {
 		CHECK_FOR_INTERRUPTS();
 
 		StartTransactionCommand();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
+		volatile bool ok = false;
 		PG_TRY();
 		{
-			MaintainTableInProcess(schemas[i], tables[i]);
+			ok = MaintainTableInProcess(schemas[i], tables[i]);
 		}
 		PG_CATCH();
 		{
@@ -325,7 +345,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		PG_END_TRY();
 
 		PopActiveSnapshot();
-		CommitTransactionCommand();
+		if (ok)
+			CommitTransactionCommand();
+		else
+			AbortCurrentTransaction();
 	}
 
 	{
@@ -333,9 +356,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		StartTransactionCommand();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
+		volatile bool ok = false;
 		PG_TRY();
 		{
-			MaintainCatalogInProcess();
+			ok = MaintainCatalogInProcess();
 		}
 		PG_CATCH();
 		{
@@ -353,7 +377,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		PG_END_TRY();
 
 		PopActiveSnapshot();
-		CommitTransactionCommand();
+		if (ok)
+			CommitTransactionCommand();
+		else
+			AbortCurrentTransaction();
 	}
 
 	/* Phase 2: compaction. TODO: offload to an external DuckDB process. */
@@ -365,9 +392,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		StartTransactionCommand();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
+		volatile bool ok = false;
 		PG_TRY();
 		{
-			CompactTable(schemas[i], tables[i]);
+			ok = CompactTable(schemas[i], tables[i]);
 		}
 		PG_CATCH();
 		{
@@ -385,7 +413,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		PG_END_TRY();
 
 		PopActiveSnapshot();
-		CommitTransactionCommand();
+		if (ok)
+			CommitTransactionCommand();
+		else
+			AbortCurrentTransaction();
 	}
 
 	{
@@ -393,9 +424,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		StartTransactionCommand();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
+		volatile bool ok = false;
 		PG_TRY();
 		{
-			CompactCatalog();
+			ok = CompactCatalog();
 		}
 		PG_CATCH();
 		{
@@ -413,7 +445,10 @@ ducklake_maintenance_worker_main(Datum main_arg) {
 		PG_END_TRY();
 
 		PopActiveSnapshot();
-		CommitTransactionCommand();
+		if (ok)
+			CommitTransactionCommand();
+		else
+			AbortCurrentTransaction();
 	}
 
 	for (int i = 0; i < ntables; i++) {
