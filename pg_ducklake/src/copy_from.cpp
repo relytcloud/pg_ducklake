@@ -209,7 +209,29 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 
 	if (rows_inserted > 0) {
 		SkipSnapshotSyncGuard sync_guard;
-		CreateSnapshotForDirectInsert(begin_snapshot, table_id, rows_inserted);
+		/* Concurrent commits race on MAX(snapshot_id)+1; the loser hits 23505.
+		 * Translate to 40001 so client retry adapters retry transparently
+		 * (mirrors DirectInsert_ExecCustomScan). */
+		MemoryContext old_ctx = CurrentMemoryContext;
+		PG_TRY();
+		{
+			CreateSnapshotForDirectInsert(begin_snapshot, table_id, rows_inserted);
+		}
+		PG_CATCH();
+		{
+			MemoryContextSwitchTo(old_ctx);
+			ErrorData *edata = CopyErrorData();
+			if (edata->sqlerrcode == ERRCODE_UNIQUE_VIOLATION) {
+				FreeErrorData(edata);
+				FlushErrorState();
+				ereport(ERROR,
+				        (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+				         errmsg("ducklake COPY: snapshot_id allocation lost the race"), errhint("Retry the COPY.")));
+			}
+			FreeErrorData(edata);
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
 		CommandCounterIncrement();
 	}
 

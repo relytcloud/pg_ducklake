@@ -1,0 +1,144 @@
+-- Direct-insert (fast path) metadata commit protocol.
+-- The fast path hand-writes the DuckLake commit; these tests pin the parts of
+-- the protocol other DuckLake machinery relies on.
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+-- ============================================================
+-- 1. next_file_id must advance on a fast-path commit
+-- ============================================================
+-- DuckLake keys its table-stats cache on (next_file_id, schema_version,
+-- table_id) and bumps next_file_id on inlined-only commits to signal a data
+-- change. A fast-path commit that carries it forward leaves stale cached
+-- stats (next_row_id, record_count, min/max) in every open DuckDB instance.
+CREATE TABLE dim_t (id int, val text) USING ducklake;
+INSERT INTO dim_t VALUES (0, 'seed');  -- normal path: creates the inlined data table
+SELECT next_file_id AS file_id_before
+FROM ducklake.ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1 \gset
+SELECT ducklake.reset_direct_insert_stats();
+ reset_direct_insert_stats 
+---------------------------
+ 
+(1 row)
+
+INSERT INTO dim_t VALUES (1, 'fast');
+-- fast path handled the insert above
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+    pattern     | reason | count 
+----------------+--------+-------
+ matched_values | ok     |     1
+(1 row)
+
+SELECT next_file_id > :file_id_before AS file_id_advanced
+FROM ducklake.ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1;
+ file_id_advanced 
+------------------
+ t
+(1 row)
+
+-- ============================================================
+-- 2. row ids must stay unique when fast-path and normal-path
+--    inserts interleave
+-- ============================================================
+-- Load this backend's DuckDB table-stats cache, then advance next_row_id
+-- through the fast path (PG metadata only). The normal-path insert below
+-- must not seed its row ids from the stale cache entry.
+SELECT count(*) FROM dim_t WHERE id >= 0;
+ count 
+-------
+     2
+(1 row)
+
+INSERT INTO dim_t VALUES (2, 'fast2');
+BEGIN;  -- transaction block: fast path disengages, normal DuckLake path
+INSERT INTO dim_t VALUES (3, 'slow');
+COMMIT;
+SELECT it.table_name AS dim_inl
+FROM ducklake.ducklake_inlined_data_tables it
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'dim_t' AND t.end_snapshot IS NULL
+ORDER BY it.schema_version DESC LIMIT 1 \gset
+SELECT row_id, count(*) AS dup_count
+FROM ducklake.:dim_inl GROUP BY row_id HAVING count(*) > 1;
+ row_id | dup_count 
+--------+-----------
+(0 rows)
+
+SELECT count(*) AS inlined_rows, count(DISTINCT row_id) AS distinct_row_ids
+FROM ducklake.:dim_inl;
+ inlined_rows | distinct_row_ids 
+--------------+------------------
+            4 |                4
+(1 row)
+
+-- deleting one row must not take an unrelated row with it
+DELETE FROM dim_t WHERE id = 3;
+SELECT * FROM dim_t ORDER BY id;
+ id |  val  
+----+-------
+  0 | seed
+  1 | fast
+  2 | fast2
+(3 rows)
+
+-- ============================================================
+-- 3. global column stats must not claim ranges that exclude
+--    fast-path rows
+-- ============================================================
+-- The fast path cannot maintain min/max/contains_null, so it must degrade
+-- them to NULL (= unknown). Stale claims are trusted by DuckLake readers of
+-- this catalog (global stats feed DuckDB optimizer statistics, which fold
+-- provably-false filters) and are perpetuated by later stats merges.
+CREATE TABLE stats_t (id int) USING ducklake;
+INSERT INTO stats_t SELECT i FROM generate_series(1, 200) i;  -- normal path, real stats
+-- cache the (accurate, soon stale) stats in this backend
+SELECT count(*) FROM stats_t WHERE id = 150;
+ count 
+-------
+     1
+(1 row)
+
+SELECT ducklake.reset_direct_insert_stats();
+ reset_direct_insert_stats 
+---------------------------
+ 
+(1 row)
+
+INSERT INTO stats_t VALUES (1000);  -- outside the recorded min/max
+INSERT INTO stats_t VALUES (NULL);  -- violates contains_null = false
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+    pattern     | reason | count 
+----------------+--------+-------
+ matched_values | ok     |     2
+(1 row)
+
+-- stats must no longer claim [1,200] / no-nulls
+SELECT s.min_value, s.max_value, s.contains_null
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+WHERE t.table_name = 'stats_t';
+ min_value | max_value | contains_null 
+-----------+-----------+---------------
+           |           | 
+(1 row)
+
+SELECT count(*) FROM stats_t WHERE id = 1000;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM stats_t WHERE id IS NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM stats_t;
+ count 
+-------
+   202
+(1 row)
+
+-- Cleanup
+DROP TABLE dim_t;
+DROP TABLE stats_t;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
