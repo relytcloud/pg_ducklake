@@ -13,11 +13,20 @@
 #     unresolved_type * interval operator; cast the subscript to bigint
 #     first (EventTime, EventDate, ClientEventTime, LocalEventTime).
 #
-# load: the host-side hits.parquet (14.8 GB) is deleted only after the CTAS,
-# so during the load the runner disk holds the host copy, the container copy,
-# and the freshly written DuckLake data files at once. Delete the host copy
-# right after docker cp to keep peak disk usage inside what a GitHub-hosted
-# runner offers.
+# load:
+#   - pg_ducklake 1.0.0 also renamed its GUCs to ducklake.*, so the script's
+#     SET duckdb.memory_limit is an unreserved-placeholder no-op and every
+#     backend's DuckDB instance defaults to 80% of host RAM. Apply the
+#     intended limit for real via ducklake.raw_query(SET memory_limit=...).
+#   - the host-side hits.parquet (14.8 GB) was deleted only after the CTAS,
+#     so the runner disk held the host copy, the container copy, and the
+#     freshly written DuckLake data files at once. Delete the host copy
+#     right after docker cp.
+#
+# query: each benchmark query runs in a fresh backend whose DuckDB instance
+# would default to 80% of host RAM; on a 16 GB GitHub runner that starves the
+# runner agent (jobs die with "the hosted runner lost communication"). Cap
+# the session at 60% of host RAM via ducklake.raw_query before the query.
 #
 # TODO: upstream this to ClickHouse/ClickBench, then drop this patch.
 diff --git a/pg_ducklake/create.sql b/pg_ducklake/create.sql
@@ -60,7 +69,7 @@ index a7b15017..89141135 100644
 -from read_parquet('/tmp/hits.parquet', binary_as_string => true) r;
 +from ducklake.read_parquet('/tmp/hits.parquet', binary_as_string => true) r;
 diff --git a/pg_ducklake/load b/pg_ducklake/load
-index 49a4bfc5..cabf142a 100755
+index 49a4bfc5..74c7aad2 100755
 --- a/pg_ducklake/load
 +++ b/pg_ducklake/load
 @@ -5,6 +5,7 @@ CONTAINER_NAME=${CONTAINER_NAME:-pgduck}
@@ -71,9 +80,29 @@ index 49a4bfc5..cabf142a 100755
  
  psql postgres://postgres:duckdb@localhost:5432/postgres -v ON_ERROR_STOP=1 -t -c "DROP TABLE IF EXISTS hits;" || true
  
-@@ -19,5 +20,4 @@ duckdb_mem_mb=$(( mem_kb * 8 / 10 / 1024 ))
- { printf "SET duckdb.memory_limit = '%sMB';\n" "$duckdb_mem_mb"; cat create.sql; } \
+@@ -16,8 +17,7 @@ psql postgres://postgres:duckdb@localhost:5432/postgres -v ON_ERROR_STOP=1 -t -c
+ # same session.
+ mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+ duckdb_mem_mb=$(( mem_kb * 8 / 10 / 1024 ))
+-{ printf "SET duckdb.memory_limit = '%sMB';\n" "$duckdb_mem_mb"; cat create.sql; } \
++{ printf "SELECT ducklake.raw_query(\$\$SET memory_limit='%sMB'\$\$);\n" "$duckdb_mem_mb"; cat create.sql; } \
      | psql postgres://postgres:duckdb@localhost:5432/postgres -v ON_ERROR_STOP=1
  
 -rm -f hits.parquet
  sync
+diff --git a/pg_ducklake/query b/pg_ducklake/query
+index 54d362e6..4be7f4ca 100755
+--- a/pg_ducklake/query
++++ b/pg_ducklake/query
+@@ -7,7 +7,10 @@ set -e
+ 
+ query=$(cat)
+ 
+-out=$(printf '\\timing\n%s\n' "$query" | psql --no-psqlrc --tuples-only postgres://postgres:duckdb@localhost:5432/postgres 2>&1)
++mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
++duckdb_mem_mb=$(( mem_kb * 6 / 10 / 1024 ))
++
++out=$(printf "\\\\timing\nSELECT ducklake.raw_query(\$\$SET memory_limit='%sMB'\$\$);\n%s\n" "$duckdb_mem_mb" "$query" | psql --no-psqlrc --tuples-only postgres://postgres:duckdb@localhost:5432/postgres 2>&1)
+ status=$?
+ 
+ if printf '%s\n' "$out" | grep -q '^ERROR\|psql: error'; then

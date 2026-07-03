@@ -208,6 +208,10 @@ jobs:
         env:
           # upstream install reads the image from $PGDUCK_IMAGE
           PGDUCK_IMAGE: ghcr.io/${{ github.repository }}/ci-builds:${{ matrix.postgres }}-${{ steps.params.outputs.platform }}-${{ github.sha }}
+          # skip the 10-connection QPS window: each pg_ducklake backend runs
+          # its own DuckDB instance, and 10 of them starve a 16 GB runner
+          # until GitHub kills it ("runner lost communication")
+          BENCH_CONCURRENT_DURATION: "0"
         run: |
           # docker.io conflicts with the runner's docker; the image is already
           # pulled above, so drop the apt docker.io and install's own pull.
