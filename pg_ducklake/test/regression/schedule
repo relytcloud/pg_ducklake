@@ -23,6 +23,7 @@ test: direct_insert_stats
 test: inlined_data_schema_change
 test: alter_partition_inlining
 test: types
+test: unresolved_type_ops
 test: decimal_precision
 test: variant
 test: readme_examples

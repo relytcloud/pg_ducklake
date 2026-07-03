@@ -343,6 +343,10 @@ DECLARE_PG_FUNCTION(ducklake_unresolved_type_subscript) {
 	PG_RETURN_POINTER(&pgddb::pg::duckdb_unresolved_type_subscript_routines);
 }
 
+DECLARE_PG_FUNCTION(ducklake_unresolved_type_operator) {
+	elog(ERROR, "ducklake.unresolved_type values can only be used in DuckDB execution");
+}
+
 DECLARE_PG_FUNCTION(ducklake_struct_in) {
 	elog(ERROR, "Creating the ducklake.struct type is not supported");
 }
