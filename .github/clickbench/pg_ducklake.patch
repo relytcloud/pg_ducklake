@@ -2,16 +2,9 @@
 # pg_ducklake benchmark in CI (.github/workflows/docker.yaml clickbench_test).
 #
 # create.sql: pg_ducklake 1.0.0 moved read_csv/read_parquet into the
-# `ducklake` schema and its subscript results (r['col']) are
-# ducklake.unresolved_type, which has explicit casts but no arithmetic
-# operators. ClickBench's pg_ducklake/create.sql predates 1.0.0, so it fails
-# to parse twice over:
-#   - read_parquet is called unqualified and resolves nothing on the default
-#     search_path ("function read_parquet(unknown, binary_as_string =>
-#     boolean) does not exist"); qualify it as ducklake.read_parquet.
-#   - the epoch arithmetic r['EventTime'] * interval '1 second' has no
-#     unresolved_type * interval operator; cast the subscript to bigint
-#     first (EventTime, EventDate, ClientEventTime, LocalEventTime).
+# `ducklake` schema, so the unqualified read_parquet call resolves nothing on
+# the default search_path ("function read_parquet(unknown, binary_as_string =>
+# boolean) does not exist"). Qualify it as ducklake.read_parquet.
 #
 # load:
 #   - pg_ducklake 1.0.0 also renamed its GUCs to ducklake.*, so the script's
@@ -30,38 +23,9 @@
 #
 # TODO: upstream this to ClickHouse/ClickBench, then drop this patch.
 diff --git a/pg_ducklake/create.sql b/pg_ducklake/create.sql
-index a7b15017..89141135 100644
+index a7b15017..0bb7f6d8 100644
 --- a/pg_ducklake/create.sql
 +++ b/pg_ducklake/create.sql
-@@ -4,8 +4,8 @@ select
-     r['JavaEnable'] AS JavaEnable,
-     r['Title']::text AS Title,
-     r['GoodEvent'] AS GoodEvent,
--    ('epoch'::timestamp + (r['EventTime'] * interval '1 second'))::timestamp AS EventTime,
--    (DATE '1970-01-01' + (r['EventDate'] * interval '1 day'))::date AS EventDate,
-+    ('epoch'::timestamp + (r['EventTime']::bigint * interval '1 second'))::timestamp AS EventTime,
-+    (DATE '1970-01-01' + (r['EventDate']::bigint * interval '1 day'))::date AS EventDate,
-     r['CounterID'] AS CounterID,
-     r['ClientIP'] AS ClientIP,
-     r['RegionID'] AS RegionID,
-@@ -45,7 +45,7 @@ select
-     r['WindowClientWidth'] AS WindowClientWidth,
-     r['WindowClientHeight'] AS WindowClientHeight,
-     r['ClientTimeZone'] AS ClientTimeZone,
--    ('epoch'::timestamp + (r['ClientEventTime'] * interval '1 second'))::timestamp AS ClientEventTime,
-+    ('epoch'::timestamp + (r['ClientEventTime']::bigint * interval '1 second'))::timestamp AS ClientEventTime,
-     r['SilverlightVersion1'] AS SilverlightVersion1,
-     r['SilverlightVersion2'] AS SilverlightVersion2,
-     r['SilverlightVersion3'] AS SilverlightVersion3,
-@@ -64,7 +64,7 @@ select
-     r['DontCountHits'] AS DontCountHits,
-     r['WithHash'] AS WithHash,
-     r['HitColor'] AS HitColor,
--    ('epoch'::timestamp + (r['LocalEventTime'] * interval '1 second'))::timestamp AS LocalEventTime,
-+    ('epoch'::timestamp + (r['LocalEventTime']::bigint * interval '1 second'))::timestamp AS LocalEventTime,
-     r['Age'] AS Age,
-     r['Sex'] AS Sex,
-     r['Income'] AS Income,
 @@ -105,4 +105,4 @@ select
      r['RefererHash'] AS RefererHash,
      r['URLHash'] AS URLHash,
