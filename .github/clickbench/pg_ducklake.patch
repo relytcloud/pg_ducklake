@@ -1,20 +1,79 @@
 # Patches applied to a fresh ClickHouse/ClickBench checkout before running the
 # pg_ducklake benchmark in CI (.github/workflows/docker.yaml clickbench_test).
 #
-# pg_ducklake 1.0.0 moved read_csv/read_parquet into the `ducklake` schema, but
-# ClickBench's pg_ducklake/create.sql calls read_parquet unqualified, so it
-# resolves nothing on the default search_path and the CTAS fails with
-# "function read_parquet(unknown, binary_as_string => boolean) does not exist".
-# Qualify the call as ducklake.read_parquet.
+# create.sql: pg_ducklake 1.0.0 moved read_csv/read_parquet into the
+# `ducklake` schema and its subscript results (r['col']) are
+# ducklake.unresolved_type, which has explicit casts but no arithmetic
+# operators. ClickBench's pg_ducklake/create.sql predates 1.0.0, so it fails
+# to parse twice over:
+#   - read_parquet is called unqualified and resolves nothing on the default
+#     search_path ("function read_parquet(unknown, binary_as_string =>
+#     boolean) does not exist"); qualify it as ducklake.read_parquet.
+#   - the epoch arithmetic r['EventTime'] * interval '1 second' has no
+#     unresolved_type * interval operator; cast the subscript to bigint
+#     first (EventTime, EventDate, ClientEventTime, LocalEventTime).
+#
+# load: the host-side hits.parquet (14.8 GB) is deleted only after the CTAS,
+# so during the load the runner disk holds the host copy, the container copy,
+# and the freshly written DuckLake data files at once. Delete the host copy
+# right after docker cp to keep peak disk usage inside what a GitHub-hosted
+# runner offers.
 #
 # TODO: upstream this to ClickHouse/ClickBench, then drop this patch.
 diff --git a/pg_ducklake/create.sql b/pg_ducklake/create.sql
-index a7b1501..0bb7f6d 100644
+index a7b15017..89141135 100644
 --- a/pg_ducklake/create.sql
 +++ b/pg_ducklake/create.sql
+@@ -4,8 +4,8 @@ select
+     r['JavaEnable'] AS JavaEnable,
+     r['Title']::text AS Title,
+     r['GoodEvent'] AS GoodEvent,
+-    ('epoch'::timestamp + (r['EventTime'] * interval '1 second'))::timestamp AS EventTime,
+-    (DATE '1970-01-01' + (r['EventDate'] * interval '1 day'))::date AS EventDate,
++    ('epoch'::timestamp + (r['EventTime']::bigint * interval '1 second'))::timestamp AS EventTime,
++    (DATE '1970-01-01' + (r['EventDate']::bigint * interval '1 day'))::date AS EventDate,
+     r['CounterID'] AS CounterID,
+     r['ClientIP'] AS ClientIP,
+     r['RegionID'] AS RegionID,
+@@ -45,7 +45,7 @@ select
+     r['WindowClientWidth'] AS WindowClientWidth,
+     r['WindowClientHeight'] AS WindowClientHeight,
+     r['ClientTimeZone'] AS ClientTimeZone,
+-    ('epoch'::timestamp + (r['ClientEventTime'] * interval '1 second'))::timestamp AS ClientEventTime,
++    ('epoch'::timestamp + (r['ClientEventTime']::bigint * interval '1 second'))::timestamp AS ClientEventTime,
+     r['SilverlightVersion1'] AS SilverlightVersion1,
+     r['SilverlightVersion2'] AS SilverlightVersion2,
+     r['SilverlightVersion3'] AS SilverlightVersion3,
+@@ -64,7 +64,7 @@ select
+     r['DontCountHits'] AS DontCountHits,
+     r['WithHash'] AS WithHash,
+     r['HitColor'] AS HitColor,
+-    ('epoch'::timestamp + (r['LocalEventTime'] * interval '1 second'))::timestamp AS LocalEventTime,
++    ('epoch'::timestamp + (r['LocalEventTime']::bigint * interval '1 second'))::timestamp AS LocalEventTime,
+     r['Age'] AS Age,
+     r['Sex'] AS Sex,
+     r['Income'] AS Income,
 @@ -105,4 +105,4 @@ select
      r['RefererHash'] AS RefererHash,
      r['URLHash'] AS URLHash,
      r['CLID'] AS CLID
 -from read_parquet('/tmp/hits.parquet', binary_as_string => true) r;
 +from ducklake.read_parquet('/tmp/hits.parquet', binary_as_string => true) r;
+diff --git a/pg_ducklake/load b/pg_ducklake/load
+index 49a4bfc5..cabf142a 100755
+--- a/pg_ducklake/load
++++ b/pg_ducklake/load
+@@ -5,6 +5,7 @@ CONTAINER_NAME=${CONTAINER_NAME:-pgduck}
+ 
+ # Move parquet file into the container at /tmp/hits.parquet (path used by create.sql).
+ sudo docker cp hits.parquet "$CONTAINER_NAME":/tmp/hits.parquet
++rm -f hits.parquet
+ 
+ psql postgres://postgres:duckdb@localhost:5432/postgres -v ON_ERROR_STOP=1 -t -c "DROP TABLE IF EXISTS hits;" || true
+ 
+@@ -19,5 +20,4 @@ duckdb_mem_mb=$(( mem_kb * 8 / 10 / 1024 ))
+ { printf "SET duckdb.memory_limit = '%sMB';\n" "$duckdb_mem_mb"; cat create.sql; } \
+     | psql postgres://postgres:duckdb@localhost:5432/postgres -v ON_ERROR_STOP=1
+ 
+-rm -f hits.parquet
+ sync
