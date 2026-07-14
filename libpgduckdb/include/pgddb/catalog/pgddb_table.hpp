@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
 
+#include "pgddb/catalog/relation_desc.hpp"
 #include "pgddb/pg/declarations.hpp"
 
 #include "pgddb/utility/cpp_only_file.hpp" // Must be last include.
@@ -12,7 +13,7 @@ namespace pgddb {
 class PostgresTable : public duckdb::TableCatalogEntry {
 public:
 	PostgresTable(duckdb::Catalog &catalog, duckdb::SchemaCatalogEntry &schema, duckdb::CreateTableInfo &info,
-	              Relation rel, Cardinality cardinality, Snapshot snapshot);
+	              RelationDesc desc, Snapshot snapshot);
 
 	virtual ~PostgresTable();
 
@@ -23,11 +24,11 @@ public:
 	duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext &context) override;
 
 	static Relation OpenRelation(Oid relid);
-	static void SetTableInfo(duckdb::CreateTableInfo &info, Relation rel);
+	static void CloseRelation(Relation rel);
+	static void SetTableInfo(duckdb::CreateTableInfo &info, const RelationDesc &desc);
 
 protected:
-	Relation rel;
-	Cardinality cardinality;
+	RelationDesc desc;
 	Snapshot snapshot;
 
 private:

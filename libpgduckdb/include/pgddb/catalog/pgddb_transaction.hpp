@@ -20,7 +20,7 @@ class SchemaItems {
 public:
 	SchemaItems(duckdb::unique_ptr<PostgresSchema> &&schema, const duckdb::string &name);
 
-	duckdb::optional_ptr<duckdb::CatalogEntry> GetTable(const duckdb::string &name);
+	duckdb::optional_ptr<duckdb::CatalogEntry> GetTable(const duckdb::string &name, duckdb::ClientContext *context);
 
 	duckdb::optional_ptr<duckdb::CatalogEntry> GetSchema() const;
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "pgddb/pg/declarations.hpp"
 
 namespace pgddb {
@@ -27,6 +29,12 @@ void SlotGetAllAttrs(TupleTableSlot *slot);
 TupleTableSlot *ExecStoreMinimalTupleUnsafe(MinimalTuple minmal_tuple, TupleTableSlot *slot, bool shouldFree);
 
 double EstimateRelSize(Relation rel);
+
+// Physical block count of the relation's main fork (current file size).
+uint32_t RelationBlockCount(Relation rel);
+
+// True if the relation is a backend-local temporary table.
+bool RelationIsTemporary(Relation rel);
 
 Oid GetRelidFromSchemaAndTable(const char *, const char *);
 

@@ -3,6 +3,7 @@
 #include "pgddb/catalog/pgddb_transaction.hpp"
 #include "pgddb/pg/snapshots.hpp"
 #include "pgddb/pgddb_process_lock.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
 
 #include "duckdb/main/attached_database.hpp"
 
@@ -16,7 +17,12 @@ PostgresTransactionManager::PostgresTransactionManager(duckdb::AttachedDatabase 
 
 duckdb::Transaction &
 PostgresTransactionManager::StartTransaction(duckdb::ClientContext &context) {
-	auto transaction = duckdb::make_uniq<PostgresTransaction>(*this, context, catalog, GetActiveSnapshot());
+	// In the PG-free worker (a worker session is active) there is no active snapshot; the
+	// transaction's snapshot is unused there (catalog is RPC'd, heap scans are inverted),
+	// so avoid GetActiveSnapshot() which asserts without one. Context-resolved because a
+	// nested query can start this transaction on a DuckDB scheduler thread.
+	Snapshot snap = pgddb::worker::EffectiveWorkerSession(&context) ? nullptr : GetActiveSnapshot();
+	auto transaction = duckdb::make_uniq<PostgresTransaction>(*this, context, catalog, snap);
 	auto &result = *transaction;
 	duckdb::lock_guard<duckdb::mutex> l(transaction_lock);
 	transactions[result] = std::move(transaction);

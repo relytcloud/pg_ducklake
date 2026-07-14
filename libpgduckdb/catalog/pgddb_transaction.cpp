@@ -2,8 +2,12 @@
 #include "pgddb/catalog/pgddb_schema.hpp"
 #include "pgddb/catalog/pgddb_transaction.hpp"
 #include "pgddb/catalog/pgddb_table.hpp"
+#include "pgddb/catalog/relation_desc.hpp"
 #include "pgddb/scan/postgres_scan.hpp"
 #include "pgddb/pg/relations.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
+#include "pgddb/worker/transport/session_channel.hpp"
+#include "pgddb/worker/transport/session_protocol.hpp"
 
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -31,10 +35,27 @@ SchemaItems::SchemaItems(duckdb::unique_ptr<PostgresSchema> &&_schema, const duc
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
-SchemaItems::GetTable(const duckdb::string &entry_name) {
+SchemaItems::GetTable(const duckdb::string &entry_name, duckdb::ClientContext *context) {
 	auto it = tables.find(entry_name);
 	if (it != tables.end()) {
 		return it->second.get();
+	}
+
+	// In a duckdb worker session, the relation lives in the requesting backend; RPC it to
+	// describe the relation rather than opening it here. Resolved through the context as
+	// well: a nested query (e.g. DuckLake inlined-data reads) binds on a DuckDB scheduler
+	// thread, where the session thread-local is invisible.
+	if (auto *session = pgddb::worker::EffectiveWorkerSession(context)) {
+		RelationDesc desc = pgddb::WorkerDescribeRelation(*session, name, entry_name);
+		if (desc.oid == 0 /* InvalidOid */) {
+			return nullptr; // Table could not be found
+		}
+		duckdb::CreateTableInfo info;
+		info.table = entry_name;
+		PostgresTable::SetTableInfo(info, desc);
+		tables.emplace(entry_name, duckdb::make_uniq<PostgresTable>(schema->catalog, *schema, info, std::move(desc),
+		                                                            schema->snapshot));
+		return tables[entry_name].get();
 	}
 
 	Oid rel_oid = pgddb::GetRelidFromSchemaAndTable(name.c_str(), entry_name.c_str());
@@ -44,14 +65,15 @@ SchemaItems::GetTable(const duckdb::string &entry_name) {
 	}
 
 	Relation rel = PostgresTable::OpenRelation(rel_oid);
+	RelationDesc desc = pgddb::BuildRelationDesc(rel);
+	PostgresTable::CloseRelation(rel);
 
 	duckdb::CreateTableInfo info;
 	info.table = entry_name;
-	PostgresTable::SetTableInfo(info, rel);
+	PostgresTable::SetTableInfo(info, desc);
 
-	auto cardinality = pgddb::EstimateRelSize(rel);
-	tables.emplace(entry_name, duckdb::make_uniq<PostgresTable>(schema->catalog, *schema, info, rel, cardinality,
-	                                                            schema->snapshot));
+	tables.emplace(entry_name,
+	               duckdb::make_uniq<PostgresTable>(schema->catalog, *schema, info, std::move(desc), schema->snapshot));
 	return tables[entry_name].get();
 }
 
@@ -89,7 +111,8 @@ PostgresTransaction::GetCatalogEntry(duckdb::CatalogType type, const duckdb::str
                                      const duckdb::string &name) {
 	switch (type) {
 	case duckdb::CatalogType::TABLE_ENTRY: {
-		auto context_state = context.lock()->registered_state->GetOrCreate<PostgresContextState>("pgduckdb");
+		auto ctx = context.lock();
+		auto context_state = ctx->registered_state->GetOrCreate<PostgresContextState>("pgduckdb");
 		auto schemas = &context_state->schemas;
 		auto it = schemas->find(schema);
 		if (it == schemas->end()) {
@@ -97,7 +120,7 @@ PostgresTransaction::GetCatalogEntry(duckdb::CatalogType type, const duckdb::str
 		}
 
 		auto &schema_entry = it->second;
-		return schema_entry.GetTable(name);
+		return schema_entry.GetTable(name, ctx.get());
 	}
 	case duckdb::CatalogType::SCHEMA_ENTRY: {
 		return GetSchema(schema);

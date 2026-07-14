@@ -8,6 +8,7 @@ extern "C" {
 #include "access/relation.h"     // relation_open and relation_close
 #include "catalog/namespace.h"   // makeRangeVarFromNameList, RangeVarGetRelid
 #include "optimizer/plancat.h"   // estimate_rel_size
+#include "storage/bufmgr.h"      // RelationGetNumberOfBlocks
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -102,6 +103,16 @@ CloseRelation(Relation rel) {
 	PostgresFunctionGuard(relation_close, rel, NoLock);
 
 	CurrentResourceOwner = saveResourceOwner;
+}
+
+uint32_t
+RelationBlockCount(Relation rel) {
+	return (uint32_t)PostgresFunctionGuard(RelationGetNumberOfBlocksInFork, rel, MAIN_FORKNUM);
+}
+
+bool
+RelationIsTemporary(Relation rel) {
+	return rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP;
 }
 
 double

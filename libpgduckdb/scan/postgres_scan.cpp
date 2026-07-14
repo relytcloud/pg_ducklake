@@ -330,17 +330,15 @@ void
 PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInitInput &input) {
 	const auto &bind_data = input.bind_data->Cast<PostgresScanFunctionData>();
 	if (input.column_ids.size() == 1 && input.column_ids[0] == UINT64_MAX) {
-		scan_query << "SELECT COUNT(*) FROM " << pgddb::GenerateQualifiedRelationName(rel);
+		scan_query << "SELECT COUNT(*) FROM " << desc.qualified_name;
 		count_tuples_only = true;
 		return;
 	}
 	duckdb::vector<AttrNumber> col_idx_to_attno;
-	auto natts = GetTupleDescNatts(table_tuple_desc);
-	for (int i = 0; i < natts; i++) {
-		if (AttIsDropped(GetAttr(table_tuple_desc, i))) {
-			continue;
-		}
-		col_idx_to_attno.emplace_back(static_cast<AttrNumber>(i + 1));
+	duckdb::map<AttrNumber, duckdb::string> attno_to_name;
+	for (const auto &column : desc.columns) {
+		col_idx_to_attno.emplace_back(column.attno);
+		attno_to_name[column.attno] = pgddb::QuoteIdentifier(column.name.c_str());
 	}
 	// Read tuples in PG column order but output in DuckDB order; the map keys on attno to give us PG order.
 	duckdb::map<AttrNumber, duckdb::idx_t> pg_column_order;
@@ -359,8 +357,7 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 	for (auto const &[att_num, duckdb_scanned_index] : pg_column_order) {
 		columns_to_scan.emplace_back(att_num, duckdb_scanned_index);
 
-		auto name_attr = pgddb::GetAttr(table_tuple_desc, att_num - 1);
-		scan_column_names[duckdb_scanned_index] = pgddb::QuoteIdentifier(pgddb::GetAttName(name_attr));
+		scan_column_names[duckdb_scanned_index] = attno_to_name[att_num];
 
 		if (!table_filters) {
 			continue;
@@ -391,11 +388,11 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 			scan_query << ", ";
 		}
 		first = false;
-		auto attr = pgddb::GetAttr(table_tuple_desc, attr_num - 1);
-		scan_query << pgddb::QuoteIdentifier(pgddb::GetAttName(attr));
+		scan_query << attno_to_name[attr_num];
 	}
 
-	scan_query << " FROM " << pgddb::GenerateQualifiedRelationName(rel);
+	scan_query << " FROM " << desc.qualified_name;
+	remote_where_off = (uint32_t)scan_query.tellp(); // splice point for a CTID range predicate
 
 	duckdb::vector<duckdb::string> query_filters;
 	for (auto const &[attr_num, duckdb_scanned_index] : columns_to_scan) {
@@ -441,12 +438,34 @@ PostgresScanGlobalState::ConstructTableScanQuery(const duckdb::TableFunctionInit
 	}
 }
 
-PostgresScanGlobalState::PostgresScanGlobalState(Snapshot _snapshot, Relation _rel,
-                                                 const duckdb::TableFunctionInitInput &input)
-    : snapshot(_snapshot), rel(_rel), table_tuple_desc(pgddb::RelationGetDescr(rel)), count_tuples_only(false),
-      output_columns(), total_row_count(0), registered_local_states(0), scan_query(),
-      table_reader_global_state(nullptr), duckdb_scan_memory_ctx(nullptr), max_threads(1) {
+PostgresScanGlobalState::PostgresScanGlobalState(duckdb::ClientContext &context, Snapshot _snapshot,
+                                                 const RelationDesc &_desc, const duckdb::TableFunctionInitInput &input)
+    : snapshot(_snapshot), desc(_desc), count_tuples_only(false), output_columns(), total_row_count(0),
+      registered_local_states(0), scan_query(), table_reader_global_state(nullptr), duckdb_scan_memory_ctx(nullptr),
+      max_threads(1), remote_scan(nullptr) {
 	ConstructTableScanQuery(input);
+
+	// In the shared worker the scan runs on the requesting backend (scan inversion):
+	// open a remote stream for the inner SQL and skip all PG-touching reader setup.
+	if (pgddb_open_remote_scan_hook != nullptr) {
+		const auto &bind_data = input.bind_data->Cast<PostgresScanFunctionData>();
+		pgddb::RemoteScanInfo info;
+		info.rangeable = !count_tuples_only && bind_data.order_bys.empty();
+		info.where_off = remote_where_off;
+		info.nblocks = info.rangeable ? desc.nblocks : 0;
+		info.local_relation = desc.is_temporary;
+		remote_scan = pgddb_open_remote_scan_hook(context, scan_query.str(), count_tuples_only, info);
+		if (remote_scan) {
+			// The remote scan touches no PG, so let several DuckDB threads consume it
+			// (its channel round-trips are serialized on the consumer side). COUNT(*)
+			// returns a single value, so keep it single-threaded.
+			if (!count_tuples_only && duckdb_threads_for_postgres_scan > 1) {
+				max_threads = duckdb_threads_for_postgres_scan;
+			}
+			return;
+		}
+	}
+
 	table_reader_global_state = duckdb::make_shared_ptr<PostgresTableReader>();
 	table_reader_global_state->Init(scan_query.str().c_str(), count_tuples_only);
 	// Dedicated PG memory context for temporary type-conversion allocations during scans.
@@ -477,7 +496,9 @@ PostgresScanGlobalState::UnregisterLocalState() {
 	// Once the last local state is gone, clean up the reader and mark negative so none can register again.
 	if (registered_local_states == 0) {
 		registered_local_states = -1;
-		table_reader_global_state->Cleanup();
+		if (table_reader_global_state) {
+			table_reader_global_state->Cleanup();
+		}
 	}
 }
 
@@ -491,6 +512,10 @@ PostgresScanLocalState::PostgresScanLocalState(PostgresScanGlobalState *_global_
 	if (!registered) {
 		return;
 	}
+	// Remote (worker) scans pull DataChunks from the backend; no PG tuple slots needed.
+	if (global_state->remote_scan) {
+		return;
+	}
 	// Both single-thread and parallel scans stage tuples through these slots before the batched converter.
 	for (int i = 0; i < LOCAL_STATE_SLOT_BATCH_SIZE; i++) {
 		slots[i] = global_state->table_reader_global_state->InitTupleSlot();
@@ -500,8 +525,8 @@ PostgresScanLocalState::PostgresScanLocalState(PostgresScanGlobalState *_global_
 PostgresScanLocalState::~PostgresScanLocalState() {
 }
 
-PostgresScanFunctionData::PostgresScanFunctionData(Relation _rel, uint64_t _cardinality, Snapshot _snapshot)
-    : complex_filters(), order_bys(), limit(), offset(0), rel(_rel), cardinality(_cardinality), snapshot(_snapshot) {
+PostgresScanFunctionData::PostgresScanFunctionData(RelationDesc _desc, Snapshot _snapshot)
+    : complex_filters(), order_bys(), limit(), offset(0), desc(std::move(_desc)), snapshot(_snapshot) {
 }
 
 PostgresScanFunctionData::~PostgresScanFunctionData() {
@@ -530,7 +555,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::string>
 PostgresScanTableFunction::ToString(duckdb::TableFunctionToStringInput &input) {
 	auto &bind_data = input.bind_data->Cast<PostgresScanFunctionData>();
 	duckdb::InsertionOrderPreservingMap<duckdb::string> result;
-	result["Table"] = pgddb::GetRelationName(bind_data.rel);
+	result["Table"] = bind_data.desc.name;
 	if (!bind_data.order_bys.empty()) {
 		duckdb::vector<duckdb::string> order_descriptions;
 		order_descriptions.reserve(bind_data.order_bys.size());
@@ -554,9 +579,10 @@ PostgresScanTableFunction::ToString(duckdb::TableFunctionToStringInput &input) {
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState>
-PostgresScanTableFunction::PostgresScanInitGlobal(duckdb::ClientContext &, duckdb::TableFunctionInitInput &input) {
+PostgresScanTableFunction::PostgresScanInitGlobal(duckdb::ClientContext &context,
+                                                  duckdb::TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->CastNoConst<PostgresScanFunctionData>();
-	return duckdb::make_uniq<PostgresScanGlobalState>(bind_data.snapshot, bind_data.rel, input);
+	return duckdb::make_uniq<PostgresScanGlobalState>(context, bind_data.snapshot, bind_data.desc, input);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState>
@@ -574,13 +600,44 @@ SetOutputCardinality(duckdb::DataChunk &output, PostgresScanLocalState &local_st
 }
 
 void
-PostgresScanTableFunction::PostgresScanFunction(duckdb::ClientContext &, duckdb::TableFunctionInput &data,
+PostgresScanTableFunction::PostgresScanFunction(duckdb::ClientContext &context, duckdb::TableFunctionInput &data,
                                                 duckdb::DataChunk &output) {
 	auto &local_state = data.local_state->Cast<PostgresScanLocalState>();
 	auto &global_state = *local_state.global_state;
 
 	if (local_state.exhausted_scan) {
 		SetOutputCardinality(output, local_state);
+		return;
+	}
+
+	// Remote (worker) scan: the backend produces DataChunks for the inner SQL. No PG
+	// access here, so this runs safely on DuckDB worker threads.
+	if (global_state.remote_scan) {
+		local_state.output_vector_size = 0;
+		auto chunk = global_state.remote_scan->Next(context, output.GetTypes());
+		if (global_state.count_tuples_only) {
+			// COUNT(*): the backend returns one BIGINT; emit that many empty rows.
+			uint64_t count = 0;
+			if (chunk && chunk->size() > 0) {
+				count = static_cast<uint64_t>(chunk->GetValue(0, 0).GetValue<int64_t>());
+			}
+			global_state.total_row_count += count;
+			local_state.output_vector_size += count;
+			local_state.exhausted_scan = true;
+		} else if (!chunk || chunk->size() == 0) {
+			local_state.exhausted_scan = true;
+		} else {
+			// Reference (not Copy) the produced chunk: output shares its ref-counted
+			// vector buffers, so no per-chunk data copy here. The buffers outlive
+			// `chunk` via the shared_ptr the reference holds.
+			output.Reference(*chunk);
+		}
+		if (local_state.exhausted_scan) {
+			global_state.UnregisterLocalState();
+		}
+		if (global_state.count_tuples_only) {
+			SetOutputCardinality(output, local_state);
+		}
 		return;
 	}
 
@@ -648,7 +705,8 @@ PostgresScanTableFunction::PostgresScanFunction(duckdb::ClientContext &, duckdb:
 duckdb::unique_ptr<duckdb::NodeStatistics>
 PostgresScanTableFunction::PostgresScanCardinality(duckdb::ClientContext &, const duckdb::FunctionData *data) {
 	auto &bind_data = data->Cast<PostgresScanFunctionData>();
-	return duckdb::make_uniq<duckdb::NodeStatistics>(bind_data.cardinality, bind_data.cardinality);
+	auto cardinality = static_cast<uint64_t>(bind_data.desc.cardinality);
+	return duckdb::make_uniq<duckdb::NodeStatistics>(cardinality, cardinality);
 }
 
 } // namespace pgddb

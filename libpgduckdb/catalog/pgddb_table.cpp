@@ -14,14 +14,11 @@
 namespace pgddb {
 
 PostgresTable::PostgresTable(duckdb::Catalog &_catalog, duckdb::SchemaCatalogEntry &_schema,
-                             duckdb::CreateTableInfo &_info, Relation _rel, Cardinality _cardinality,
-                             Snapshot _snapshot)
-    : duckdb::TableCatalogEntry(_catalog, _schema, _info), rel(_rel), cardinality(_cardinality), snapshot(_snapshot) {
+                             duckdb::CreateTableInfo &_info, RelationDesc _desc, Snapshot _snapshot)
+    : duckdb::TableCatalogEntry(_catalog, _schema, _info), desc(std::move(_desc)), snapshot(_snapshot) {
 }
 
 PostgresTable::~PostgresTable() {
-	std::lock_guard<std::recursive_mutex> lock(GlobalProcessLock::GetLock());
-	pgddb::CloseRelation(rel);
 }
 
 Relation
@@ -31,19 +28,17 @@ PostgresTable::OpenRelation(Oid relid) {
 }
 
 void
-PostgresTable::SetTableInfo(duckdb::CreateTableInfo &info, Relation rel) {
-	auto tupleDesc = pgddb::RelationGetDescr(rel);
+PostgresTable::CloseRelation(Relation rel) {
+	std::lock_guard<std::recursive_mutex> lock(GlobalProcessLock::GetLock());
+	pgddb::CloseRelation(rel);
+}
 
-	const auto n = pgddb::GetTupleDescNatts(tupleDesc);
-	for (int i = 0; i < n; ++i) {
-		Form_pg_attribute attr = pgddb::GetAttr(tupleDesc, i);
-		if (pgddb::AttIsDropped(attr))
-			continue;
-		auto col_name = duckdb::string(pgddb::GetAttName(attr));
-		auto duck_type = ConvertPostgresToDuckColumnType(attr);
-		info.columns.AddColumn(duckdb::ColumnDefinition(col_name, duck_type));
-		pd_log(DEBUG2, "(DuckDB/SetTableInfo) Column name: '%s', Type: %s", col_name.c_str(),
-		       duck_type.ToString().c_str());
+void
+PostgresTable::SetTableInfo(duckdb::CreateTableInfo &info, const RelationDesc &desc) {
+	for (const auto &col : desc.columns) {
+		info.columns.AddColumn(duckdb::ColumnDefinition(col.name, col.type));
+		pd_log(DEBUG2, "(DuckDB/SetTableInfo) Column name: '%s', Type: %s", col.name.c_str(),
+		       col.type.ToString().c_str());
 	}
 }
 
@@ -54,7 +49,7 @@ PostgresTable::GetStatistics(duckdb::ClientContext &, duckdb::column_t) {
 
 duckdb::TableFunction
 PostgresTable::GetScanFunction(duckdb::ClientContext &, duckdb::unique_ptr<duckdb::FunctionData> &bind_data) {
-	bind_data = duckdb::make_uniq<PostgresScanFunctionData>(rel, cardinality, snapshot);
+	bind_data = duckdb::make_uniq<PostgresScanFunctionData>(desc, snapshot);
 	return PostgresScanTableFunction();
 }
 

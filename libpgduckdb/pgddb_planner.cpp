@@ -98,6 +98,12 @@ Prepare(const Query *query, const char *explain_prefix) {
 	return con->context->Prepare(query_string);
 }
 
+std::string
+DeparseQuery(const Query *query) {
+	Query *copied_query = (Query *)copyObjectImpl(query);
+	return std::string(pgddb_get_querydef(copied_query));
+}
+
 static Plan *
 CreatePlan(Query *query, bool throw_error) {
 	int elevel = throw_error ? ERROR : WARNING;

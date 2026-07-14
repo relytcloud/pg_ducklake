@@ -17,6 +17,12 @@ bool ctas_skip_data = false;
 bool enable_metadata_sync = true;
 
 int threads = -1;
+bool use_shared_worker = false;
+int worker_max_sessions = 0;
+int worker_arrow_pool_pages = 256;
+int worker_arrow_page_size = 1024 * 1024;
+int worker_scan_pool_size = 0;
+int worker_scan_producers = 4;
 
 char *superuser_role = strdup("ducklake_superuser");
 char *writer_role = strdup("ducklake_writer");
@@ -51,6 +57,36 @@ InitGUCs() {
 	    "Takes effect when the DuckDB instance initializes; SET before the first DuckLake query in a "
 	    "session, or call ducklake.recycle_ddb() to re-apply.",
 	    &threads, -1, -1, 1024, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("ducklake.use_shared_worker",
+	                         "Dispatch eligible read-only DuckLake/file queries to the shared DuckDB worker "
+	                         "process instead of executing DuckDB in this backend.",
+	                         NULL, &use_shared_worker, false, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.max_worker_sessions",
+	                        "Concurrent sessions the shared DuckDB worker serves (session-pool slots in "
+	                        "shared memory); further dispatches wait for a free slot. "
+	                        "0 (default) disables the shared worker and reserves no shared memory.",
+	                        NULL, &worker_max_sessions, 0, 0, 1024, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.arrow_pool_pages",
+	                        "Shared-memory Arrow pages for the worker scan transport (0 disables the pool "
+	                        "and with it shared-worker heap scans).",
+	                        NULL, &worker_arrow_pool_pages, 256, 0, 65536, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.arrow_page_size", "Size of one Arrow scan-transport page, in bytes.", NULL,
+	                        &worker_arrow_page_size, 1024 * 1024, 64 * 1024, 64 * 1024 * 1024, PGC_POSTMASTER, 0, NULL,
+	                        NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.scan_pool_size",
+	                        "Scan-producer background workers per database for shared-worker heap scans "
+	                        "(0 = produce on the requesting backend).",
+	                        NULL, &worker_scan_pool_size, 0, 0, 64, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.scan_producers",
+	                        "Parallel scan-producer tasks per shared-worker heap scan (capped by "
+	                        "ducklake.scan_pool_size).",
+	                        NULL, &worker_scan_producers, 4, 1, 64, PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable("ducklake.enable_metadata_sync",
 	                         "Enable reverse metadata sync from DuckDB to PostgreSQL. "

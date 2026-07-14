@@ -1,7 +1,10 @@
 #include "pgddb/scan/order_pushdown_optimizer.hpp"
 
 #include "pgddb/logger.hpp"
+#include "pgddb/pg/relations.hpp"
+#include "pgddb/pgddb_process_lock.hpp"
 #include "pgddb/scan/postgres_scan.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
 
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
@@ -42,13 +45,16 @@ using duckdb::optional_idx;
 using duckdb::unique_ptr;
 
 static bool
-IndexSupportsOrder(Relation rel, const duckdb::vector<AttrNumber> &order_attrs,
+IndexSupportsOrder(Oid rel_oid, const duckdb::vector<AttrNumber> &order_attrs,
                    const duckdb::vector<PostgresOrderBySpec> &orders) {
 	if (order_attrs.empty()) {
 		return false;
 	}
+	std::lock_guard<std::recursive_mutex> lock(GlobalProcessLock::GetLock());
+	Relation rel = pgddb::OpenRelation(rel_oid);
 	List *index_list = RelationGetIndexList(rel);
 	if (index_list == NIL) {
+		pgddb::CloseRelation(rel);
 		return false;
 	}
 	bool supported = false;
@@ -115,6 +121,7 @@ IndexSupportsOrder(Relation rel, const duckdb::vector<AttrNumber> &order_attrs,
 		}
 	}
 	list_free(index_list);
+	pgddb::CloseRelation(rel);
 	return supported;
 }
 
@@ -294,7 +301,7 @@ TryPushdownOrder(unique_ptr<LogicalOperator> &op) {
 		new_orders.push_back(spec);
 		order_attrs.push_back(static_cast<AttrNumber>(column_id.GetPrimaryIndex() + 1));
 	}
-	if (!IndexSupportsOrder(bind_data->rel, order_attrs, new_orders)) {
+	if (!IndexSupportsOrder(bind_data->desc.oid, order_attrs, new_orders)) {
 		pd_log(DEBUG2, "(PGDuckDB/OrderPushdown) Skipping pushdown: no matching index found for ORDER BY");
 		return false;
 	}
@@ -321,7 +328,13 @@ PushdownRecursive(unique_ptr<LogicalOperator> &op) {
 }
 
 static void
-OptimizePlan(OptimizerExtensionInput &, unique_ptr<LogicalOperator> &plan) {
+OptimizePlan(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	// The PG-free worker cannot open relations to inspect indexes; skip the pushdown
+	// there (DuckDB still sorts correctly, just without the index shortcut). Resolved
+	// through the context too: a nested query optimizes on a DuckDB scheduler thread.
+	if (pgddb::worker::EffectiveWorkerSession(&input.context)) {
+		return;
+	}
 	PushdownRecursive(plan);
 }
 
