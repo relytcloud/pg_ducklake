@@ -18,6 +18,10 @@ extern "C" {
 #include "pgduckdb/pgduckdb_types.hpp"
 #include "pgduckdb/pgduckdb_xact.hpp"
 
+namespace pgduckdb {
+void InitDuckdbWorker();
+}
+
 extern "C" {
 
 #ifdef PG_MODULE_MAGIC_EXT
@@ -50,6 +54,7 @@ _PG_init(void) {
 	DuckdbInitHooks();
 	pgddb::InitNode("DuckDBScan");
 	pgduckdb::InitBackgroundWorkersShmem();
+	pgduckdb::InitDuckdbWorker();
 	pgduckdb::RegisterDuckdbXactCallback();
 }
 } // extern "C"

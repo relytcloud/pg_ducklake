@@ -5,6 +5,13 @@ void InitGUC();
 void InitGUCHooks();
 
 extern bool duckdb_force_execution;
+extern bool duckdb_use_shared_worker;
+extern int duckdb_arrow_pool_pages;
+extern int duckdb_arrow_page_size;
+extern int duckdb_scan_pool_size;
+extern int duckdb_scan_producers;
+extern int duckdb_max_worker_sessions;
+extern int duckdb_worker_threads;
 extern bool duckdb_unsafe_allow_execution_inside_functions;
 extern bool duckdb_unsafe_allow_mixed_transactions;
 extern int duckdb_threads;

@@ -63,3 +63,4 @@ test: postgres_table_etl
 test: order_by
 test: order_by_pushdown
 test: allowed_directories
+test: shared_worker

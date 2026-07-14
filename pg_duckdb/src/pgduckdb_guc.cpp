@@ -122,6 +122,13 @@ DefineCustomDuckDBVariable(const char *name, const char *short_desc, T *var, T m
 } // namespace
 
 bool duckdb_force_execution = false;
+bool duckdb_use_shared_worker = false;
+int duckdb_arrow_pool_pages = 256;
+int duckdb_arrow_page_size = 1024 * 1024;
+int duckdb_scan_pool_size = 0;
+int duckdb_scan_producers = 4;
+int duckdb_max_worker_sessions = 0;
+int duckdb_worker_threads = 4;
 bool duckdb_unsafe_allow_execution_inside_functions = false;
 bool duckdb_unsafe_allow_mixed_transactions = false;
 char *duckdb_motherduck_session_hint = strdup("");
@@ -154,6 +161,42 @@ InitGUC() {
 	/* pg_duckdb specific GUCs */
 	DefineCustomVariable("duckdb.force_execution", "Force queries to use DuckDB execution", &duckdb_force_execution,
 	                     PGC_USERSET, GUC_REPORT);
+
+	DefineCustomVariable("duckdb.use_shared_worker",
+	                     "Dispatch eligible read-only queries to the shared DuckDB worker process "
+	                     "instead of executing DuckDB in this backend.",
+	                     &duckdb_use_shared_worker, PGC_USERSET);
+
+	DefineCustomVariable("duckdb.arrow_pool_pages",
+	                     "Number of fixed shared-memory pages for zero-copy Arrow transport to the shared "
+	                     "DuckDB worker (allocated at startup; 0 disables the Arrow fast path).",
+	                     &duckdb_arrow_pool_pages, 0, 65536, PGC_POSTMASTER);
+
+	DefineCustomVariable("duckdb.arrow_page_size", "Size in bytes of each Arrow transport page.",
+	                     &duckdb_arrow_page_size, 64 * 1024, 64 * 1024 * 1024, PGC_POSTMASTER);
+
+	DefineCustomVariable("duckdb.scan_pool_size",
+	                     "Number of shared scan workers each DuckDB worker spawns to "
+	                     "produce Postgres heap-scan batches in parallel (0 disables the pool; scans then "
+	                     "run on the requesting backend).",
+	                     &duckdb_scan_pool_size, 0, 64, PGC_POSTMASTER);
+
+	DefineCustomVariable("duckdb.scan_producers",
+	                     "Maximum number of disjoint CTID block-range tasks a single Postgres heap scan is "
+	                     "split into for the scan worker pool (effective parallelism is bounded by the pool "
+	                     "size and the relation size).",
+	                     &duckdb_scan_producers, 1, 64, PGC_USERSET);
+
+	DefineCustomVariable("duckdb.max_worker_sessions",
+	                     "Number of fixed shared-memory session-pool slots for dispatching queries to the "
+	                     "shared DuckDB worker. Each slot carries one query's control and result rings. "
+	                     "0 (default) disables the shared worker and reserves no shared memory.",
+	                     &duckdb_max_worker_sessions, 0, 1024, PGC_POSTMASTER);
+
+	DefineCustomVariable("duckdb.shared_worker_threads",
+	                     "DuckDB compute threads in the shared duckdb worker; applies when the worker "
+	                     "(re)starts.",
+	                     &duckdb_worker_threads, 1, 1024, PGC_SIGHUP);
 
 	DefineCustomVariable("duckdb.unsafe_allow_execution_inside_functions", "Allow DuckDB execution inside functions",
 	                     &duckdb_unsafe_allow_execution_inside_functions, PGC_SUSET);
