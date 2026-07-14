@@ -10,6 +10,9 @@
 
 #include "pgddb/pgddb_types.hpp"
 #include "pgddb/pgddb_utils.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
+#include "pgddb/worker/transport/session_channel.hpp"
+#include "pgddb/worker/transport/session_protocol.hpp"
 
 #include <common/ducklake_util.hpp>
 #include <duckdb/common/allocator.hpp>
@@ -93,9 +96,11 @@ SPIExecuteInSubtransaction(const duckdb::string &query, bool &had_error, duckdb:
 	int ret = -1;
 	had_error = false;
 
-	/* Suppress NOTICEs: DuckLake re-runs CREATE TABLE IF NOT EXISTS, whose NOTICE would leak to the client. */
+	/* Suppress NOTICEs: DuckLake re-runs CREATE TABLE IF NOT EXISTS, whose NOTICE would leak to the client.
+	 * Skipped in parallel mode (an in-flight scan-inversion reader keeps it entered), where SET errors. */
 	int save_nestlevel = NewGUCNestLevel();
-	::SetConfigOption("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION);
+	if (!IsInParallelMode())
+		::SetConfigOption("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION);
 
 	SetAllowSubtransaction(true);
 	BeginInternalSubTransaction(NULL);
@@ -127,7 +132,7 @@ SPIExecuteInSubtransaction(const duckdb::string &query, bool &had_error, duckdb:
 }
 
 static duckdb::unique_ptr<duckdb::QueryResult>
-CreateSPIResult(const duckdb::string &query) {
+CreateSPIResultLocal(const duckdb::string &query) {
 	elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
 
 	std::lock_guard<std::recursive_mutex> lock(pgddb::GlobalProcessLock::GetLock());
@@ -223,6 +228,36 @@ CreateSPIResult(const duckdb::string &query) {
 	                                                          names, std::move(collection_p), client_properties);
 }
 
+/* The worker session serving this metadata manager's transaction: the session thread's
+ * thread-local, or -- on DuckDB scheduler threads, where thread-locals are invisible --
+ * the session keyed by the transaction's ClientContext (DuckLake reads metadata during
+ * execution, e.g. GetFilesForTable from a pipeline task). */
+static pgddb::SessionChannel *
+WorkerSessionFor(duckdb::DuckLakeTransaction &transaction) {
+	auto ctx = transaction.context.lock();
+	return pgddb::worker::EffectiveWorkerSession(ctx.get());
+}
+
+/* In the duckdb worker, route metadata reads back to the requesting backend (so the
+ * worker stays PG-free); in a normal backend, run them locally via SPI. A worker
+ * thread with no session must fail loudly: local SPI there would touch PG off the
+ * main thread with no transaction. */
+static duckdb::unique_ptr<duckdb::QueryResult>
+CreateSPIResult(const duckdb::string &query, duckdb::DuckLakeTransaction &transaction) {
+	if (auto *session = WorkerSessionFor(transaction)) {
+		return pgddb::WorkerMetadataQuery(*session, query);
+	}
+	if (pgddb::DuckdbWorker::InWorker() && !IsTransactionState()) {
+		throw duckdb::InternalException("ducklake metadata query outside a worker session: %s", query.c_str());
+	}
+	return CreateSPIResultLocal(query);
+}
+
+duckdb::unique_ptr<duckdb::QueryResult>
+ExecuteMetadataQueryLocally(const duckdb::string &query) {
+	return CreateSPIResultLocal(query);
+}
+
 /* Avoids transaction.GetCatalog(): during init the AttachedDatabase is not yet reachable via db_manager. */
 static void
 SubstitutePgCatalogPlaceholders(duckdb::string &query) {
@@ -270,11 +305,21 @@ CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
 	return CreateEmptyResult(duckdb::StatementType::EXECUTE_STATEMENT);
 }
 
+duckdb::unique_ptr<duckdb::QueryResult>
+ExecuteMetadataExecLocally(const duckdb::string &query) {
+	/* Same trigger skip as the in-process ExecuteCommit path. */
+	SkipSnapshotSyncGuard sync_guard;
+	return CreateSPIExecuteInSubtransaction(query);
+}
+
 PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction_)
     : duckdb::PostgresMetadataManager(transaction_) {
 }
 
 PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {
+	if (aliased_nested_ctx_ != nullptr) {
+		pgddb::worker::UnaliasWorkerSessionContext(aliased_nested_ctx_, aliased_channel_);
+	}
 }
 
 /* find()-guarded: GetCatalog() is unsafe during init, and these placeholders never appear in init queries. */
@@ -294,7 +339,7 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Query(duckdb::string query) {
 	SubstitutePathPlaceholders(query, transaction);
 	SubstitutePgCatalogPlaceholders(query);
-	return CreateSPIResult(query);
+	return CreateSPIResult(query, transaction);
 }
 
 /* Mirrors the static GetProjection() in ducklake_metadata_manager.cpp. */
@@ -311,10 +356,31 @@ BuildProjection(const duckdb::vector<duckdb::string> &columns_to_read) {
 	return result;
 }
 
+/* DuckLake runs ExecuteRaw on the transaction's own metadata connection -- a separate
+ * ClientContext. In a worker session that nested context must resolve to the same
+ * session (its heap reads invert to the backend; local PG access would crash the
+ * PG-free worker), so alias it in the session registry. The alias lives exactly as
+ * long as this metadata manager (== the transaction, == the nested connection): a
+ * stale alias would misroute a later session whose context reuses the freed address. */
+void
+PgDuckLakeMetadataManager::AliasNestedConnection() {
+	auto outer = transaction.context.lock();
+	if (!outer)
+		return;
+	auto *channel = pgddb::worker::EffectiveWorkerSession(outer.get());
+	if (!channel)
+		return;
+	auto &con = transaction.GetConnection();
+	aliased_nested_ctx_ = con.context.get();
+	aliased_channel_ = channel; // guards the unalias against a reused context address
+	pgddb::worker::AliasWorkerSessionContext(con.context, outer.get());
+}
+
 /* Route through DuckDB, not SPI: PostgresTableReader holds GlobalProcessLock per 32-tuple batch, not whole op. */
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ReadInlinedData(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
                                            const duckdb::vector<duckdb::string> &columns_to_read) {
+	AliasNestedConnection();
 	auto projection = BuildProjection(columns_to_read);
 	auto query =
 	    duckdb::StringUtil::Format(R"(
@@ -339,6 +405,7 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ReadAllInlinedDataForFlush(duckdb::DuckLakeSnapshot snapshot,
                                                       const duckdb::string &inlined_table_name,
                                                       const duckdb::vector<duckdb::string> &columns_to_read) {
+	AliasNestedConnection();
 	auto projection = BuildProjection(columns_to_read);
 	auto query = duckdb::StringUtil::Format(R"(
 SELECT %s
@@ -361,7 +428,7 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Execute(duckdb::string query) {
 	SubstitutePathPlaceholders(query, transaction);
 	SubstitutePgCatalogPlaceholders(query);
-	return CreateSPIResult(query);
+	return CreateSPIResult(query, transaction);
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>
@@ -374,6 +441,19 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ExecuteCommit(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) {
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
 	SubstitutePgCatalogPlaceholders(query);
+	/* In the duckdb worker: run the commit write on the requesting backend (MetaExec),
+	 * inside that backend's transaction, and rethrow its error with the original
+	 * exception type so DuckLake's conflict-retry sees a TransactionException. */
+	if (auto *session = WorkerSessionFor(transaction)) {
+		auto result = pgddb::WorkerMetadataExec(*session, query);
+		if (result->HasError()) {
+			result->GetErrorObject().Throw();
+		}
+		return result;
+	}
+	if (pgddb::DuckdbWorker::InWorker() && !IsTransactionState()) {
+		throw duckdb::InternalException("ducklake metadata write outside a worker session: %s", query.c_str());
+	}
 	/* Skip the snapshot sync trigger: nothing to reverse-sync, and it crashes on a DuckDB worker thread
 	 * (PG's InterruptHoldoffCount is not thread-safe). */
 	SkipSnapshotSyncGuard sync_guard;

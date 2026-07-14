@@ -10,6 +10,12 @@ extern bool ctas_skip_data;
 extern bool enable_metadata_sync;
 
 extern int threads;
+extern bool use_shared_worker;
+extern int worker_max_sessions;
+extern int worker_arrow_pool_pages;
+extern int worker_arrow_page_size;
+extern int worker_scan_pool_size;
+extern int worker_scan_producers;
 
 extern char *superuser_role;
 extern char *writer_role;

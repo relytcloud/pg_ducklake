@@ -1,0 +1,37 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_insert s2_insert s2_count s1_commit s2_count
+step s1_begin: BEGIN;
+step s1_insert: INSERT INTO iso_worker_t VALUES (1);
+step s2_insert: INSERT INTO iso_worker_t VALUES (2);
+step s2_count: SELECT count(*) FROM iso_worker_t;
+count
+-----
+    1
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_count: SELECT count(*) FROM iso_worker_t;
+count
+-----
+    2
+(1 row)
+
+
+starting permutation: s2_insert s1_begin s1_insert s2_count s1_commit s2_count
+step s2_insert: INSERT INTO iso_worker_t VALUES (2);
+step s1_begin: BEGIN;
+step s1_insert: INSERT INTO iso_worker_t VALUES (1);
+step s2_count: SELECT count(*) FROM iso_worker_t;
+count
+-----
+    1
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_count: SELECT count(*) FROM iso_worker_t;
+count
+-----
+    2
+(1 row)
+

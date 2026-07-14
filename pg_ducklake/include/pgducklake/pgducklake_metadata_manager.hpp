@@ -11,11 +11,17 @@
 #include <storage/ducklake_metadata_manager.hpp>
 #include <storage/ducklake_transaction.hpp>
 
+namespace pgddb {
+class SessionChannel;
+}
+
 namespace pgducklake {
 
 class PgDuckLakeMetadataManager : public duckdb::PostgresMetadataManager {
 public:
 	explicit PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction);
+	PgDuckLakeMetadataManager(const PgDuckLakeMetadataManager &) = delete;
+	PgDuckLakeMetadataManager &operator=(const PgDuckLakeMetadataManager &) = delete;
 	~PgDuckLakeMetadataManager() override;
 
 	static duckdb::unique_ptr<duckdb::DuckLakeMetadataManager>
@@ -50,6 +56,14 @@ public:
 
 private:
 	static void EnsureSnapshotTrigger();
+	void AliasNestedConnection();
+
+	// The nested metadata connection's context aliased into the worker session
+	// registry (see AliasNestedConnection); unaliased in the destructor. The channel
+	// it was registered under guards the unalias: the entry is only erased if it
+	// still belongs to this session (the context address may have been reused).
+	duckdb::ClientContext *aliased_nested_ctx_ = nullptr;
+	pgddb::SessionChannel *aliased_channel_ = nullptr;
 
 protected:
 	duckdb::string GetInlinedTableQueries(duckdb::DuckLakeSnapshot commit_snapshot,
@@ -81,5 +95,14 @@ bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schem
 uint64_t GetNextRowIdForTable(uint64_t table_id, uint64_t schema_version);
 uint64_t GetNextSnapshotId();
 void CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted);
+
+/* Run a metadata SQL locally via SPI and return the result. The duckdb
+ * worker's backend side calls this to service a worker's remoted metadata query. */
+duckdb::unique_ptr<duckdb::QueryResult> ExecuteMetadataQueryLocally(const duckdb::string &query);
+
+/* Run a worker-requested metadata write locally in a subtransaction. Throws
+ * duckdb::TransactionException on a PG error (e.g. a concurrent-commit conflict),
+ * matching the in-process ExecuteCommit semantics. */
+duckdb::unique_ptr<duckdb::QueryResult> ExecuteMetadataExecLocally(const duckdb::string &query);
 
 } // namespace pgducklake

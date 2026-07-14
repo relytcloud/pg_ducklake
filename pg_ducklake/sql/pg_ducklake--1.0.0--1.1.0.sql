@@ -178,3 +178,12 @@ CREATE OPERATOR CLASS ducklake.unresolved_type_hash_ops
 DEFAULT FOR TYPE ducklake.unresolved_type USING hash AS
     OPERATOR 1 = (ducklake.unresolved_type, ducklake.unresolved_type),
     FUNCTION 1 ducklake.unresolved_type_hash(ducklake.unresolved_type);
+
+-- ducklake.worker_stats() -- sessions this database's duckdb worker has
+-- accepted since it started; lets tests assert a query really dispatched.
+-- Superuser-only.
+CREATE FUNCTION ducklake.worker_stats()
+    RETURNS bigint
+    SET search_path = pg_catalog, pg_temp
+    LANGUAGE C AS 'MODULE_PATHNAME', 'ducklake_worker_stats';
+REVOKE ALL ON FUNCTION ducklake.worker_stats() FROM PUBLIC;

@@ -133,6 +133,7 @@ class PgCluster:
             # No background flush/compaction: tests drive maintenance
             # explicitly so file layouts stay deterministic.
             conf.write("ducklake.maintenance_enabled = false\n")
+            conf.write("ducklake.max_worker_sessions = 16\n")
             # No max_parallel_workers=0 workaround needed (unlike regression.conf):
             # the kernel defaults DuckDB to one thread, so PG parallelism is safe.
             conf.write("fsync = off\n")
@@ -523,13 +524,14 @@ class Lake:
             await set_inlining(conn, inlining)
             await conn.execute("CALL ducklake.recycle_ddb()")
             if configure and self.s3:
-                await self.configure_s3(conn)  # recycle dropped the secret
+                await self.configure_s3(conn)  # re-probe httpfs on the fresh engine
         return conn
 
     async def configure_s3(self, conn):
-        """Configure this backend's DuckDB for the MinIO bucket. Secrets are
-        per-DuckDB-instance and non-persistent: rerun on every new PG
-        connection and again after ducklake.recycle_ddb()."""
+        """Configure this backend for the MinIO bucket. Credentials come from
+        the per-database ducklake_secret FDW (created in the `lake` fixture),
+        which every engine -- backend or shared duckdb worker -- loads at
+        init; only the table-path GUC is per-session."""
         # httpfs is not bundled into pg_ducklake; INSTALL downloads it on
         # first use (cached in the duckdb extension dir afterwards).
         try:
@@ -539,9 +541,6 @@ class Lake:
         except asyncpg.PostgresError as e:
             skip_or_fail(f"backend cannot INSTALL httpfs (offline?): {e}")
         await conn.execute("SELECT ducklake.raw_query('LOAD httpfs')")
-        await conn.execute(
-            f"SELECT ducklake.raw_query($e2e${self.s3.secret_sql()}$e2e$)"
-        )
         await conn.execute(
             f"SET ducklake.default_table_path = '{self.table_path}'"
         )
@@ -554,7 +553,6 @@ class Lake:
             statements = (
                 "SELECT ducklake.raw_query('INSTALL httpfs')",
                 "SELECT ducklake.raw_query('LOAD httpfs')",
-                f"SELECT ducklake.raw_query($e2e${self.s3.secret_sql()}$e2e$)",
                 f"SET ducklake.default_table_path = '{self.table_path}'",
             ) + statements
         return self.cluster.psql(self.dbname, *statements)
@@ -588,6 +586,20 @@ class Lake:
         return con
 
 
+def create_fdw_secret(cluster, db, s3ctx):
+    """FDW-backed credential: loaded by every DuckDB engine of this database
+    at init, including the shared duckdb worker's (a raw CREATE SECRET would
+    exist only in the issuing backend's engine)."""
+    srv = s3ctx.server
+    cluster.psql(
+        db,
+        "SELECT ducklake.create_s3_secret('s3', "
+        f"'{srv.access_key}', '{srv.secret_key}', "
+        f"region => 'us-east-1', url_style => 'path', "
+        f"endpoint => '{srv.endpoint}', use_ssl => 'false')",
+    )
+
+
 @pytest.fixture(params=["local", "s3"])
 def lake(request, cluster, db):
     """The same lake-backed database, parametrized over storage backends.
@@ -598,6 +610,7 @@ def lake(request, cluster, db):
         # catalog option, persisted in metadata: applies to all backends of
         # this database; set_option only writes PG tables, no secret needed
         cluster.psql(db, "CALL ducklake.set_option('data_inlining_row_limit', 0)")
+        create_fdw_secret(cluster, db, s3ctx)
     yield Lake(cluster, db, s3ctx)
     if s3ctx:
         # canary: an s3-parametrized test that never produced a single
@@ -624,4 +637,6 @@ def inlining_lake(request, cluster, db):
     PG catalog) and never touch S3. Enable inlining per connection with
     Lake.connect(inlining=...) and toggle per-statement with set_inlining()."""
     s3ctx = request.getfixturevalue("s3") if request.param == "s3" else None
+    if s3ctx:
+        create_fdw_secret(cluster, db, s3ctx)
     return Lake(cluster, db, s3ctx)

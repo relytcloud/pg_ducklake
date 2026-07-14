@@ -1,5 +1,8 @@
 # S3-specific e2e tests: pg_ducklake writing table data to a MinIO bucket via
-# ducklake.default_table_path plus a DuckDB S3 secret. Skips without S3 infra
+# ducklake.default_table_path plus an S3 credential -- normally the catalog-backed
+# ducklake_secret FDW (created per database by the fixtures; loaded by every
+# engine at init, including the shared duckdb worker's), with raw session
+# CREATE SECRET behavior covered explicitly. Skips without S3 infra
 # (unless E2E_REQUIRE_S3=1); storage-agnostic behavior lives in test_crud.py.
 
 import os
@@ -7,11 +10,12 @@ import os
 import asyncpg
 import pytest
 
-from conftest import Lake, skip_or_fail
+from conftest import Lake, create_fdw_secret, skip_or_fail
 
 
 @pytest.fixture
 def s3lake(cluster, db, s3):
+    create_fdw_secret(cluster, db, s3)
     return Lake(cluster, db, s3)
 
 
@@ -46,9 +50,9 @@ async def test_parquet_objects_land_in_bucket(s3lake, s3conn, s3):
     objects = s3.object_names()
     assert objects, "no objects appeared in the bucket after INSERT"
     assert any(name.endswith(".parquet") for name in objects)
-    # rows read back from s3, not from any local cache of the insert
+    # rows read back from s3, not from any local cache of the insert: the
+    # recycled engine reloads the FDW secret from the catalog on next use
     await s3conn.execute("CALL ducklake.recycle_ddb()")
-    await s3lake.configure_s3(s3conn)  # recycle dropped the secret
     rows = await s3conn.fetch("SELECT id, name FROM t ORDER BY id")
     assert [tuple(r) for r in rows] == [(1, "alice"), (2, "bob")]
 
@@ -74,38 +78,46 @@ async def test_metadata_reports_s3_paths(s3lake, s3conn):
     assert out.strip().splitlines()[-1] == "t"
 
 
-async def test_fresh_backend_needs_secret(s3lake, s3conn):
+async def test_fresh_backend_reads_via_fdw_secret(s3lake, s3conn):
     await s3conn.execute("CREATE TABLE t (id int) USING ducklake")
     await s3conn.execute("INSERT INTO t VALUES (1), (2)")
 
-    # A brand-new backend has a brand-new DuckDB instance with no S3
-    # secret: reading s3-backed data must fail rather than silently
-    # succeed off some cache (AWS_* env is scrubbed by the harness).
+    # A brand-new backend has a brand-new DuckDB instance and runs no
+    # per-session secret setup, yet reads s3-backed data: the engine loads
+    # the FDW-backed credential from the PG catalog at init. This is also
+    # what lets the shared duckdb worker's engine access s3 (it never sees
+    # any backend's session-local CREATE SECRET).
     bare = await s3lake.connect(configure=False)
     try:
-        # match the bucket name so an unrelated error cannot satisfy the
-        # test: the failure must come from the s3 data-file access
-        with pytest.raises(asyncpg.PostgresError, match=s3lake.s3.bucket):
-            await bare.fetch("SELECT * FROM t")
-        await s3lake.configure_s3(bare)
         assert await bare.fetchval("SELECT count(*) FROM t") == 2
     finally:
         await bare.close()
 
 
-async def test_recycle_ddb_drops_secret(s3lake, s3conn):
-    await s3conn.execute("CREATE TABLE t (id int) USING ducklake")
-    await s3conn.execute("INSERT INTO t VALUES (1)")
-    assert await s3conn.fetchval("SELECT count(*) FROM t") == 1
+async def test_raw_session_secret_dies_on_recycle(cluster, db, s3):
+    # A raw CREATE SECRET (ducklake.raw_query) lives only in this backend's
+    # DuckDB instance: recycle_ddb tears the instance down and the secret
+    # with it, unlike the catalog-backed FDW secret (covered above and by
+    # test_helper_secret_reloads_after_recycle).
+    lake = Lake(cluster, db, s3)  # no FDW secret in this database
+    conn = await lake.connect(configure=False)
+    try:
+        await _load_httpfs(conn)
+        await conn.execute(f"SELECT ducklake.raw_query($e2e${s3.secret_sql()}$e2e$)")
+        await conn.execute(f"SET ducklake.default_table_path = '{lake.table_path}'")
+        await conn.execute("CALL ducklake.set_option('data_inlining_row_limit', 0)")
+        await conn.execute("CREATE TABLE t (id int) USING ducklake")
+        await conn.execute("INSERT INTO t VALUES (1)")
+        assert await conn.fetchval("SELECT count(*) FROM t") == 1
 
-    # recycle_ddb tears down the per-backend DuckDB instance; plain
-    # (non-persistent) secrets die with it
-    await s3conn.execute("CALL ducklake.recycle_ddb()")
-    with pytest.raises(asyncpg.PostgresError, match=s3lake.s3.bucket):
-        await s3conn.fetch("SELECT * FROM t")
+        await conn.execute("CALL ducklake.recycle_ddb()")
+        with pytest.raises(asyncpg.PostgresError, match=s3.bucket):
+            await conn.fetch("SELECT * FROM t")
 
-    await s3lake.configure_s3(s3conn)
-    assert await s3conn.fetchval("SELECT count(*) FROM t") == 1
+        await conn.execute(f"SELECT ducklake.raw_query($e2e${s3.secret_sql()}$e2e$)")
+        assert await conn.fetchval("SELECT count(*) FROM t") == 1
+    finally:
+        await conn.close()
 
 
 async def test_update_delete_against_s3(s3conn, s3):
@@ -145,10 +157,13 @@ async def test_time_travel_on_s3(s3conn):
     )
 
 
-async def test_create_s3_secret_round_trip(s3lake, s3):
+async def test_create_s3_secret_round_trip(cluster, db, s3):
     # Provision the S3 secret via the ducklake.create_s3_secret() wrapper
     # (a FOREIGN SERVER + USER MAPPING on the ducklake_secret FDW) instead of a
     # raw CREATE SECRET, then round-trip a table whose data lives in the bucket.
+    # Own database (no fixture-provisioned secret): the helper's server name is
+    # asserted below.
+    s3lake = Lake(cluster, db, s3)
     conn = await s3lake.connect(configure=False)
     try:
         # httpfs is not bundled; install it explicitly to avoid offline flakiness
@@ -183,9 +198,10 @@ async def test_create_s3_secret_round_trip(s3lake, s3):
         await conn.close()
 
 
-async def test_create_s3_secret_named_args(s3lake, s3):
+async def test_create_s3_secret_named_args(cluster, db, s3):
     # create_s3_secret accepts named-arg notation for the optional params and
     # still round-trips (complements the positional-arg test above).
+    s3lake = Lake(cluster, db, s3)  # own database: server name asserted
     conn = await s3lake.connect(configure=False)
     try:
         await _load_httpfs(conn)
@@ -210,9 +226,10 @@ async def test_create_s3_secret_named_args(s3lake, s3):
         await conn.close()
 
 
-async def test_two_s3_secrets_get_unique_names(s3lake):
+async def test_two_s3_secrets_get_unique_names(cluster, db, s3):
     # FindServerName: two create_s3_secret calls of the same type yield distinct
     # server names rather than colliding.
+    s3lake = Lake(cluster, db, s3)  # own database: exact server names asserted
     conn = await s3lake.connect(configure=False)
     try:
         await _load_httpfs(conn)
@@ -233,9 +250,10 @@ async def test_two_s3_secrets_get_unique_names(s3lake):
         await conn.close()
 
 
-async def test_drop_server_removes_secret(s3lake):
+async def test_drop_server_removes_secret(cluster, db, s3):
     # DROP SERVER invalidates the cached secrets; the next statement's
     # GetConnection drops the DuckDB secret, so s3 reads then fail.
+    s3lake = Lake(cluster, db, s3)  # own database: no other secret may cover the read
     conn = await s3lake.connect(configure=False)
     try:
         await _load_httpfs(conn)
@@ -262,10 +280,11 @@ async def test_drop_server_removes_secret(s3lake):
         await conn.close()
 
 
-async def test_helper_secret_reloads_after_recycle(s3lake):
+async def test_helper_secret_reloads_after_recycle(cluster, db, s3):
     # The PG-catalog SERVER+MAPPING persist across ducklake.recycle_ddb(); the
     # fresh DuckDB instance must reload the secret on the next GetConnection
     # (regression for DuckDBManager::Reset not clearing secrets_valid_).
+    s3lake = Lake(cluster, db, s3)  # own database: only the helper's secret may exist
     conn = await s3lake.connect(configure=False)
     try:
         await _load_httpfs(conn)
