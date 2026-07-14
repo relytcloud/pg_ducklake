@@ -4,6 +4,7 @@
 
 #include "pgddb/pgddb_planner.hpp"
 #include "pgddb/pgddb_types.hpp"
+#include "pgddb/worker/worker_dispatch.hpp"
 #include "pgddb/vendor/pg_explain.hpp"
 #include "pgddb/pg/explain.hpp"
 
@@ -29,6 +30,9 @@ duckdb::ExplainFormat explain_format = duckdb::ExplainFormat::DEFAULT;
 
 CustomScanMethods scan_methods;
 
+DispatchToWorkerHook pgddb_dispatch_to_worker_hook = nullptr;
+OpenRemoteScanHook pgddb_open_remote_scan_hook = nullptr;
+
 static CustomExecMethods scan_exec_methods;
 
 typedef struct DuckdbScanState {
@@ -44,6 +48,7 @@ typedef struct DuckdbScanState {
 	duckdb::idx_t column_count;
 	duckdb::unique_ptr<duckdb::DataChunk> current_data_chunk;
 	duckdb::idx_t current_row;
+	duckdb::unique_ptr<WorkerResultStream> worker_stream;
 } DuckdbScanState;
 
 static void
@@ -53,6 +58,7 @@ CleanupDuckdbScanState(DuckdbScanState *state) {
 
 	state->query_results.reset();
 	state->current_data_chunk.reset();
+	state->worker_stream.reset();
 
 	if (state->prepared_statement) {
 		delete state->prepared_statement;
@@ -142,8 +148,22 @@ Duckdb_BeginCustomScan_Cpp(CustomScanState *cscanstate, EState *estate, int /*ef
 		}
 	}
 
-	duckdb_scan_state->duckdb_connection = pgddb::GetConnection();
-	duckdb_scan_state->prepared_statement = prepared_query.release();
+	// Dispatch to the shared worker when an extension opts in; else execute in-process.
+	if (!is_explain_query && pgddb::pgddb_dispatch_to_worker_hook != nullptr) {
+		auto stream = pgddb::pgddb_dispatch_to_worker_hook(duckdb_scan_state->query);
+		if (stream) {
+			duckdb_scan_state->worker_stream = std::move(stream);
+		}
+	}
+
+	if (duckdb_scan_state->worker_stream) {
+		duckdb_scan_state->duckdb_connection = nullptr;
+		duckdb_scan_state->prepared_statement = nullptr;
+		duckdb_scan_state->column_count = (duckdb::idx_t)list_length(duckdb_scan_state->custom_scan->custom_scan_tlist);
+	} else {
+		duckdb_scan_state->duckdb_connection = pgddb::GetConnection();
+		duckdb_scan_state->prepared_statement = prepared_query.release();
+	}
 	duckdb_scan_state->params = estate->es_param_list_info;
 	duckdb_scan_state->is_executed = false;
 	duckdb_scan_state->fetch_next = true;
@@ -250,15 +270,25 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 			return slot;
 		}
 
+		auto fetch_chunk = [duckdb_scan_state]() {
+			return duckdb_scan_state->worker_stream ? duckdb_scan_state->worker_stream->Fetch()
+			                                        : duckdb_scan_state->query_results->Fetch();
+		};
+
 		bool already_executed = duckdb_scan_state->is_executed;
 		if (!already_executed) {
-			ExecuteQuery(duckdb_scan_state);
+			if (duckdb_scan_state->worker_stream) {
+				// Execution runs in the shared worker; results arrive via the stream.
+				duckdb_scan_state->is_executed = true;
+			} else {
+				ExecuteQuery(duckdb_scan_state);
+			}
 
 			// PG only sets es_processed via ModifyTable, which our CustomScan replaced.
 			// DuckDB's DML result is (Count BIGINT): read it into es_processed and end the
 			// scan, so the empty tuple means "no RETURNING rows".
 			if (duckdb_scan_state->query->commandType != CMD_SELECT) {
-				auto chunk = duckdb_scan_state->query_results->Fetch();
+				auto chunk = fetch_chunk();
 				uint64_t processed = 0;
 				if (chunk && chunk->size() > 0 && chunk->ColumnCount() > 0) {
 					try {
@@ -266,6 +296,9 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 					} catch (...) {
 						// Result wasn't a single Count column; leave 0.
 					}
+				}
+				while (duckdb_scan_state->worker_stream && fetch_chunk()) {
+					// worker stream: drain to the Complete frame
 				}
 				duckdb_scan_state->css.ss.ps.state->es_processed = processed;
 				MemoryContextReset(duckdb_scan_state->css.ss.ps.ps_ExprContext->ecxt_per_tuple_memory);
@@ -275,7 +308,7 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 		}
 
 		if (duckdb_scan_state->fetch_next) {
-			duckdb_scan_state->current_data_chunk = duckdb_scan_state->query_results->Fetch();
+			duckdb_scan_state->current_data_chunk = fetch_chunk();
 			duckdb_scan_state->current_row = 0;
 			duckdb_scan_state->fetch_next = false;
 			if (!duckdb_scan_state->current_data_chunk || duckdb_scan_state->current_data_chunk->size() == 0) {

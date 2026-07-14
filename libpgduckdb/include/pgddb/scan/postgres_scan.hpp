@@ -4,17 +4,20 @@
 
 #include "duckdb/common/enums/order_type.hpp"
 
+#include "pgddb/catalog/relation_desc.hpp"
 #include "pgddb/pg/declarations.hpp"
 #include "pgddb/utility/allocator.hpp"
 
 #include "pgddb/scan/postgres_table_reader.hpp"
+#include "pgddb/worker/worker_dispatch.hpp"
 
 #include "pgddb/utility/cpp_only_file.hpp" // Must be last include.
 
 namespace pgddb {
 
 struct PostgresScanGlobalState : public duckdb::GlobalTableFunctionState {
-	explicit PostgresScanGlobalState(Snapshot, Relation rel, const duckdb::TableFunctionInitInput &input);
+	PostgresScanGlobalState(duckdb::ClientContext &context, Snapshot, const RelationDesc &desc,
+	                        const duckdb::TableFunctionInitInput &input);
 	~PostgresScanGlobalState();
 	idx_t
 	MaxThreads() const override {
@@ -32,16 +35,21 @@ private:
 
 public:
 	Snapshot snapshot;
-	Relation rel;
-	TupleDesc table_tuple_desc;
+	const RelationDesc &desc;
 	bool count_tuples_only;
 	duckdb::vector<AttrNumber> output_columns;
 	std::atomic<std::uint32_t> total_row_count;
 	std::atomic<std::int32_t> registered_local_states;
 	std::ostringstream scan_query;
+	// Byte offset in scan_query right after "FROM <relation>", where a remote scan-pool
+	// producer splices a CTID range predicate. 0 until ConstructTableScanQuery runs.
+	uint32_t remote_where_off = 0;
 	duckdb::shared_ptr<PostgresTableReader> table_reader_global_state;
 	MemoryContext duckdb_scan_memory_ctx;
 	idx_t max_threads;
+	// When set (worker session), the scan runs on the requesting backend and yields
+	// DataChunks; table_reader_global_state stays null and no PG is touched here.
+	duckdb::unique_ptr<RemoteScanStream> remote_scan;
 };
 
 #define LOCAL_STATE_SLOT_BATCH_SIZE 32
@@ -73,15 +81,14 @@ struct PostgresOrderBySpec {
 };
 
 struct PostgresScanFunctionData : public duckdb::TableFunctionData {
-	PostgresScanFunctionData(Relation rel, uint64_t cardinality, Snapshot snapshot);
+	PostgresScanFunctionData(RelationDesc desc, Snapshot snapshot);
 	~PostgresScanFunctionData() override;
 	duckdb::vector<duckdb::string> complex_filters;
 	duckdb::vector<PostgresOrderBySpec> order_bys;
 	// Set when a Top-N (ORDER BY + LIMIT) is pushed: emit LIMIT/OFFSET in the scan query.
 	duckdb::optional_idx limit;
 	duckdb::idx_t offset;
-	Relation rel;
-	uint64_t cardinality;
+	RelationDesc desc;
 	Snapshot snapshot;
 
 private:
