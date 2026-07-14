@@ -41,6 +41,12 @@ bool ConvertDuckToPostgresValue(TupleTableSlot *slot, duckdb::Value &value, uint
 void InsertTuplesIntoChunk(duckdb::DataChunk &output, PostgresScanLocalState &scan_local_state, TupleTableSlot **slots,
                            int num_slots);
 
+// Detoast + convert a PG numeric Datum to its DuckDB/Arrow DECIMAL scaled-integer
+// representation, written little-endian into `out` (width_bytes is 4, 8, or 16). The
+// value's own scale must equal the column scale (PG enforces this for typmod'd
+// columns), matching the DuckDB/Arrow decimal scale.
+void NumericToDecimalBytes(Datum value, int width_bytes, void *out);
+
 // Public helpers exposed for consumer-side hook implementations.
 bool IsNestedType(duckdb::LogicalTypeId type_id);
 const duckdb::LogicalType &GetChildType(const duckdb::LogicalType &type);

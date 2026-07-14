@@ -1617,6 +1617,34 @@ AppendDecimal(duckdb::Vector &result, Datum value, idx_t offset) {
 	}
 }
 
+void
+NumericToDecimalBytes(Datum value, int width_bytes, void *out) {
+	alignas(int32) uint8_t buf[kShortRealignBufSize];
+	bool should_free = false;
+	Datum v = DetoastPostgresDatumInline(value, buf, &should_free);
+	auto numeric_var = FromNumeric(DatumGetNumeric(v));
+	switch (width_bytes) {
+	case 4:
+		*reinterpret_cast<int32_t *>(out) = ConvertDecimal<int32_t>(numeric_var);
+		break;
+	case 8:
+		*reinterpret_cast<int64_t *>(out) = ConvertDecimal<int64_t>(numeric_var);
+		break;
+	case 16: {
+		hugeint_t h = ConvertDecimal<hugeint_t, DecimalConversionHugeint>(numeric_var);
+		// Arrow decimal128 is little-endian two's-complement: low 8 bytes then high.
+		reinterpret_cast<uint64_t *>(out)[0] = h.lower;
+		reinterpret_cast<int64_t *>(out)[1] = h.upper;
+		break;
+	}
+	default:
+		break;
+	}
+	if (should_free) {
+		duckdb_free(reinterpret_cast<void *>(v));
+	}
+}
+
 static void
 AppendList(duckdb::Vector &result, Datum value, idx_t offset) {
 	alignas(int32) uint8_t buf[kShortRealignBufSize];

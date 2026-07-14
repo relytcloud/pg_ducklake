@@ -11,8 +11,8 @@ PGDDB_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PGDDB_INCLUDE := -I$(PGDDB_DIR)/libpgduckdb/include
 PGDDB_DUCKDB_INCLUDE := -isystem $(PGDDB_DIR)/duckdb/src/include \
                         -isystem $(PGDDB_DIR)/duckdb/third_party/re2
-PGDDB_CPP_SRCS := $(wildcard $(PGDDB_DIR)/libpgduckdb/*.cpp $(PGDDB_DIR)/libpgduckdb/*/*.cpp)
-PGDDB_C_SRCS := $(wildcard $(PGDDB_DIR)/libpgduckdb/*.c $(PGDDB_DIR)/libpgduckdb/*/*.c)
+PGDDB_CPP_SRCS := $(wildcard $(PGDDB_DIR)/libpgduckdb/*.cpp $(PGDDB_DIR)/libpgduckdb/*/*.cpp $(PGDDB_DIR)/libpgduckdb/*/*/*.cpp)
+PGDDB_C_SRCS := $(wildcard $(PGDDB_DIR)/libpgduckdb/*.c $(PGDDB_DIR)/libpgduckdb/*/*.c $(PGDDB_DIR)/libpgduckdb/*/*/*.c)
 PGDDB_SRCS := $(PGDDB_CPP_SRCS) $(PGDDB_C_SRCS)
 PGDDB_OBJS := $(PGDDB_CPP_SRCS:.cpp=.o) $(PGDDB_C_SRCS:.c=.o)
 
