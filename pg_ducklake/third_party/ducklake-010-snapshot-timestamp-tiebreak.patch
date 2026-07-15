@@ -1,0 +1,17 @@
+diff --git a/src/storage/ducklake_metadata_manager.cpp b/src/storage/ducklake_metadata_manager.cpp
+index 2d9c0c59..b19f251a 100644
+--- a/src/storage/ducklake_metadata_manager.cpp
++++ b/src/storage/ducklake_metadata_manager.cpp
+@@ -4103,9 +4103,10 @@ SELECT snapshot_id, schema_version, next_catalog_id, next_file_id
+ 	SELECT snapshot_id
+ 	FROM {METADATA_CATALOG}.ducklake_snapshot
+ 	WHERE snapshot_time::TIMESTAMPTZ %s= %s
+-	ORDER BY snapshot_time::TIMESTAMPTZ %s
++	ORDER BY snapshot_time::TIMESTAMPTZ %s, snapshot_id %s
+ 	LIMIT 1);)",
+-		    timestamp_condition, val.DefaultCastAs(LogicalType::VARCHAR).ToSQLString(), timestamp_order));
++		    timestamp_condition, val.DefaultCastAs(LogicalType::VARCHAR).ToSQLString(), timestamp_order,
++		    timestamp_order));
+ 	} else {
+ 		throw InvalidInputException("Unsupported AT clause unit - %s", unit);
+ 	}
