@@ -22,6 +22,9 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
+#include <storage/ducklake_partition_data.hpp>
+#include <storage/ducklake_table_entry.hpp>
 
 extern "C" {
 #include "postgres.h"
@@ -96,6 +99,9 @@ SPIExecuteInSubtransaction(const duckdb::string &query, bool &had_error, duckdb:
 	/* Suppress NOTICEs: DuckLake re-runs CREATE TABLE IF NOT EXISTS, whose NOTICE would leak to the client. */
 	int save_nestlevel = NewGUCNestLevel();
 	::SetConfigOption("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION);
+	/* DuckLake-generated SQL calls DuckDB-dialect functions (month(), murmur3_32(), ...) unqualified;
+	 * resolve them to the ducklake-schema UDFs deterministically, independent of the caller's search_path. */
+	::SetConfigOption("search_path", "ducklake", PGC_USERSET, PGC_S_SESSION);
 
 	SetAllowSubtransaction(true);
 	BeginInternalSubTransaction(NULL);
@@ -349,6 +355,53 @@ ORDER BY row_id, begin_snapshot;)",
 	                                        (unsigned long long)snapshot.snapshot_id);
 	elog(DEBUG1, "ReadAllInlinedDataForFlush via DuckDB: %s", query.c_str());
 	return transaction.ExecuteRaw(query);
+}
+
+/*
+ * The flush's deleted-rows filter runs over SPI against the inlined heap table, so each partition
+ * column must be rendered as PG SQL that recovers the DuckLake-typed value from its storage type:
+ *  - VARCHAR is stored as BYTEA; the upstream CAST(col AS VARCHAR) would yield PG's hex form
+ *    ('\x6170706c65'), silently mis-hashing every bucket/identity comparison. convert_from()
+ *    restores the original string.
+ *  - BLOB is stored as BYTEA; pass it through raw (murmur3_32(bytea) hashes the bytes directly,
+ *    matching DuckDB, which hashes a BLOB's raw bytes).
+ *  - Types stored as VARCHAR (date/timestamp family) keep the upstream CAST to their DuckDB type
+ *    name, which PG parses from the stored text form.
+ *  - Native types cast via GetColumnTypeInternal so the type name is PG-parseable (e.g. DuckDB
+ *    DOUBLE -> DOUBLE PRECISION).
+ * The transform wrapper (month(...), (murmur3_32(...) & ...) % N) then resolves to the ducklake
+ * schema UDFs via the search_path forced in SPIExecuteInSubtransaction.
+ */
+duckdb::vector<duckdb::string>
+PgDuckLakeMetadataManager::GetFlushPartitionSQLExpressions(const duckdb::DuckLakeTableEntry &table) {
+	duckdb::vector<duckdb::string> result;
+	auto partition_data = table.GetPartitionData();
+	if (!partition_data) {
+		return result;
+	}
+	for (auto &field : partition_data->fields) {
+		auto &col = table.GetColumnByFieldId(field.field_id);
+		auto col_name = duckdb::KeywordHelper::WriteOptionallyQuoted(col.GetName());
+		auto type = col.GetType();
+		duckdb::string rendered;
+		if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
+			rendered = "convert_from(" + col_name + ", 'UTF8')";
+		} else if (type.id() == duckdb::LogicalTypeId::BLOB) {
+			rendered = col_name;
+		} else if (GetColumnTypeInternal(type) == "VARCHAR") {
+			rendered = "CAST(" + col_name + " AS " + type.ToString() + ")";
+		} else {
+			rendered = "CAST(" + col_name + " AS " + GetColumnTypeInternal(type) + ")";
+		}
+		/* DuckDB hashes DECIMALs wider than 18 digits (INT128 storage) by their fixed-scale
+		 * string form; ducklake.murmur3_32(numeric) implements the narrow unscaled-long rule. */
+		if (field.transform.type == duckdb::DuckLakeTransformType::BUCKET &&
+		    type.id() == duckdb::LogicalTypeId::DECIMAL && duckdb::DecimalType::GetWidth(type) > 18) {
+			rendered = "CAST(" + rendered + " AS TEXT)";
+		}
+		result.push_back(duckdb::DuckLakePartitionUtils::GetPartitionSQLExpression(field.transform, rendered));
+	}
+	return result;
 }
 
 duckdb::unique_ptr<duckdb::QueryResult>

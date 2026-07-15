@@ -38,6 +38,7 @@ test: vacuum
 # test: maintenance
 test: commit_message
 test: partition
+test: partition_transform_flush
 test: sorted_table
 test: hybrid_scan
 test: order_by_pushdown

@@ -40,6 +40,8 @@ public:
 	ReadAllInlinedDataForFlush(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
 	                           const duckdb::vector<duckdb::string> &columns_to_read) override;
 
+	duckdb::vector<duckdb::string> GetFlushPartitionSQLExpressions(const duckdb::DuckLakeTableEntry &table) override;
+
 	static bool IsInitialized();
 	// In-process SPI backend has no DuckDB metadata connection: the base AttachMetadata
 	// ATTACHes on it (null here) and MetadataExists probes ducklake_metadata in a way that

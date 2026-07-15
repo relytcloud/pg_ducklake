@@ -1,0 +1,40 @@
+diff --git a/src/include/storage/ducklake_metadata_manager.hpp b/src/include/storage/ducklake_metadata_manager.hpp
+--- a/src/include/storage/ducklake_metadata_manager.hpp
++++ b/src/include/storage/ducklake_metadata_manager.hpp
+@@ -347,6 +347,10 @@
+ 	virtual unique_ptr<QueryResult> ReadAllInlinedDataForFlush(DuckLakeSnapshot snapshot,
+ 	                                                           const string &inlined_table_name,
+ 	                                                           const vector<string> &columns_to_read);
++	//! Partition-transform SQL expressions for the flush's deleted-rows filter, which runs against
++	//! the inlined data table. Overridable so backends can render each column according to how the
++	//! inlined table actually stores it (e.g. Postgres stores VARCHAR columns as BYTEA).
++	virtual vector<string> GetFlushPartitionSQLExpressions(const DuckLakeTableEntry &table);
+ 	virtual shared_ptr<DuckLakeInlinedData> TransformInlinedData(QueryResult &result,
+ 	                                                             const vector<LogicalType> &expected_types);
+ 
+diff --git a/src/storage/ducklake_metadata_manager.cpp b/src/storage/ducklake_metadata_manager.cpp
+--- a/src/storage/ducklake_metadata_manager.cpp
++++ b/src/storage/ducklake_metadata_manager.cpp
+@@ -3092,6 +3092,10 @@
+ ORDER BY row_id, begin_snapshot;)",
+ 	                                                             projection, inlined_table_name));
+ 	return result;
++}
++
++vector<string> DuckLakeMetadataManager::GetFlushPartitionSQLExpressions(const DuckLakeTableEntry &table) {
++	return table.GetPartitionSQLExpressions();
+ }
+ 
+ string DuckLakeMetadataManager::GetPathForSchema(SchemaIndex schema_id,
+diff --git a/src/functions/ducklake_flush_inlined_data.cpp b/src/functions/ducklake_flush_inlined_data.cpp
+--- a/src/functions/ducklake_flush_inlined_data.cpp
++++ b/src/functions/ducklake_flush_inlined_data.cpp
+@@ -118,7 +118,7 @@
+ 
+ 	if (!global_state.written_files.empty()) {
+ 		DeletesPerFile deletes_per_file;
+-		auto partition_sql_exprs = table.GetPartitionSQLExpressions();
++		auto partition_sql_exprs = transaction.GetMetadataManager().GetFlushPartitionSQLExpressions(table);
+ 
+ 		// Track cumulative row offset per partition so each file knows its range
+ 		unordered_map<string, idx_t> partition_row_offsets;
