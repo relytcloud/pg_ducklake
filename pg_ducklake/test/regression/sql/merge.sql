@@ -22,8 +22,8 @@ WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.val, s.n);
 
 SELECT * FROM merge_target ORDER BY id;
 
--- Reset (TRUNCATE is a no-op on ducklake tables, use DELETE)
-DELETE FROM merge_target;
+-- Reset
+TRUNCATE merge_target;
 INSERT INTO merge_target VALUES (1, 'one', 10), (2, 'two', 20), (3, 'three', 30);
 
 -- MERGE with DELETE action

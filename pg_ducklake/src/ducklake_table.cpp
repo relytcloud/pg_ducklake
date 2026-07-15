@@ -255,26 +255,53 @@ duckdb_finish_bulk_insert(Relation /*relation*/, int /*options*/) {
 	/* No-op */
 }
 
+/* Truncates via a DuckDB TRUNCATE, tied to the current transaction. */
+static void
+TruncateDuckLakeTable_Cpp(Oid relid) {
+	std::string truncate_ddl = std::string("TRUNCATE ") + pgddb_relation_name(relid);
+	elog(DEBUG1, "Truncating DuckLake table: %s", truncate_ddl.c_str());
+	pgducklake::DuckDBQueryOrThrow(truncate_ddl);
+}
+
+/* Table AM callbacks are plain PG frames; convert DuckDB exceptions to PG ERRORs. */
+static void
+TruncateDuckLakeTable(Oid relid) {
+	InvokeCPPFunc(TruncateDuckLakeTable_Cpp, relid);
+}
+
 #if PG_VERSION_NUM >= 160000
 
 static void
-duckdb_relation_set_new_filelocator(Relation /*rel*/, const RelFileLocator * /*newrnode*/, char /*persistence*/,
+duckdb_relation_set_new_filelocator(Relation rel, const RelFileLocator * /*newrnode*/, char /*persistence*/,
                                     TransactionId * /*freezeXid*/, MultiXactId * /*minmulti*/) {
-	/* No-op: the table is created in DuckDB later by duckdb_create_table_trigger. */
+	HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(rel->rd_id));
+	if (!HeapTupleIsValid(tp)) {
+		/* No-op: the table is created in DuckDB later by duckdb_create_table_trigger. */
+		return;
+	}
+	ReleaseSysCache(tp);
+	TruncateDuckLakeTable(rel->rd_id);
 }
 
 #else
 
 static void
-duckdb_relation_set_new_filenode(Relation /*rel*/, const RelFileNode * /*newrnode*/, char /*persistence*/,
+duckdb_relation_set_new_filenode(Relation rel, const RelFileNode * /*newrnode*/, char /*persistence*/,
                                  TransactionId * /*freezeXid*/, MultiXactId * /*minmulti*/) {
-	/* No-op: the table is created in DuckDB later by duckdb_create_table_trigger. */
+	HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(rel->rd_id));
+	if (!HeapTupleIsValid(tp)) {
+		/* No-op: the table is created in DuckDB later by duckdb_create_table_trigger. */
+		return;
+	}
+	ReleaseSysCache(tp);
+	TruncateDuckLakeTable(rel->rd_id);
 }
 
 #endif
 
 static void
 duckdb_relation_nontransactional_truncate(Relation rel) {
+	TruncateDuckLakeTable(rel->rd_id);
 }
 
 #if PG_VERSION_NUM >= 160000

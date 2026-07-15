@@ -1,0 +1,97 @@
+-- TRUNCATE on ducklake tables (issue #224).
+\set QUIET off
+CREATE TABLE trunc_t (id int, val text) USING ducklake;
+CREATE TABLE
+INSERT INTO trunc_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
+INSERT 0 3
+-- Plain TRUNCATE: rows gone, a delete snapshot is recorded
+TRUNCATE trunc_t;
+TRUNCATE TABLE
+SELECT count(*) FROM trunc_t;
+ count 
+-------
+     0
+(1 row)
+
+SELECT changes_made ~ '^(deleted_from_table|inlined_delete):\d+$' AS truncate_recorded
+FROM ducklake.ducklake_snapshot_changes ORDER BY snapshot_id DESC LIMIT 1;
+ truncate_recorded 
+-------------------
+ t
+(1 row)
+
+-- TRUNCATE then INSERT
+INSERT INTO trunc_t VALUES (4, 'four');
+INSERT 0 1
+SELECT * FROM trunc_t ORDER BY id;
+ id | val  
+----+------
+  4 | four
+(1 row)
+
+-- TRUNCATE inside a rolled-back transaction: rows restored
+BEGIN;
+BEGIN
+TRUNCATE trunc_t;
+TRUNCATE TABLE
+SELECT count(*) FROM trunc_t;
+ count 
+-------
+     0
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT * FROM trunc_t ORDER BY id;
+ id | val  
+----+------
+  4 | four
+(1 row)
+
+-- Mixed-list TRUNCATE of a heap table and a ducklake table
+CREATE TABLE trunc_heap (id int);
+CREATE TABLE
+INSERT INTO trunc_heap VALUES (1), (2);
+INSERT 0 2
+TRUNCATE trunc_heap, trunc_t;
+TRUNCATE TABLE
+SELECT count(*) FROM trunc_heap;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM trunc_t;
+ count 
+-------
+     0
+(1 row)
+
+-- TRUNCATE of a table created in the same transaction (nontransactional path)
+BEGIN;
+BEGIN
+CREATE TABLE trunc_same_txn (id int) USING ducklake;
+CREATE TABLE
+INSERT INTO trunc_same_txn VALUES (1), (2);
+INSERT 0 2
+TRUNCATE trunc_same_txn;
+TRUNCATE TABLE
+SELECT count(*) FROM trunc_same_txn;
+ count 
+-------
+     0
+(1 row)
+
+COMMIT;
+COMMIT
+SELECT count(*) FROM trunc_same_txn;
+ count 
+-------
+     0
+(1 row)
+
+\set QUIET on
+-- Cleanup
+DROP TABLE trunc_t;
+DROP TABLE trunc_heap;
+DROP TABLE trunc_same_txn;

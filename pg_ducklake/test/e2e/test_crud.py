@@ -66,13 +66,12 @@ async def test_delete(conn):
     assert tag == "DELETE 5"
     assert await conn.fetchval("SELECT count(*) FROM t") == 5
 
-    # TRUNCATE is documented as a no-op on ducklake tables (use DELETE);
-    # pin that behavior so a change shows up here.
     await conn.execute("TRUNCATE t")
-    assert await conn.fetchval("SELECT count(*) FROM t") == 5
+    assert await conn.fetchval("SELECT count(*) FROM t") == 0
 
+    await conn.execute("INSERT INTO t VALUES (1), (2), (3)")
     tag = await conn.execute("DELETE FROM t")
-    assert tag == "DELETE 5"
+    assert tag == "DELETE 3"
     assert await conn.fetchval("SELECT count(*) FROM t") == 0
 
 

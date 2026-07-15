@@ -5,6 +5,7 @@ test: basic
 test: virtual_columns
 test: dml_row_count
 test: merge
+test: truncate
 test: transaction
 test: non_ducklake_commit
 test: temp_table
