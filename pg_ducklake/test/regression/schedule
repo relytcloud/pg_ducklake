@@ -49,3 +49,4 @@ test: import_foreign_schema
 test: secrets
 test: access_control
 test: quoted_names
+test: create_view_shapes

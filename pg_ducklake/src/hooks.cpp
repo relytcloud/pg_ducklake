@@ -447,8 +447,11 @@ RewriteDuckdbRowViewStmt(ViewStmt *stmt, PlannedStmt *pstmt, const char *query_s
 	if (!OidIsValid(duckdb_row_oid))
 		return;
 
+	/* Analyze a copy: parse analysis rewrites the raw tree in place (JoinExpr
+	 * larg/rarg, SubLink->subselect), which would corrupt stmt->query for
+	 * DefineView's own analysis when we don't rewrite the view ourselves. */
 	RawStmt *rawstmt = makeNode(RawStmt);
-	rawstmt->stmt = stmt->query;
+	rawstmt->stmt = (Node *)copyObjectImpl(stmt->query);
 	rawstmt->stmt_location = pstmt->stmt_location;
 	rawstmt->stmt_len = pstmt->stmt_len;
 #if PG_VERSION_NUM >= 150000
