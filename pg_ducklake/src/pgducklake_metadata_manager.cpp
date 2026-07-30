@@ -82,6 +82,36 @@ CreateEmptyResult(duckdb::StatementType type) {
 }
 
 /*
+ * SPI_finish() and PopActiveSnapshot() cannot ereport (spi.c, snapmgr.c), so these destructors
+ * are safe to run while a C++ exception unwinds. Acquisition goes through PostgresFunctionGuard
+ * because SPI_connect() and GetTransactionSnapshot() can.
+ * Two objects rather than one: a destructor runs only for a fully constructed object, so a
+ * failed snapshot push still releases the SPI connection.
+ */
+struct SpiConnectionScope {
+	SpiConnectionScope() {
+		PostgresFunctionGuard(SPI_connect);
+	}
+	~SpiConnectionScope() {
+		SPI_finish();
+	}
+	SpiConnectionScope(const SpiConnectionScope &) = delete;
+	SpiConnectionScope &operator=(const SpiConnectionScope &) = delete;
+};
+
+struct ActiveSnapshotScope {
+	ActiveSnapshotScope() {
+		Snapshot snapshot = PostgresFunctionGuard(GetTransactionSnapshot);
+		PostgresFunctionGuard(PushActiveSnapshot, snapshot);
+	}
+	~ActiveSnapshotScope() {
+		PopActiveSnapshot();
+	}
+	ActiveSnapshotScope(const ActiveSnapshotScope &) = delete;
+	ActiveSnapshotScope &operator=(const ActiveSnapshotScope &) = delete;
+};
+
+/*
  * Catch PG ERRORs in a subtransaction: a bare longjmp catch leaks
  * ActiveSnapshot/executor resources. CurrentResourceOwner must be restored by
  * hand after release/rollback; the GUC nest level stays outside the subxact.
@@ -126,30 +156,25 @@ SPIExecuteInSubtransaction(const duckdb::string &query, bool &had_error, duckdb:
 	return ret;
 }
 
+/*
+ * Every PG call that can ereport(ERROR) belongs here, not in the caller: the guard's sigsetjmp is
+ * in its own frame, so a longjmp out of this function skips this frame entirely. Nothing here may
+ * rely on a local destructor, and hoisting a PG call into the caller reopens the leak this split
+ * exists to close.
+ * Query passed by pointer: __PostgresFunctionGuard__ takes its arguments by value.
+ */
 static duckdb::unique_ptr<duckdb::QueryResult>
-CreateSPIResult(const duckdb::string &query) {
-	elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
-
-	std::lock_guard<std::recursive_mutex> lock(pgddb::GlobalProcessLock::GetLock());
-	pgddb::PostgresScopedStackReset scoped_stack_reset;
-
-	SPI_connect();
-	PushActiveSnapshot(GetTransactionSnapshot());
-
+CreateSPIResultBody(const duckdb::string *query_ptr) {
 	duckdb::string error_message;
 	bool had_error = false;
-	int ret = SPIExecuteInSubtransaction(query, had_error, error_message);
+	int ret = SPIExecuteInSubtransaction(*query_ptr, had_error, error_message);
 
 	if (had_error) {
-		PopActiveSnapshot();
-		SPI_finish();
 		duckdb::ErrorData error(duckdb::ExceptionType::IO, "SPI execution failed: " + error_message);
 		return duckdb::make_uniq<duckdb::MaterializedQueryResult>(std::move(error));
 	}
 
 	if (ret < 0) {
-		PopActiveSnapshot();
-		SPI_finish();
 		duckdb::ErrorData error(duckdb::ExceptionType::IO,
 		                        "SPI execution failed: " + duckdb::string(SPI_result_code_string(ret)));
 		return duckdb::make_uniq<duckdb::MaterializedQueryResult>(std::move(error));
@@ -157,8 +182,6 @@ CreateSPIResult(const duckdb::string &query) {
 
 	SPITupleTable *tuptable = SPI_tuptable;
 	if (!tuptable) {
-		PopActiveSnapshot();
-		SPI_finish();
 		return CreateEmptyResult(ConvertSPIResultToDuckStatementType(ret));
 	}
 
@@ -215,12 +238,27 @@ CreateSPIResult(const duckdb::string &query) {
 		collection_p->Append(append_state, chunk);
 	}
 
-	PopActiveSnapshot();
-	SPI_finish();
-
 	duckdb::StatementProperties properties;
 	return duckdb::make_uniq<duckdb::MaterializedQueryResult>(duckdb::StatementType::SELECT_STATEMENT, properties,
 	                                                          names, std::move(collection_p), client_properties);
+}
+
+static duckdb::unique_ptr<duckdb::QueryResult>
+CreateSPIResult(const duckdb::string &query) {
+	elog(DEBUG1, "Creating SPI result for query: %s", query.c_str());
+
+	std::lock_guard<std::recursive_mutex> lock(pgddb::GlobalProcessLock::GetLock());
+	pgddb::PostgresScopedStackReset scoped_stack_reset;
+
+	try {
+		SpiConnectionScope spi;
+		ActiveSnapshotScope snapshot;
+		return PostgresFunctionGuard(CreateSPIResultBody, &query);
+	} catch (const std::exception &ex) {
+		/* Repackage rather than propagate: DuckLake's metadata manager treats an error-carrying
+		 * QueryResult as a value and branches on it. */
+		return duckdb::make_uniq<duckdb::MaterializedQueryResult>(duckdb::ErrorData(ex));
+	}
 }
 
 /* Avoids transaction.GetCatalog(): during init the AttachedDatabase is not yet reachable via db_manager. */
@@ -235,10 +273,29 @@ SubstitutePgCatalogPlaceholders(duckdb::string &query) {
 }
 
 /*
- * Convert PG ERRORs into duckdb::TransactionException so DuckLake's
- * FlushChanges() retry loop can intercept unique-violations from concurrent
- * commits instead of a PG longjmp bypassing the C++ catch.
+ * Below the guard frame -- see CreateSPIResultBody.
+ * Failures become duckdb::TransactionException so DuckLake's FlushChanges() retry loop can
+ * intercept unique-violations from concurrent commits; a C++ throw from here propagates through
+ * the guard unchanged.
  */
+static duckdb::unique_ptr<duckdb::QueryResult>
+CreateSPIExecuteInSubtransactionBody(const duckdb::string *query_ptr) {
+	duckdb::string error_message;
+	bool had_error = false;
+	int ret = SPIExecuteInSubtransaction(*query_ptr, had_error, error_message);
+
+	if (!had_error && ret < 0) {
+		error_message = duckdb::string("SPI execute failed: ") + SPI_result_code_string(ret);
+		had_error = true;
+	}
+
+	if (had_error) {
+		throw duckdb::TransactionException("%s", error_message.c_str());
+	}
+
+	return CreateEmptyResult(duckdb::StatementType::EXECUTE_STATEMENT);
+}
+
 static duckdb::unique_ptr<duckdb::QueryResult>
 CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
 	elog(DEBUG1, "CreateSPIExecuteInSubtransaction: %s", query.c_str());
@@ -246,28 +303,11 @@ CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
 	std::lock_guard<std::recursive_mutex> lock(pgddb::GlobalProcessLock::GetLock());
 	pgddb::PostgresScopedStackReset scoped_stack_reset;
 
-	SPI_connect();
+	SpiConnectionScope spi;
 	// PRE_COMMIT of a pipelined implicit txn (extended protocol) has no active snapshot; SPI needs one pushed.
-	PushActiveSnapshot(GetTransactionSnapshot());
+	ActiveSnapshotScope snapshot;
 
-	duckdb::string error_message;
-	bool had_error = false;
-	int ret = SPIExecuteInSubtransaction(query, had_error, error_message);
-
-	PopActiveSnapshot();
-
-	if (!had_error && ret < 0) {
-		error_message = duckdb::string("SPI execute failed: ") + SPI_result_code_string(ret);
-		had_error = true;
-	}
-
-	SPI_finish();
-
-	if (had_error) {
-		throw duckdb::TransactionException("%s", error_message.c_str());
-	}
-
-	return CreateEmptyResult(duckdb::StatementType::EXECUTE_STATEMENT);
+	return PostgresFunctionGuard(CreateSPIExecuteInSubtransactionBody, &query);
 }
 
 PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction_)
@@ -418,19 +458,12 @@ PgDuckLakeMetadataManager::IsInitialized() {
 	return found;
 }
 
-/* Raw SPI: runs inside DuckDB's ATTACH path, where re-entering DuckDB would recurse infinitely. */
-void
-PgDuckLakeMetadataManager::EnsureSnapshotTrigger() {
-	std::lock_guard<std::recursive_mutex> lock(pgddb::GlobalProcessLock::GetLock());
-	pgddb::PostgresScopedStackReset scoped_stack_reset;
-
-	SPI_connect();
-	PushActiveSnapshot(GetTransactionSnapshot());
-
+/* Below the guard frame -- see CreateSPIResultBody. */
+static void
+EnsureSnapshotTriggerBody() {
 	auto save_nestlevel = NewGUCNestLevel();
 	::SetConfigOption("duckdb.force_execution", "false", PGC_USERSET, PGC_S_SESSION);
 
-	// SPIExecuteInSubtransaction keeps a PG ERROR from longjmp-ing past the held lock_guard (skips C++ dtors).
 	duckdb::string error_message;
 	bool had_error = false;
 	int ret = SPIExecuteInSubtransaction(R"(
@@ -455,8 +488,6 @@ PgDuckLakeMetadataManager::EnsureSnapshotTrigger() {
 	}
 
 	AtEOXact_GUC(false, save_nestlevel);
-	PopActiveSnapshot();
-	SPI_finish();
 
 	if (had_error || ret < 0) {
 		if (!had_error) {
@@ -464,6 +495,20 @@ PgDuckLakeMetadataManager::EnsureSnapshotTrigger() {
 		}
 		throw duckdb::IOException("EnsureSnapshotTrigger failed: %s", error_message.c_str());
 	}
+}
+
+/* Raw SPI: runs inside DuckDB's ATTACH path, where re-entering DuckDB would recurse infinitely. */
+void
+PgDuckLakeMetadataManager::EnsureSnapshotTrigger() {
+	std::lock_guard<std::recursive_mutex> lock(pgddb::GlobalProcessLock::GetLock());
+	pgddb::PostgresScopedStackReset scoped_stack_reset;
+
+	SpiConnectionScope spi;
+	ActiveSnapshotScope snapshot;
+
+	/* No repackaging: this function already reports failure by throwing, so the guard's exception
+	 * can propagate as-is. */
+	PostgresFunctionGuard(EnsureSnapshotTriggerBody);
 }
 
 bool
