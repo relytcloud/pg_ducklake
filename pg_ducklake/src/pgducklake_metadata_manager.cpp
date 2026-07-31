@@ -93,9 +93,13 @@ SPIExecuteInSubtransaction(const duckdb::string &query, bool &had_error, duckdb:
 	int ret = -1;
 	had_error = false;
 
+	/* GUC_ACTION_SAVE, not SetConfigOption()'s GUC_ACTION_SET: a metadata query can be issued while a
+	 * libpgduckdb PostgresTableReader has put the backend in PG parallel mode, and guc.c rejects
+	 * GUC_ACTION_SET there. SAVE is exempt because a parallel worker pops it too; PG itself relies on
+	 * that in execute_extension_script(). */
 	/* Suppress NOTICEs: DuckLake re-runs CREATE TABLE IF NOT EXISTS, whose NOTICE would leak to the client. */
 	int save_nestlevel = NewGUCNestLevel();
-	::SetConfigOption("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION);
+	::set_config_option("client_min_messages", "warning", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SAVE, true, 0, false);
 
 	SetAllowSubtransaction(true);
 	BeginInternalSubTransaction(NULL);

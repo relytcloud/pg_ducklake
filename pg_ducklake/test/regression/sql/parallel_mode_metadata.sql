@@ -1,0 +1,47 @@
+-- Regression test for: parameter "client_min_messages" cannot be set during a
+-- parallel operation.
+--
+-- libpgduckdb's PostgresTableReader calls EnterParallelMode() for every
+-- non-temp heap relation whose scan plan is parallel-safe, and the backend then
+-- stays in PG parallel mode for the rest of that DuckDB query.  The call does
+-- not consult max_parallel_workers, so regression.conf's max_parallel_workers =
+-- 0 does not prevent it; raising it does not either, since a worker then really
+-- launches and the window is just as open.  This test therefore covers the
+-- suite's configuration, not the only affected one.
+--
+-- A DuckLake metadata query issued inside that window runs over
+-- SPI, which sets client_min_messages -- and guc.c rejects GUC_ACTION_SET in
+-- parallel mode.  The ereport then longjmps out of
+-- CreateSPIResult past its std::lock_guard on GlobalProcessLock, so the lock is
+-- never released and every later DuckDB operation in the backend blocks
+-- forever.
+--
+-- Both halves have to land in one DuckDB query, in this order:
+--   * count(*) over a plain heap table, written first so its
+--     PostgresTableReader (count_tuples_only) enters parallel mode first;
+--   * count(*) over a DuckLake table WITH a filter -- filter pushdown builds a
+--     fresh DuckLakeMultiFileList whose file list is only expanded, by a
+--     metadata query, during execution.  Drop the filter and the file list is
+--     already resolved at bind time, so nothing reaches SPI.
+--
+-- ducklake.threads = 1 pins that ordering.  At DuckDB's default thread count
+-- the two pipelines can start on different threads and the failure turns
+-- intermittent, which is why CI only ever lost this race on one job.
+--
+-- The tables are deliberately left behind: before the fix the SELECT leaks
+-- GlobalProcessLock, so a following DROP TABLE on the ducklake table would
+-- block until the CI job's timeout instead of producing a diff.  Keeping the
+-- SELECT last is what makes the regression bounded, and is why this test is
+-- scheduled last.
+
+SET ducklake.threads = 1;
+CALL ducklake.recycle_ddb();
+
+CREATE TABLE pm_heap(id int);
+INSERT INTO pm_heap VALUES (1), (2), (3);
+
+CREATE TABLE pm_lake(id int, val text) USING ducklake;
+INSERT INTO pm_lake VALUES (1, 'x'), (2, 'y');
+
+SELECT (SELECT count(*) FROM pm_heap) AS heap_count,
+       (SELECT count(*) FROM pm_lake WHERE id = 2) AS lake_count;
