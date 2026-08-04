@@ -1,0 +1,1 @@
+-- 1.0.2 is a bug-fix release with no SQL object changes.
