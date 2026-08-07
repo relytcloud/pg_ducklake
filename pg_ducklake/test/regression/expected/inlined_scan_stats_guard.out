@@ -1,0 +1,437 @@
+-- Regression: the inline (direct-insert) write path must maintain the persisted per-column
+-- min/max in ducklake_table_column_stats so a later zone-map scan never mis-prunes its own rows.
+--
+-- Background: DuckLake keeps per-table min/max in ducklake_table_column_stats and exposes them to
+-- the scan as zone-map statistics (DuckLakeStatistics -> table.GetStatistics). pg_ducklake's
+-- direct-insert path appends inlined rows; it must WIDEN those bounds to cover the new tuples.
+-- A table seeded with real stats (min=1,max=5) that then receives direct-inserted rows outside
+-- that range (100..104) must end up with a zone map of [1,104] -- extended, never stale, never
+-- blanked. (Blanking min/max was spiked and rejected: it corrupts already-flushed parquet zone
+-- maps. The bounds only ever widen.) Widening is also the only thing the writer does: a bound the
+-- catalog does not have is never invented from a single batch, which the two half-populated cases
+-- below assert from both directions.
+--
+-- Previously a scan-side guard (ducklake-006-inlined-scan-stats-guard.patch) masked stale bounds by
+-- suppressing stats for any table with inlined data. That guard is retired: the writer now keeps the
+-- bounds truthful, so DuckLakeStatistics reverts to upstream behavior and reads stay correct while
+-- retaining zone-map pruning.
+\set ON_ERROR_STOP on
+\pset pager off
+-- Inlining on, limit high enough that the whole table stays inline.
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+-- =============================================================
+-- Case 1: fully inlined -- widened bounds, correct filtered scans
+-- =============================================================
+CREATE TABLE issg (id INT) USING ducklake;
+-- Seed via the DuckDB inline write path (not direct insert): persists min=1, max=5.
+SET ducklake.enable_direct_insert = false;
+INSERT INTO issg VALUES (1), (2), (3), (4), (5);
+SET ducklake.enable_direct_insert = true;
+-- The persisted zone map starts at [1, 5].
+SELECT min_value, max_value
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg');
+ min_value | max_value 
+-----------+-----------
+ 1         | 5
+(1 row)
+
+-- Direct-insert rows ABOVE that max. The direct-insert path must widen the bounds.
+INSERT INTO issg VALUES (100), (101), (102), (103), (104);
+-- The persisted zone map is now the widened [1, 104] -- type-correct, not lexical, not NULL.
+SELECT min_value, max_value
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg');
+ min_value | max_value 
+-----------+-----------
+ 1         | 104
+(1 row)
+
+-- Data is still fully inlined (no parquet files).
+SELECT count(*) AS data_files
+FROM ducklake.ducklake_data_file
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg');
+ data_files 
+------------
+          0
+(1 row)
+
+-- Zone-map-engaging scans on the affected column all see the out-of-range rows.
+SELECT id FROM issg WHERE id > 50 ORDER BY id;
+ id  
+-----
+ 100
+ 101
+ 102
+ 103
+ 104
+(5 rows)
+
+SELECT id FROM issg WHERE id = 102;
+ id  
+-----
+ 102
+(1 row)
+
+SELECT max(id) AS true_max FROM issg;
+ true_max 
+----------
+      104
+(1 row)
+
+SELECT count(*) AS above_five FROM issg WHERE id > 5;
+ above_five 
+------------
+          5
+(1 row)
+
+SELECT id FROM issg ORDER BY id;
+ id  
+-----
+   1
+   2
+   3
+   4
+   5
+ 100
+ 101
+ 102
+ 103
+ 104
+(10 rows)
+
+DROP TABLE issg;
+-- =============================================================
+-- Case 2: multi-file -- seed -> flush -> direct-insert -> flush.
+-- The seed rows live in one parquet file, the direct-inserted rows in another. The table-level
+-- zone map must cover the full [1,104] range so neither file's rows are mis-pruned. This is the
+-- case the rejected "blank the bounds" shortcut corrupts.
+-- =============================================================
+CREATE TABLE issg_mf (id INT) USING ducklake;
+-- Seed inline, then flush to a parquet file.
+SET ducklake.enable_direct_insert = false;
+INSERT INTO issg_mf VALUES (1), (2), (3), (4), (5);
+SET ducklake.enable_direct_insert = true;
+SELECT count(*) > 0 AS flushed_seed FROM ducklake.flush_inlined_data('issg_mf'::regclass);
+ flushed_seed 
+--------------
+ t
+(1 row)
+
+-- Table-level bounds after the first flush.
+SELECT min_value, max_value
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_mf');
+ min_value | max_value 
+-----------+-----------
+ 1         | 5
+(1 row)
+
+-- Direct-insert out-of-range rows (inline), then flush them to a second parquet file.
+INSERT INTO issg_mf VALUES (100), (101), (102), (103), (104);
+SELECT count(*) > 0 AS flushed_direct FROM ducklake.flush_inlined_data('issg_mf'::regclass);
+ flushed_direct 
+----------------
+ t
+(1 row)
+
+-- Two parquet files now hold the data.
+SELECT count(*) AS data_files
+FROM ducklake.ducklake_data_file
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_mf');
+ data_files 
+------------
+          2
+(1 row)
+
+-- Widened table-level zone map covers both files.
+SELECT min_value, max_value
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_mf');
+ min_value | max_value 
+-----------+-----------
+ 1         | 104
+(1 row)
+
+-- Zone-map-engaging scans across both files return the correct rows.
+SELECT id FROM issg_mf WHERE id > 50 ORDER BY id;
+ id  
+-----
+ 100
+ 101
+ 102
+ 103
+ 104
+(5 rows)
+
+SELECT id FROM issg_mf WHERE id = 102;
+ id  
+-----
+ 102
+(1 row)
+
+SELECT max(id) AS true_max FROM issg_mf;
+ true_max 
+----------
+      104
+(1 row)
+
+SELECT count(*) AS above_five FROM issg_mf WHERE id > 5;
+ above_five 
+------------
+          5
+(1 row)
+
+SELECT id FROM issg_mf ORDER BY id;
+ id  
+-----
+   1
+   2
+   3
+   4
+   5
+ 100
+ 101
+ 102
+ 103
+ 104
+(10 rows)
+
+DROP TABLE issg_mf;
+-- ------------------------------------------------------------------
+-- A stats row holding one bound but not the other must KEEP the NULL.
+--
+-- MergeStats casts min and max independently when a column is retyped, so
+-- a half-populated row is reachable through ordinary SQL. The widen must
+-- leave the absent side absent: a NULL bound only costs pruning, while a
+-- bound seeded from one insert batch is a claim about the whole table that
+-- the batch cannot support -- and every already-written row outside it is
+-- then pruned away on the next filtered scan.
+--
+-- Reached below with no catalog edit: DATE -> TIMESTAMP where the persisted
+-- max ('5874897-12-31') is outside TIMESTAMP range, so ReconcileStatToType
+-- keeps min and drops max.
+-- ------------------------------------------------------------------
+CREATE TABLE issg_half (d DATE) USING ducklake;
+SET ducklake.enable_direct_insert = false;
+INSERT INTO issg_half VALUES ('2024-01-01'), ('5874897-12-31');
+SELECT count(*) > 0 AS flushed_first FROM ducklake.flush_inlined_data('issg_half'::regclass);
+ flushed_first 
+---------------
+ t
+(1 row)
+
+INSERT INTO issg_half VALUES ('3000-01-01');
+SELECT count(*) > 0 AS flushed_second FROM ducklake.flush_inlined_data('issg_half'::regclass);
+ flushed_second 
+----------------
+ t
+(1 row)
+
+-- Delete the extreme rows. The persisted max still describes a deleted row --
+-- table-level stats are not recomputed on DELETE.
+DELETE FROM issg_half WHERE d <= '2024-01-01' OR d > '4000-01-01';
+-- Retype and insert in one transaction: min casts to TIMESTAMP, max does not.
+BEGIN;
+ALTER TABLE issg_half ALTER COLUMN d TYPE TIMESTAMP;
+INSERT INTO issg_half VALUES ('2025-01-01 00:00:00');
+COMMIT;
+-- Half populated: min set, max NULL.
+SELECT min_value, max_value AS half
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_half');
+      min_value      | half 
+---------------------+------
+ 2024-01-01 00:00:00 | 
+(1 row)
+
+-- A direct insert whose own max is 2026-06-01. Seeding max from it would
+-- claim the table has nothing after 2026, hiding the surviving 3000-01-01 row.
+SET ducklake.enable_direct_insert = true;
+INSERT INTO issg_half VALUES ('2026-06-01 00:00:00');
+-- max must still be NULL. min is untouched: the batch is above it.
+SELECT min_value, max_value AS still_null
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_half');
+      min_value      | still_null 
+---------------------+------------
+ 2024-01-01 00:00:00 | 
+(1 row)
+
+-- The row above the batch's max is still found, and all three rows come back.
+SELECT count(*) AS above_2900 FROM issg_half WHERE d > '2900-01-01';
+ above_2900 
+------------
+          1
+(1 row)
+
+SELECT d FROM issg_half ORDER BY d;
+            d             
+--------------------------
+ Wed Jan 01 00:00:00 2025
+ Mon Jun 01 00:00:00 2026
+ Wed Jan 01 00:00:00 3000
+(3 rows)
+
+DROP TABLE issg_half;
+-- ------------------------------------------------------------------
+-- A too-narrow seeded min does not merely mis-prune: it corrupts the
+-- values a plain unfiltered SELECT returns.
+--
+-- DuckDB's compressed materialization uses the table-level min as an exact
+-- constant to re-base the column, so a min above the true minimum shifts
+-- every smaller value upward. With min seeded to 25 on a table holding
+-- 10, 20, 30, the 10 and the 20 come back as 266 and 276 (+256) while
+-- sum(id) still reports 125 -- easy to miss unless asserted.
+--
+-- The NULL-min half of this state is not reachable from PG DDL today (the
+-- retype direction above invalidates max, not min), so it is set directly.
+-- ------------------------------------------------------------------
+CREATE TABLE issg_narrow (id INTEGER) USING ducklake;
+INSERT INTO issg_narrow VALUES (10), (20), (30);
+SELECT min_value, max_value AS seeded
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_narrow');
+ min_value | seeded 
+-----------+--------
+ 10        | 30
+(1 row)
+
+UPDATE ducklake.ducklake_table_column_stats SET min_value = NULL
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_narrow');
+-- The batch min (25) is ABOVE the table's true minimum (10). Seeding it here
+-- is what corrupts the projection.
+INSERT INTO issg_narrow VALUES (25), (40);
+-- min stays NULL; max widens 30 -> 40.
+SELECT min_value, max_value AS widened
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_narrow');
+ min_value | widened 
+-----------+---------
+           | 40
+(1 row)
+
+-- 10, 20, 25, 30, 40 -- not 25, 30, 40, 266, 276.
+SELECT id FROM issg_narrow ORDER BY id;
+ id 
+----
+ 10
+ 20
+ 25
+ 30
+ 40
+(5 rows)
+
+SELECT sum(id) AS total FROM issg_narrow;
+ total 
+-------
+   125
+(1 row)
+
+DROP TABLE issg_narrow;
+-- ------------------------------------------------------------------
+-- Persisted temporal bounds must not depend on the writing session.
+--
+-- The accumulator renders temporal values through PG output functions,
+-- which are DateStyle-dependent, so it forces ISO for the duration of
+-- Finalize. Without that, a non-ISO session would persist bounds the
+-- read side cannot parse back. Asserting it here keeps the guard from
+-- being removed later as apparently-dead code.
+-- ------------------------------------------------------------------
+SET DateStyle = 'German, DMY';
+CREATE TABLE issg_ds (d DATE, ts TIMESTAMP) USING ducklake;
+INSERT INTO issg_ds VALUES ('2024-06-01', '2024-06-01 08:30:00'),
+                           ('2024-07-15', '2024-07-15 22:15:00');
+-- ISO, despite the session rendering dates as 01.06.2024.
+SELECT column_id, min_value, max_value
+FROM ducklake.ducklake_table_column_stats
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_ds')
+ORDER BY column_id;
+ column_id |      min_value      |      max_value      
+-----------+---------------------+---------------------
+         1 | 2024-06-01          | 2024-07-15
+         2 | 2024-06-01 08:30:00 | 2024-07-15 22:15:00
+(2 rows)
+
+-- The session's own setting is left as the user set it.
+SELECT current_setting('DateStyle') AS datestyle_after_insert;
+ datestyle_after_insert 
+------------------------
+ German, DMY
+(1 row)
+
+DROP TABLE issg_ds;
+RESET DateStyle;
+-- ------------------------------------------------------------------
+-- A scan taken BETWEEN two inline inserts must not serve stale bounds.
+--
+-- DuckDB caches a table's zone-map statistics under the key
+-- (next_file_id, schema_version, table_id). An inline insert writes no
+-- parquet file and changes no schema, so neither component used to move:
+-- within one session, a filtered scan run after the first insert cached
+-- max=5, and the identical scan after the second insert reused that
+-- entry and pruned away the freshly inlined 100..104. Truthful persisted
+-- bounds are not enough on their own -- the reader never re-read them.
+--
+-- The direct-insert commit therefore force-advances next_file_id, which
+-- rotates the cache key on every inline write. The priming step has to
+-- be a real scan of the table: selecting from ducklake_table_column_stats
+-- reads metadata and never populates the cache, so a test that primes
+-- that way passes even when the bug is present.
+-- ------------------------------------------------------------------
+CREATE TABLE issg_cache (id INT) USING ducklake;
+SET ducklake.enable_direct_insert = true;
+INSERT INTO issg_cache VALUES (1), (2), (3), (4), (5);
+-- Prime the stats cache: planning this scan caches max=5 for the table.
+SELECT count(*) AS above_fifty_before FROM issg_cache WHERE id > 50;
+ above_fifty_before 
+--------------------
+                  0
+(1 row)
+
+-- Remember where file ids stood before the second inline insert.
+SELECT max(next_file_id) AS nfi_before FROM ducklake.ducklake_snapshot
+\gset
+INSERT INTO issg_cache VALUES (100), (101), (102), (103), (104);
+-- The inline commit advanced next_file_id even though it wrote no file:
+-- that is what rotates the cache key. (Boolean, not the id -- ids depend
+-- on how many snapshots earlier tests took.)
+SELECT max(next_file_id) > :nfi_before AS advanced FROM ducklake.ducklake_snapshot;
+ advanced 
+----------
+ t
+(1 row)
+
+-- ...and it really wrote no file: the whole table is still inlined.
+SELECT count(*) AS data_files
+FROM ducklake.ducklake_data_file
+WHERE table_id = (SELECT table_id FROM ducklake.ducklake_table WHERE table_name = 'issg_cache');
+ data_files 
+------------
+          0
+(1 row)
+
+-- Same filtered scan as before, same session: it now sees the new rows.
+-- Pre-fix this returned nothing.
+SELECT id FROM issg_cache WHERE id > 50 ORDER BY id;
+ id  
+-----
+ 100
+ 101
+ 102
+ 103
+ 104
+(5 rows)
+
+-- Unfiltered, so no zone map is consulted: the rows were never missing,
+-- only mis-pruned. Ten rows either way.
+SELECT count(*) AS total FROM issg_cache;
+ total 
+-------
+    10
+(1 row)
+
+DROP TABLE issg_cache;
+-- Reset the session-global inlining limit so this test does not leak inlining
+-- state into later tests in the schedule (matches the sibling inlining tests).
+CALL ducklake.set_option('data_inlining_row_limit', 0);

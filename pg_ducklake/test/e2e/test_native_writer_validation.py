@@ -258,6 +258,35 @@ async def write_native_batch(conn, operation):
 
 
 @pytest.mark.parametrize("operation", ["values", "prepared_unnest", "copy"])
+async def test_native_writer_first_write_matches_pinned_writer(local_lake, pg, operation):
+    await pg.execute("CALL ducklake.set_option('data_inlining_row_limit', 100)")
+    await pg.execute(
+        "CREATE TABLE conformance_reference "
+        "(id int, label text, score double precision) USING ducklake; "
+        "CREATE TABLE conformance_native "
+        "(id int, label text, score double precision) USING ducklake"
+    )
+    for table in ("conformance_reference", "conformance_native"):
+        await pg.fetchval(
+            "SELECT count(*) FROM "
+            f"ducklake.ensure_inlined_data_table('{table}'::regclass)"
+        )
+
+    copy_path = await make_server_copy_file(pg) if operation == "copy" else None
+    reference_baseline = await snapshot_head(pg, "conformance_reference")
+    await write_reference_batch(pg, operation, copy_path)
+    reference = await normalized_write_snapshot(
+        pg, "conformance_reference", reference_baseline
+    )
+
+    native_baseline = await snapshot_head(pg, "conformance_native")
+    await write_native_batch(pg, operation)
+    native = await normalized_write_snapshot(pg, "conformance_native", native_baseline)
+
+    assert reference == native
+
+
+@pytest.mark.parametrize("operation", ["values", "prepared_unnest", "copy"])
 async def test_native_writer_matches_pinned_writer(local_lake, pg, operation):
     await prepare_conformance_tables(pg)
     copy_path = await make_server_copy_file(pg) if operation == "copy" else None

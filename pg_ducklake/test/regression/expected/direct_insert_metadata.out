@@ -617,6 +617,37 @@ WHERE t.table_name = 'type_change_stats' AND t.end_snapshot IS NULL;
  t               | t
 (1 row)
 
+-- 9. A batch already covered by persisted stats must not rewrite the column
+-- stats row. A widened bound must update it.
+CREATE TABLE unchanged_stats (id integer) USING ducklake;
+SET ducklake.enable_direct_insert = false;
+INSERT INTO unchanged_stats VALUES (1), (100);
+SET ducklake.enable_direct_insert = true;
+SELECT s.ctid::text AS stats_tid
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'unchanged_stats' AND t.end_snapshot IS NULL
+\gset
+INSERT INTO unchanged_stats VALUES (50);
+SELECT s.ctid::text = :'stats_tid' AS stats_unchanged
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'unchanged_stats' AND t.end_snapshot IS NULL;
+ stats_unchanged 
+-----------------
+ t
+(1 row)
+
+INSERT INTO unchanged_stats VALUES (200);
+SELECT s.ctid::text <> :'stats_tid' AS stats_widened
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'unchanged_stats' AND t.end_snapshot IS NULL;
+ stats_widened 
+---------------
+ t
+(1 row)
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
@@ -628,4 +659,5 @@ DROP TABLE floatstats;
 DROP TABLE floatstats_mixed;
 DROP TABLE one_sided_stats;
 DROP TABLE type_change_stats;
+DROP TABLE unchanged_stats;
 CALL ducklake.set_option('data_inlining_row_limit', 0);

@@ -280,7 +280,7 @@ CheckInterveningChanges(const char *changes_made, uint64_t table_id) {
 
 struct MergedColumnStat {
 	uint64_t column_id;
-	bool row_exists;
+	bool changed;
 	bool has_min;
 	bool has_max;
 	char *min_value;
@@ -447,69 +447,90 @@ MergeColumnStat(const NativeInlineColumnStat &incoming, const char *min_value, c
 	return ColumnStatMergeResult::OK;
 }
 
+static const NativeInlineColumnStat *
+FindIncomingColumnStat(const NativeInlineWriteBatch &batch, uint64_t column_id) {
+	for (uint64_t i = 0; i < batch.column_stats_count; i++) {
+		if (batch.column_stats[i].column_id == column_id) {
+			return &batch.column_stats[i];
+		}
+	}
+	return nullptr;
+}
+
+static bool
+ColumnStatsChanged(const MergedColumnStat &merged, const char *min_value, const char *max_value, bool has_contains_null,
+                   bool contains_null, bool has_contains_nan, bool contains_nan, const char *extra_stats) {
+	return merged.has_min != (min_value != nullptr) || (merged.has_min && strcmp(merged.min_value, min_value) != 0) ||
+	       merged.has_max != (max_value != nullptr) || (merged.has_max && strcmp(merged.max_value, max_value) != 0) ||
+	       merged.has_contains_null != has_contains_null ||
+	       (merged.has_contains_null && merged.contains_null != contains_null) ||
+	       merged.has_contains_nan != has_contains_nan ||
+	       (merged.has_contains_nan && merged.contains_nan != contains_nan) || extra_stats != nullptr;
+}
+
 static PreparedColumnStats
 PrepareMergedColumnStats(const NativeInlineWriteBatch &batch, bool initializing) {
 	PreparedColumnStats prepared = {};
-	prepared.count = batch.column_stats_count;
-	if (prepared.count == 0) {
-		return prepared;
-	}
-
 	MemoryContext caller_context = CurrentMemoryContext;
-	prepared.stats = (MergedColumnStat *)palloc0(sizeof(MergedColumnStat) * prepared.count);
 	SPI_connect();
 	MemoryContext spi_context = CurrentMemoryContext;
 
+	StringInfoData query;
+	initStringInfo(&query);
+	appendStringInfo(&query,
+	                 "SELECT column_id, min_value, max_value, contains_null, contains_nan, extra_stats "
+	                 "FROM ducklake.ducklake_table_column_stats WHERE table_id = %llu",
+	                 (unsigned long long)batch.table_id);
+	int ret = SPI_execute(query.data, false, 0);
+	if (ret != SPI_OK_SELECT) {
+		SPI_finish();
+		ereport(ERROR,
+		        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("native inline writer: could not read column statistics")));
+	}
+
+	prepared.count = initializing ? batch.column_stats_count : SPI_processed;
+	MemoryContextSwitchTo(caller_context);
+	if (prepared.count > 0) {
+		prepared.stats = (MergedColumnStat *)palloc0(sizeof(MergedColumnStat) * prepared.count);
+	}
+	MemoryContextSwitchTo(spi_context);
+
 	for (uint64_t i = 0; i < prepared.count; i++) {
-		const auto &incoming = batch.column_stats[i];
 		auto &merged = prepared.stats[i];
-		merged.column_id = incoming.column_id;
+		const NativeInlineColumnStat *incoming;
+		char *min_value = nullptr;
+		char *max_value = nullptr;
+		char *extra_stats = nullptr;
+		bool has_contains_null = false;
+		bool contains_null = false;
+		bool has_contains_nan = false;
+		bool contains_nan = false;
 
-		StringInfoData query;
-		initStringInfo(&query);
-		appendStringInfo(&query,
-		                 "SELECT min_value, max_value, contains_null, contains_nan, extra_stats "
-		                 "FROM ducklake.ducklake_table_column_stats "
-		                 "WHERE table_id = %llu AND column_id = %llu",
-		                 (unsigned long long)batch.table_id, (unsigned long long)incoming.column_id);
-		int ret = SPI_execute(query.data, false, 1);
-		if (ret != SPI_OK_SELECT) {
-			SPI_finish();
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-			                errmsg("native inline writer: could not read column statistics")));
+		if (initializing) {
+			incoming = &batch.column_stats[i];
+			merged.column_id = incoming->column_id;
+		} else {
+			HeapTuple tuple = SPI_tuptable->vals[i];
+			TupleDesc tuple_desc = SPI_tuptable->tupdesc;
+			bool isnull;
+			merged.column_id = GetRequiredProtocolUInt64(tuple, tuple_desc, 1, "column_id");
+			incoming = FindIncomingColumnStat(batch, merged.column_id);
+			min_value = SPI_getvalue(tuple, tuple_desc, 2);
+			max_value = SPI_getvalue(tuple, tuple_desc, 3);
+			Datum contains_null_datum = SPI_getbinval(tuple, tuple_desc, 4, &isnull);
+			has_contains_null = !isnull;
+			contains_null = has_contains_null && DatumGetBool(contains_null_datum);
+			Datum contains_nan_datum = SPI_getbinval(tuple, tuple_desc, 5, &isnull);
+			has_contains_nan = !isnull;
+			contains_nan = has_contains_nan && DatumGetBool(contains_nan_datum);
+			extra_stats = SPI_getvalue(tuple, tuple_desc, 6);
 		}
-		if (SPI_processed == 0) {
-			if (!initializing) {
-				continue;
-			}
-			merged.row_exists = true;
-			auto merge_result =
-			    MergeColumnStat(incoming, nullptr, nullptr, false, false, false, false, nullptr, true, &merged);
-			if (merge_result == ColumnStatMergeResult::OK && !MoveMergedBoundsToContext(&merged, caller_context)) {
-				merge_result = ColumnStatMergeResult::OUT_OF_MEMORY;
-			}
-			if (merge_result == ColumnStatMergeResult::OUT_OF_MEMORY) {
-				SPI_finish();
-				ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-			}
-			MemoryContextSwitchTo(spi_context);
-			continue;
+
+		ColumnStatMergeResult merge_result = ColumnStatMergeResult::OK;
+		if (incoming) {
+			merge_result = MergeColumnStat(*incoming, min_value, max_value, has_contains_null, contains_null,
+			                               has_contains_nan, contains_nan, extra_stats, initializing, &merged);
 		}
-		merged.row_exists = true;
-
-		char *min_value = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-		char *max_value = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2);
-		bool isnull;
-		Datum contains_null_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 3, &isnull);
-		bool has_contains_null = !isnull;
-		bool contains_null = has_contains_null && DatumGetBool(contains_null_datum);
-		Datum contains_nan_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 4, &isnull);
-		bool has_contains_nan = !isnull;
-		bool contains_nan = has_contains_nan && DatumGetBool(contains_nan_datum);
-		char *extra_stats = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 5);
-
-		auto merge_result = MergeColumnStat(incoming, min_value, max_value, has_contains_null, contains_null,
-		                                    has_contains_nan, contains_nan, extra_stats, initializing, &merged);
 		if (merge_result == ColumnStatMergeResult::OK && !MoveMergedBoundsToContext(&merged, caller_context)) {
 			merge_result = ColumnStatMergeResult::OUT_OF_MEMORY;
 		}
@@ -517,6 +538,8 @@ PrepareMergedColumnStats(const NativeInlineWriteBatch &batch, bool initializing)
 			SPI_finish();
 			ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
 		}
+		merged.changed = ColumnStatsChanged(merged, min_value, max_value, has_contains_null, contains_null,
+		                                    has_contains_nan, contains_nan, extra_stats);
 		MemoryContextSwitchTo(spi_context);
 	}
 	SPI_finish();
@@ -549,29 +572,44 @@ InjectNativeWriterFault(NativeWriterTestFault fault, const char *point) {
 
 static void
 ApplyMergedColumnStats(const NativeInlineWriteBatch &batch, const PreparedColumnStats &prepared) {
+	StringInfoData values;
+	initStringInfo(&values);
+	uint64_t changed_count = 0;
 	for (uint64_t i = 0; i < prepared.count; i++) {
 		const auto &merged = prepared.stats[i];
-		if (!merged.row_exists) {
+		if (!merged.changed) {
 			continue;
 		}
 		char *min_literal = merged.has_min ? quote_literal_cstr(merged.min_value) : pstrdup("NULL");
 		char *max_literal = merged.has_max ? quote_literal_cstr(merged.max_value) : pstrdup("NULL");
 		const char *null_literal = merged.has_contains_null ? (merged.contains_null ? "true" : "false") : "NULL";
 		const char *nan_literal = merged.has_contains_nan ? (merged.contains_nan ? "true" : "false") : "NULL";
-		StringInfoData query;
-		initStringInfo(&query);
-		appendStringInfo(&query,
-		                 "UPDATE ducklake.ducklake_table_column_stats "
-		                 "SET min_value = %s, max_value = %s, contains_null = %s, "
-		                 "contains_nan = %s, extra_stats = NULL "
-		                 "WHERE table_id = %llu AND column_id = %llu",
-		                 min_literal, max_literal, null_literal, nan_literal, (unsigned long long)batch.table_id,
-		                 (unsigned long long)merged.column_id);
-		int ret = SPI_execute(query.data, false, 0);
-		if (ret != SPI_OK_UPDATE || SPI_processed != 1) {
-			ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
-			                errmsg("native inline writer: column statistics row disappeared")));
-		}
+		appendStringInfo(&values,
+		                 changed_count == 0 ? "(%llu::bigint, %s::text, %s::text, %s::boolean, %s::boolean)"
+		                                    : ", (%llu, %s, %s, %s, %s)",
+		                 (unsigned long long)merged.column_id, min_literal, max_literal, null_literal, nan_literal);
+		pfree(min_literal);
+		pfree(max_literal);
+		changed_count++;
+	}
+	if (changed_count == 0) {
+		return;
+	}
+
+	StringInfoData query;
+	initStringInfo(&query);
+	appendStringInfo(&query, R"(
+		UPDATE ducklake.ducklake_table_column_stats s
+		SET min_value = v.min_value, max_value = v.max_value,
+		    contains_null = v.contains_null, contains_nan = v.contains_nan,
+		    extra_stats = NULL
+		FROM (VALUES %s) AS v(column_id, min_value, max_value, contains_null, contains_nan)
+		WHERE s.table_id = %llu AND s.column_id = v.column_id)",
+	                 values.data, (unsigned long long)batch.table_id);
+	int ret = SPI_execute(query.data, false, 0);
+	if (ret != SPI_OK_UPDATE || SPI_processed != changed_count) {
+		ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+		                errmsg("native inline writer column statistics changed concurrently")));
 	}
 }
 

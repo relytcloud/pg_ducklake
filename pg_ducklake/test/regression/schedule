@@ -24,6 +24,7 @@ test: create_with_options
 test: direct_insert_stats
 test: native_writer_stats
 test: direct_insert_metadata
+test: inlined_scan_stats_guard
 test: inlined_data_schema_change
 test: alter_partition_inlining
 test: inlined_flush_lost_update
