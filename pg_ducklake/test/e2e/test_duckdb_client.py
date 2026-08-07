@@ -467,8 +467,8 @@ async def test_native_reservation_queue_orders_and_avoids_retags(local_lake, pg)
 
     settings = {
         "ducklake.native_writer_reservation_queue": "on",
-        "ducklake.native_writer_reservation_queue_wait_ms": "5000ms",
-        "ducklake.native_writer_max_retry_count": "50",
+        "ducklake.native_writer_reservation_queue_wait_ms": "1000ms",
+        "ducklake.native_writer_max_retry_count": "10",
         "ducklake.native_writer_retry_wait_ms": "100ms",
         "ducklake.native_writer_retry_backoff": "1",
     }
@@ -494,6 +494,10 @@ async def test_native_reservation_queue_orders_and_avoids_retags(local_lake, pg)
             head.copy_to_table("queue_order", source=copy_source())
         )
         await asyncio.wait_for(source_started.wait(), timeout=10)
+        # The source iterator can start before the server consumes its first
+        # chunk. Wait until COPY is blocked reading the second chunk, after its
+        # unknown-size reservation has been registered.
+        await wait_for_backend_wait_event(pg, head_pid, "Client", head_task)
 
         successor_pid = await successor.fetchval("SELECT pg_backend_pid()")
         successor_task = asyncio.create_task(
