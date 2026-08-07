@@ -1355,6 +1355,56 @@ async def test_native_copy_rejects_unsupported_semantics_before_consuming(
     await pg.execute("DROP ROLE copy_no_insert")
 
 
+async def test_native_copy_respects_read_only_guard_before_consuming(
+    local_lake, pg
+):
+    await pg.execute("CALL ducklake.set_option('data_inlining_row_limit', 100)")
+    await pg.execute("CREATE TABLE copy_read_only (id int) USING ducklake")
+    await pg.fetchval(
+        "SELECT count(*) FROM "
+        "ducklake.ensure_inlined_data_table('copy_read_only'::regclass)"
+    )
+    await pg.execute("SELECT ducklake.reset_native_writer_stats()")
+
+    copy_conn = await psycopg.AsyncConnection.connect(
+        host=local_lake.cluster.host,
+        port=local_lake.cluster.port,
+        dbname=local_lake.dbname,
+        user="postgres",
+        password=os.environ.get("PGPASSWORD"),
+    )
+    await copy_conn.set_autocommit(True)
+
+    async def assert_rejected_before_source():
+        source_started = False
+        with pytest.raises(
+            psycopg.errors.ReadOnlySqlTransaction,
+            match="cannot execute COPY FROM in a read-only transaction",
+        ):
+            async with copy_conn.cursor().copy("COPY copy_read_only FROM STDIN"):
+                source_started = True
+        assert not source_started
+
+    try:
+        await copy_conn.execute("SET default_transaction_read_only = on")
+        await assert_rejected_before_source()
+        await copy_conn.execute("RESET default_transaction_read_only")
+
+        await copy_conn.execute("BEGIN READ ONLY")
+        try:
+            await assert_rejected_before_source()
+        finally:
+            await copy_conn.execute("ROLLBACK")
+    finally:
+        await copy_conn.close()
+
+    assert await pg.fetchval("SELECT count(*) FROM copy_read_only") == 0
+    assert await pg.fetchval(
+        "SELECT count FROM ducklake.native_writer_stats() "
+        "WHERE event = 'copy_rows_consumed'"
+    ) == 0
+
+
 async def test_native_copy_counts_partial_consumption_and_prewrite(local_lake, pg):
     await pg.execute("CALL ducklake.set_option('data_inlining_row_limit', 2000)")
     await pg.execute("CREATE TABLE partial_copy (id int) USING ducklake")

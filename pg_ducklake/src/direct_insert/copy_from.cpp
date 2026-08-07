@@ -189,6 +189,9 @@ OpenInlinedDataTable(uint64_t table_id, uint64_t schema_version, LOCKMODE lockmo
 uint64_t
 DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 	Relation user_rel = table_openrv(stmt->relation, RowExclusiveLock);
+	if (XactReadOnly && !user_rel->rd_islocaltemp) {
+		PreventCommandIfReadOnly("COPY FROM");
+	}
 	Oid user_relid = RelationGetRelid(user_rel);
 	CheckNativeCopySemantics(user_rel, stmt);
 
