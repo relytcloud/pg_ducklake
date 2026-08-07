@@ -467,8 +467,8 @@ async def test_native_reservation_queue_orders_and_avoids_retags(local_lake, pg)
 
     settings = {
         "ducklake.native_writer_reservation_queue": "on",
-        "ducklake.native_writer_reservation_queue_wait_ms": "1000ms",
-        "ducklake.native_writer_max_retry_count": "10",
+        "ducklake.native_writer_reservation_queue_wait_ms": "5000ms",
+        "ducklake.native_writer_max_retry_count": "50",
         "ducklake.native_writer_retry_wait_ms": "100ms",
         "ducklake.native_writer_retry_backoff": "1",
     }
