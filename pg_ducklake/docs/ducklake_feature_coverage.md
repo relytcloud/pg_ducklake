@@ -78,7 +78,7 @@ Last updated: 2026-06-16
 - [x] Data inlining: `ducklake.flush_inlined_data()` and `data_inlining_row_limit` option
 - [x] Variant type: `ducklake.variant` column type with `->` / `->>` extraction operators
 - [ ] Encryption (`ENCRYPTED` flag): Parquet-level encryption
-- [ ] Conflict resolution (auto-retry): pg_ducklake relies on PG transactions but lacks DuckLake's auto-retry
+- [x] Native inline-writer conflict resolution: payload-preserving metadata retry; other DuckLake paths use PostgreSQL transactions
 - [x] Transactions (ACID): Via PostgreSQL transaction model
 - [x] Freeze/export to `.ducklake`: `ducklake.freeze()`
 
@@ -86,7 +86,7 @@ Last updated: 2026-06-16
 
 - [x] `set_option()` / `options()`: `ducklake.set_option()` and `ducklake.options()`
 - [ ] `ducklake_settings()`: Instance metadata
-- [ ] Extension-level retry settings: `ducklake_max_retry_count`, `ducklake_retry_wait_ms`, `ducklake_retry_backoff`
+- [x] Native-writer retry settings: `ducklake.native_writer_max_retry_count`, `ducklake.native_writer_retry_wait_ms`, `ducklake.native_writer_retry_backoff`
 - [ ] `ducklake_default_data_inlining_row_limit`: Extension-level default
 - [x] Schema-level option scoping: `ducklake.set_option(name, val, 'schema'::regnamespace)`
 
@@ -119,9 +119,9 @@ These features are unique to pg_ducklake and not part of the upstream DuckLake e
 - [x] Role-based access control: `ducklake_superuser`, `ducklake_writer`, `ducklake_reader` roles
 - [x] Foreign data wrapper: `ducklake_fdw` for remote DuckLake catalogs (full DML) and frozen snapshots (read-only)
 - [x] `IMPORT FOREIGN SCHEMA`: Bulk-import tables from a remote DuckLake catalog via FDW
-- [x] Direct insert optimization: Fast path for `INSERT ... SELECT UNNEST($n)`
+- [x] PostgreSQL-native inline writer: Fast path for supported `INSERT ... VALUES`, `INSERT ... SELECT UNNEST($n)`, and `COPY FROM STDIN`
 
 ## Summary
 
-- **Supported:** 55 features
-- **Not supported:** 13 features
+- **Supported:** 58 features
+- **Not supported:** 11 features

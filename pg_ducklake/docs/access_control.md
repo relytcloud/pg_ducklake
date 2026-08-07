@@ -2,10 +2,11 @@
 
 DuckLake tables are exposed via PostgreSQL's table access method (AM), so
 standard PostgreSQL privilege mechanisms (`GRANT`/`REVOKE`) apply in principle.
-However, because pg_ducklake routes queries to DuckDB's execution engine, **most
-DML-level permission checks are currently bypassed**.
+INSERT permissions are enforced by PostgreSQL, including source relations in
+`INSERT ... SELECT`. Other DML is routed through DuckDB and still has permission
+gaps.
 
-This document describes what works, what doesn't, and the recommended setup
+This document describes what works, what does not, and the recommended setup
 for multi-role environments. See also the upstream
 [DuckLake Access Control guide](https://ducklake.select/docs/stable/duckdb/guides/access_control).
 
@@ -15,21 +16,23 @@ for multi-role environments. See also the upstream
 |---|---|
 | DDL ownership (ALTER/DROP TABLE) | Standard PostgreSQL ownership check |
 | VACUUM ownership | Standard PostgreSQL ownership check (VACUUM is a no-op on DuckLake tables) |
+| INSERT target and source permissions | Checked recursively by PostgreSQL, including cached plans and role changes |
+| INSERT source RLS | Rejected because DuckDB fallback cannot preserve source policies |
 | Local filesystem access | `pg_read_server_files` / `pg_write_server_files` required for local storage |
 
 ## Known Gaps
 
 | Gap | Root Cause |
 |---|---|
-| SELECT/INSERT/UPDATE/DELETE table-level permissions | the libpgddb planner sets `permInfos = NULL`, skipping executor-level checks |
+| SELECT/UPDATE/DELETE table-level permissions | the libpgddb planner sets `permInfos = NULL`, skipping executor-level checks |
 | Column-level SELECT restrictions | Same as above |
 | `ducklake.time_travel()` bypasses table-level checks | Table name is a text argument, not an RTE |
 | Non-superusers cannot use local file storage without explicit grants | libpgddb disables `LocalFileSystem` for users without `pg_read_server_files` + `pg_write_server_files`, blocking DuckLake catalog attach, reads, and writes ([#164](https://github.com/relytcloud/pg_ducklake/issues/164)) |
 
-These gaps exist because libpgddb's `pgddb::PlanNode()` only runs
-`check_view_perms_recursive()` (which checks VIEW permissions) and sets
+These remaining gaps exist because libpgddb's `pgddb::PlanNode()` sets
 `result->permInfos = NULL` in the `PlannedStmt`, causing the executor to skip
-all relation-level permission checks.
+relation-level permission checks. pg_ducklake separately validates INSERT
+permissions before planning and again at execution for cached plans.
 
 ## Predefined Roles
 
@@ -82,14 +85,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE my_table TO ducklake_writer;
 GRANT SELECT ON TABLE my_table TO ducklake_reader;
 ```
 
-> **Note:** Due to the known gaps above, DML-level grants are not yet enforced.
-> This role setup is recommended as defense-in-depth; when the libpgddb kernel
-> adds proper permission enforcement, these grants will take effect without changes.
+> **Note:** INSERT grants are enforced. SELECT, UPDATE, and DELETE grants remain
+> defense-in-depth until the libpgddb kernel preserves their permission metadata.
 
 ## Regression Test
 
 See `test/regression/sql/access_control.sql` for a self-contained test that
-verifies the current behavior, including all known gaps.
+verifies INSERT enforcement and the remaining known gaps.
 
 ## References
 

@@ -1,5 +1,7 @@
 test: explicit_transaction_commit
 test: concurrent_writes
 test: concurrent_cross_table_writes
+test: native_inline_retry
+test: native_inline_failures
 test: concurrent_inline_flush
 test: optimizer_lock_error

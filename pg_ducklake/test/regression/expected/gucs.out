@@ -17,6 +17,42 @@ SHOW ducklake.enable_direct_insert;
  on
 (1 row)
 
+SHOW ducklake.native_writer_reservation_queue;
+ ducklake.native_writer_reservation_queue 
+------------------------------------------
+ on
+(1 row)
+
+SHOW ducklake.native_writer_reservation_queue_capacity;
+ ducklake.native_writer_reservation_queue_capacity 
+---------------------------------------------------
+ 256
+(1 row)
+
+SHOW ducklake.native_writer_reservation_queue_wait_ms;
+ ducklake.native_writer_reservation_queue_wait_ms 
+--------------------------------------------------
+ 10ms
+(1 row)
+
+SHOW ducklake.native_writer_max_retry_count;
+ ducklake.native_writer_max_retry_count 
+----------------------------------------
+ 10
+(1 row)
+
+SHOW ducklake.native_writer_retry_wait_ms;
+ ducklake.native_writer_retry_wait_ms 
+--------------------------------------
+ 1ms
+(1 row)
+
+SHOW ducklake.native_writer_retry_backoff;
+ ducklake.native_writer_retry_backoff 
+--------------------------------------
+ 1.5
+(1 row)
+
 SHOW ducklake.threads;
  ducklake.threads 
 ------------------
@@ -54,6 +90,46 @@ SHOW ducklake.enable_direct_insert;
 (1 row)
 
 RESET ducklake.enable_direct_insert;
+SET ducklake.native_writer_reservation_queue = true;
+SHOW ducklake.native_writer_reservation_queue;
+ ducklake.native_writer_reservation_queue 
+------------------------------------------
+ on
+(1 row)
+
+RESET ducklake.native_writer_reservation_queue;
+SET ducklake.native_writer_reservation_queue_wait_ms = 25;
+SHOW ducklake.native_writer_reservation_queue_wait_ms;
+ ducklake.native_writer_reservation_queue_wait_ms 
+--------------------------------------------------
+ 25ms
+(1 row)
+
+RESET ducklake.native_writer_reservation_queue_wait_ms;
+SET ducklake.native_writer_max_retry_count = 20;
+SET ducklake.native_writer_retry_wait_ms = 5;
+SET ducklake.native_writer_retry_backoff = 2;
+SHOW ducklake.native_writer_max_retry_count;
+ ducklake.native_writer_max_retry_count 
+----------------------------------------
+ 20
+(1 row)
+
+SHOW ducklake.native_writer_retry_wait_ms;
+ ducklake.native_writer_retry_wait_ms 
+--------------------------------------
+ 5ms
+(1 row)
+
+SHOW ducklake.native_writer_retry_backoff;
+ ducklake.native_writer_retry_backoff 
+--------------------------------------
+ 2
+(1 row)
+
+RESET ducklake.native_writer_max_retry_count;
+RESET ducklake.native_writer_retry_wait_ms;
+RESET ducklake.native_writer_retry_backoff;
 SET ducklake.threads = 4;
 SHOW ducklake.threads;
  ducklake.threads 

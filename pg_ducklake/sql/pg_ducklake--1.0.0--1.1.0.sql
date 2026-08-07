@@ -309,3 +309,23 @@ CREATE FUNCTION ducklake.murmur3_32(uuid) RETURNS integer
     SET search_path = pg_catalog, pg_temp
     LANGUAGE sql IMMUTABLE STRICT
     AS $$ SELECT ducklake.murmur3_32($1::text) $$;
+
+-- native SRF: cumulative work performed by the PostgreSQL-native inline
+-- writer. Counters are process-shared and nontransactional: they survive
+-- publication-subtransaction and top-level rollback, and persist until
+-- postmaster restart or ducklake.reset_native_writer_stats(). The fixed rows
+-- are payload_rows (rows successfully prewritten), publication_attempts,
+-- snapshot_claim_conflicts, rows_retagged, retry_exhaustions, and
+-- copy_rows_consumed (COPY input rows successfully consumed). Counters
+-- saturate at BIGINT's maximum. A reset races normally with active writers;
+-- use deltas when exact interval counts matter.
+CREATE FUNCTION ducklake.native_writer_stats()
+    RETURNS TABLE (event text, count bigint)
+    LANGUAGE C VOLATILE PARALLEL RESTRICTED ROWS 6
+    AS 'MODULE_PATHNAME', 'ducklake_native_writer_stats';
+
+-- native: reset all process-shared native-writer counters to zero.
+CREATE FUNCTION ducklake.reset_native_writer_stats()
+    RETURNS void
+    LANGUAGE C VOLATILE
+    AS 'MODULE_PATHNAME', 'ducklake_reset_native_writer_stats';

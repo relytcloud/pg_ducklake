@@ -11,6 +11,10 @@
 
 - [DuckLake Feature Coverage](ducklake_feature_coverage.md) -- upstream DuckLake features vs pg_ducklake support
 
+## Design Proposals
+
+- [RFC 001: PostgreSQL-Native DuckLake Writer](rfc-001-postgres-native-ducklake-writer.md) -- implemented insert-once writer and publication retry protocol
+
 ## How-to Guides
 
 - [Foreign Data Wrapper](foreign_data_wrapper.md) -- access remote DuckLake catalogs (full DML) and frozen snapshots (read-only)

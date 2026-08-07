@@ -1,7 +1,7 @@
 #include "pgducklake/constants.hpp"
-#include "pgducklake/copy_from.hpp"
+#include "pgducklake/direct_insert/copy_from.hpp"
 #include "pgducklake/create_options.hpp"
-#include "pgducklake/direct_insert.hpp"
+#include "pgducklake/direct_insert/direct_insert.hpp"
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/ducklake_fdw.hpp"
 #include "pgducklake/ducklake_types.hpp"
@@ -19,13 +19,16 @@ extern "C" {
 
 #include "access/relation.h"
 #include "access/table.h"
+#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
+#include "executor/executor.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/parsenodes.h"
+#include "nodes/plannodes.h"
 #include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/parse_func.h"
@@ -41,9 +44,12 @@ extern "C" {
 #include "pgddb/pgddb_ruleutils.h"
 }
 
+#include "pgddb/pgddb_node.hpp"
+
 namespace {
 
 planner_hook_type prev_planner_hook = NULL;
+ExecutorStart_hook_type prev_executor_start_hook = NULL;
 ProcessUtility_hook_type prev_process_utility_hook = NULL;
 
 /* Cached function OIDs for variant extract -- indexed by
@@ -377,11 +383,19 @@ DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options, 
 #else
 DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options, ParamListInfo bound_params) {
 #endif
+	/* This must precede every native/fallback gate. DuckDB plans do not retain
+	 * PostgreSQL permission metadata and neither writer runs PostgreSQL-only
+	 * triggers, rules, or RLS policies. */
+	bool is_ducklake_insert = pgducklake::CheckDucklakeInsertSafety(parse);
+
 	if (pgducklake::enable_direct_insert) {
-		PlannedStmt *direct_insert_plan = pgducklake::TryCreateDirectInsertPlan(parse, bound_params);
+		PlannedStmt *direct_insert_plan = pgducklake::TryCreateDirectInsertPlan(parse);
 		if (direct_insert_plan)
 			return direct_insert_plan;
 	}
+
+	if (is_ducklake_insert)
+		pgducklake::RejectParameterizedUnnestFallback(parse);
 
 	/* Pure PG catalog rewrites -- no DuckDB needed, must run before init */
 	parse = RewriteVariantOperators(parse);
@@ -406,6 +420,63 @@ DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options, 
 #else
 	return prev_planner_hook(parse, query_string, cursor_options, bound_params);
 #endif
+}
+
+static Query *
+FindDucklakeInsertQuery(Plan *plan, bool *is_native) {
+	if (!plan)
+		return NULL;
+
+	if (IsA(plan, CustomScan)) {
+		CustomScan *scan = castNode(CustomScan, plan);
+		if (scan->methods && strcmp(scan->methods->CustomName, "DuckLakeDirectInsert") == 0) {
+			Node *query = (Node *)llast(scan->custom_private);
+			if (query && IsA(query, Query)) {
+				*is_native = true;
+				return castNode(Query, query);
+			}
+		}
+		if (scan->methods == &pgddb::scan_methods && scan->custom_private != NIL) {
+			Node *query = (Node *)linitial(scan->custom_private);
+			if (query && IsA(query, Query) && castNode(Query, query)->commandType == CMD_INSERT) {
+				*is_native = false;
+				return castNode(Query, query);
+			}
+		}
+		ListCell *lc;
+		foreach (lc, scan->custom_plans) {
+			Query *query = FindDucklakeInsertQuery((Plan *)lfirst(lc), is_native);
+			if (query)
+				return query;
+		}
+	}
+
+	Query *query = FindDucklakeInsertQuery(outerPlan(plan), is_native);
+	if (query)
+		return query;
+	return FindDucklakeInsertQuery(innerPlan(plan), is_native);
+}
+
+static void
+DucklakeExecutorStartHook(QueryDesc *query_desc, int eflags) {
+	bool is_native = false;
+	Query *query = FindDucklakeInsertQuery(query_desc->plannedstmt->planTree, &is_native);
+	if (query) {
+		/* Repeat against the current role and relcache state. Cached DuckDB and
+		 * native plans otherwise bypass changes made after planning. */
+		pgducklake::CheckDucklakeInsertSafety(query);
+
+		if (is_native && (!pgducklake::enable_direct_insert || IsTransactionBlock() || IsolationUsesXactSnapshot())) {
+			pgducklake::RejectParameterizedUnnestFallback(query);
+			PlannedStmt *fallback = pgddb::PlanNode((Query *)copyObjectImpl(query), CURSOR_OPT_PARALLEL_OK, true);
+			if (!fallback)
+				ereport(ERROR,
+				        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("could not create DuckDB INSERT fallback plan")));
+			query_desc->plannedstmt = fallback;
+		}
+	}
+
+	prev_executor_start_hook(query_desc, eflags);
 }
 
 bool
@@ -666,6 +737,9 @@ InitHooks() {
 	// Install planner hook after pg_duckdb (LIFO: our hook runs first).
 	prev_planner_hook = planner_hook ? planner_hook : standard_planner;
 	planner_hook = DucklakePlannerHook;
+
+	prev_executor_start_hook = ExecutorStart_hook ? ExecutorStart_hook : standard_ExecutorStart;
+	ExecutorStart_hook = DucklakeExecutorStartHook;
 
 	// Chain ProcessUtility so we can observe COMMIT utility statements.
 	prev_process_utility_hook = ProcessUtility_hook ? ProcessUtility_hook : standard_ProcessUtility;

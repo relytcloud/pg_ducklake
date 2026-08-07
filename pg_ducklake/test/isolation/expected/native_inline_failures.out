@@ -1,0 +1,128 @@
+Parsed test spec with 3 sessions
+
+starting permutation: holder_begin holder_claim writer_name writer_exhaust writer_insert holder_commit check_rollback check_exhaustion
+reset_native_writer_stats
+-------------------------
+                         
+(1 row)
+
+step holder_begin: BEGIN;
+step holder_claim: 
+  DO $$
+  DECLARE claimed_snapshot bigint;
+  BEGIN
+    INSERT INTO ducklake.ducklake_snapshot
+      (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id)
+    SELECT snapshot_id + 1, now(), schema_version, next_catalog_id, next_file_id + 1
+    FROM ducklake.ducklake_snapshot
+    ORDER BY snapshot_id DESC LIMIT 1
+    RETURNING snapshot_id INTO claimed_snapshot;
+
+    INSERT INTO ducklake.ducklake_snapshot_changes
+      (snapshot_id, changes_made, author, commit_message, commit_extra_info)
+    VALUES (claimed_snapshot, '', NULL, NULL, NULL);
+  END $$;
+
+step writer_name: SET application_name = 'iso_native_failure_writer';
+step writer_exhaust: SET ducklake.native_writer_max_retry_count = 0;
+step writer_insert: INSERT INTO iso_native_failure_t VALUES (1); <waiting ...>
+step holder_commit: COMMIT;
+step writer_insert: <... completed>
+ERROR:  native inline writer exceeded 0 snapshot publication retries
+step check_rollback: 
+  SELECT count(*) AS raw_rows FROM iso_native_failure_inlined;
+  SELECT count(*) AS visible_rows FROM iso_native_failure_t;
+
+raw_rows
+--------
+       0
+(1 row)
+
+visible_rows
+------------
+           0
+(1 row)
+
+step check_exhaustion: 
+  SELECT event, count
+  FROM ducklake.native_writer_stats()
+  ORDER BY event;
+
+event                   |count
+------------------------+-----
+copy_rows_consumed      |    0
+payload_rows            |    1
+publication_attempts    |    1
+retry_exhaustions       |    1
+rows_retagged           |    0
+snapshot_claim_conflicts|    1
+(6 rows)
+
+
+starting permutation: holder_begin holder_claim writer_name writer_insert cancel_writer holder_rollback check_rollback check_blocked_cancel
+reset_native_writer_stats
+-------------------------
+                         
+(1 row)
+
+step holder_begin: BEGIN;
+step holder_claim: 
+  DO $$
+  DECLARE claimed_snapshot bigint;
+  BEGIN
+    INSERT INTO ducklake.ducklake_snapshot
+      (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id)
+    SELECT snapshot_id + 1, now(), schema_version, next_catalog_id, next_file_id + 1
+    FROM ducklake.ducklake_snapshot
+    ORDER BY snapshot_id DESC LIMIT 1
+    RETURNING snapshot_id INTO claimed_snapshot;
+
+    INSERT INTO ducklake.ducklake_snapshot_changes
+      (snapshot_id, changes_made, author, commit_message, commit_extra_info)
+    VALUES (claimed_snapshot, '', NULL, NULL, NULL);
+  END $$;
+
+step writer_name: SET application_name = 'iso_native_failure_writer';
+step writer_insert: INSERT INTO iso_native_failure_t VALUES (1); <waiting ...>
+step cancel_writer: 
+  SELECT pg_cancel_backend(pid)
+  FROM pg_stat_activity
+  WHERE application_name = 'iso_native_failure_writer';
+
+pg_cancel_backend
+-----------------
+t                
+(1 row)
+
+step writer_insert: <... completed>
+ERROR:  canceling statement due to user request
+step holder_rollback: ROLLBACK;
+step check_rollback: 
+  SELECT count(*) AS raw_rows FROM iso_native_failure_inlined;
+  SELECT count(*) AS visible_rows FROM iso_native_failure_t;
+
+raw_rows
+--------
+       0
+(1 row)
+
+visible_rows
+------------
+           0
+(1 row)
+
+step check_blocked_cancel: 
+  SELECT event, count
+  FROM ducklake.native_writer_stats()
+  ORDER BY event;
+
+event                   |count
+------------------------+-----
+copy_rows_consumed      |    0
+payload_rows            |    1
+publication_attempts    |    1
+retry_exhaustions       |    0
+rows_retagged           |    0
+snapshot_claim_conflicts|    0
+(6 rows)
+

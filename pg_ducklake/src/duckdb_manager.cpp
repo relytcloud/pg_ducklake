@@ -9,6 +9,7 @@
 
 #include "pgddb/catalog/pgddb_storage.hpp"
 #include "pgddb/pg/transactions.hpp"
+#include "pgddb/scan/postgres_table_reader.hpp"
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
@@ -235,6 +236,9 @@ GetConnectionForScan(bool force_transaction) {
 
 void
 InitDuckDBManager() {
+	/* Recursive PostgreSQL scans run on DuckDB task threads. PostgreSQL parallel
+	 * executor cleanup waits on process-owned latches and is not safe there. */
+	::pgddb::duckdb_max_workers_per_postgres_scan = 0;
 	::pgddb::pgddb_get_connection_hook = GetConnectionForScan;
 }
 

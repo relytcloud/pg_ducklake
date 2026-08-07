@@ -124,7 +124,7 @@ clean-duckdb:
 ifndef ROOT_DIR
 
 # `make` / `make install` etc. from the repo root operate on pg_ducklake.
-PG_DUCKLAKE_TARGETS := all install installcheck check-regression check-isolation check-e2e format check-format clean clean-all
+PG_DUCKLAKE_TARGETS := all install installcheck check-regression check-isolation check-e2e check-benchmark-smoke format check-format clean clean-all
 
 .PHONY: $(PG_DUCKLAKE_TARGETS)
 $(PG_DUCKLAKE_TARGETS):

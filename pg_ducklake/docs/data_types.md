@@ -52,8 +52,8 @@ in inlined data tables (the in-catalog row store controlled by
 - **Native**: The PG column type can represent the full DuckDB value range.
   Values are stored as-is in the inlined data table.
 - **Not native**: The PG column type differs from the source type.  DuckDB
-  handles read/write conversion transparently; the direct insert path
-  (`enable_direct_insert`) converts at the SPI boundary.
+  handles read/write conversion transparently; the native writer
+  (`enable_direct_insert`) converts before inserting into the inlined table.
 - **No inline**: The type does not support data inlining.  Rows are always
   written to Parquet files.
 

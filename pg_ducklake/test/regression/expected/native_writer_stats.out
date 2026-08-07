@@ -1,0 +1,55 @@
+-- Native-writer counters are a fixed, process-shared, nontransactional set.
+SELECT ducklake.reset_native_writer_stats();
+ reset_native_writer_stats 
+---------------------------
+ 
+(1 row)
+
+SELECT event, count FROM ducklake.native_writer_stats() ORDER BY event;
+          event           | count 
+--------------------------+-------
+ copy_rows_consumed       |     0
+ payload_rows             |     0
+ publication_attempts     |     0
+ retry_exhaustions        |     0
+ rows_retagged            |     0
+ snapshot_claim_conflicts |     0
+(6 rows)
+
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+CREATE TABLE native_writer_stats_t (id int, value text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('native_writer_stats_t'::regclass);
+ count 
+-------
+     1
+(1 row)
+
+INSERT INTO native_writer_stats_t VALUES (1, 'values'), (2, 'values');
+COPY native_writer_stats_t FROM STDIN;
+SELECT event, count
+FROM ducklake.native_writer_stats()
+WHERE count <> 0
+ORDER BY event;
+        event         | count 
+----------------------+-------
+ copy_rows_consumed   |     2
+ payload_rows         |     4
+ publication_attempts |     2
+(3 rows)
+
+SELECT ducklake.reset_native_writer_stats();
+ reset_native_writer_stats 
+---------------------------
+ 
+(1 row)
+
+SELECT count(*) AS nonzero_counters
+FROM ducklake.native_writer_stats()
+WHERE count <> 0;
+ nonzero_counters 
+------------------
+                0
+(1 row)
+
+DROP TABLE native_writer_stats_t;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

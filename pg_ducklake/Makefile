@@ -100,7 +100,7 @@ $(shlib): $(FULL_DUCKDB_LIB) $(DUCKLAKE_EXT_LIB) $(POSTGRES_SCANNER_EXT_LIB) $(O
 
 FORMAT_FILES = $(shell find src/ include/ -name '*.cpp' -o -name '*.hpp' -o -name '*.h')
 
-.PHONY: format check-format check-regression clean-regression check-isolation clean-isolation check-e2e clean-all
+.PHONY: format check-format check-regression clean-regression check-isolation clean-isolation check-e2e check-benchmark-smoke clean-all
 
 format:
 	clang-format -i $(FORMAT_FILES)
@@ -125,6 +125,18 @@ check-isolation:
 # Usage: make check-e2e [TEST=<pytest -k expr>] [E2E_PYTEST_ARGS=...]
 check-e2e: all install
 	PG_CONFIG='$(PG_CONFIG)' uv run --project test/e2e -- pytest test/e2e $(if $(TEST),-k '$(TEST)') $(E2E_PYTEST_ARGS)
+
+# Exercises every producer plus client retry, queue, collision, and HOL paths.
+# Results go to a temporary directory; benchmark result artifacts are explicit.
+check-benchmark-smoke: all install
+	@set -e; \
+	tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/rfc001-benchmark-smoke.XXXXXX"); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	PG_CONFIG='$(PG_CONFIG)' uv run --project test/e2e -- \
+		python test/benchmark/native_writer_performance.py --self-test; \
+	PG_CONFIG='$(PG_CONFIG)' uv run --project test/e2e -- \
+		python test/benchmark/native_writer_performance.py --profile smoke \
+		--output-stem "$$tmp/result"
 
 clean-isolation:
 	$(MAKE) -C test/isolation clean-isolation

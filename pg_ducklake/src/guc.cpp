@@ -13,6 +13,26 @@ char *default_table_path = strdup("");
 double vacuum_delete_threshold = 0.1;
 bool enable_direct_insert = true;
 bool ctas_skip_data = false;
+bool native_writer_reservation_queue = true;
+int native_writer_reservation_queue_capacity = 256;
+int native_writer_reservation_queue_wait_ms = 10;
+int native_writer_max_retry_count = 10;
+int native_writer_retry_wait_ms = 1;
+double native_writer_retry_backoff = 1.5;
+bool test_native_writer_force_client_retry_before_rebase = false;
+int native_writer_test_fault = NATIVE_WRITER_TEST_FAULT_OFF;
+
+static const struct config_enum_entry native_writer_test_fault_options[] = {
+    {"off", NATIVE_WRITER_TEST_FAULT_OFF, false},
+    {"after_prewrite", NATIVE_WRITER_TEST_FAULT_AFTER_PREWRITE, false},
+    {"after_claim", NATIVE_WRITER_TEST_FAULT_AFTER_CLAIM, false},
+    {"after_retag", NATIVE_WRITER_TEST_FAULT_AFTER_RETAG, false},
+    {"after_table_stats", NATIVE_WRITER_TEST_FAULT_AFTER_TABLE_STATS, false},
+    {"after_column_stats", NATIVE_WRITER_TEST_FAULT_AFTER_COLUMN_STATS, false},
+    {"after_change_record", NATIVE_WRITER_TEST_FAULT_AFTER_CHANGE_RECORD, false},
+    {"after_publication", NATIVE_WRITER_TEST_FAULT_AFTER_PUBLICATION, false},
+    {NULL, 0, false},
+};
 
 bool enable_metadata_sync = true;
 
@@ -42,9 +62,52 @@ InitGUCs() {
 	                         NULL, &vacuum_delete_threshold, 0.1, 0.0, 1.0, PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable("ducklake.enable_direct_insert",
-	                         "Enable direct insert optimization for INSERT ... "
-	                         "SELECT UNNEST($n) statements.",
+	                         "Enable the PostgreSQL-native writer for supported INSERT ... VALUES and "
+	                         "INSERT ... SELECT UNNEST($n) statements.",
 	                         NULL, &enable_direct_insert, true, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("ducklake.native_writer_reservation_queue",
+	                         "Use speculative process-shared publication and row-ID reservations.",
+	                         "Reservations are performance hints; every write still validates DuckLake metadata and "
+	                         "claims the snapshot primary key.",
+	                         &native_writer_reservation_queue, true, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.native_writer_reservation_queue_capacity",
+	                        "Maximum number of process-shared native-writer reservations.",
+	                        "A full queue safely falls back to ordinary optimistic publication.",
+	                        &native_writer_reservation_queue_capacity, 256, 1, 256, PGC_POSTMASTER, GUC_SUPERUSER_ONLY,
+	                        NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.native_writer_reservation_queue_wait_ms",
+	                        "Maximum native-writer queue wait without predecessor progress.",
+	                        "Each predecessor gets the smaller of this interruptible cap and the retry budget; "
+	                        "expiration safely falls back to ordinary optimistic publication.",
+	                        &native_writer_reservation_queue_wait_ms, 10, 0, 60000, PGC_USERSET, GUC_UNIT_MS, NULL,
+	                        NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.native_writer_max_retry_count",
+	                        "Maximum snapshot-claim retries for the PostgreSQL-native inline writer.", NULL,
+	                        &native_writer_max_retry_count, 10, 0, 1000, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.native_writer_retry_wait_ms",
+	                        "Initial randomized wait between native-writer publication retries.", NULL,
+	                        &native_writer_retry_wait_ms, 1, 0, 60000, PGC_USERSET, GUC_UNIT_MS, NULL, NULL, NULL);
+
+	DefineCustomRealVariable("ducklake.native_writer_retry_backoff",
+	                         "Exponential backoff factor for native-writer publication retries.", NULL,
+	                         &native_writer_retry_backoff, 1.5, 1.0, 100.0, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("ducklake.test_native_writer_force_client_retry_before_rebase",
+	                         "Force test-only client retry when native-writer publication requires a rebase.",
+	                         "Used to reproduce the historical insert-then-client-retry protocol.",
+	                         &test_native_writer_force_client_retry_before_rebase, false, PGC_SUSET,
+	                         GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
+
+	DefineCustomEnumVariable("ducklake.test_native_writer_fault",
+	                         "Inject a test-only native-writer failure at a publication boundary.",
+	                         "For protocol validation only; superusers can select one deterministic fault point.",
+	                         &native_writer_test_fault, NATIVE_WRITER_TEST_FAULT_OFF, native_writer_test_fault_options,
+	                         PGC_SUSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 	    "ducklake.threads", "Maximum number of DuckDB threads per Postgres backend (-1 = DuckDB default, all cores).",

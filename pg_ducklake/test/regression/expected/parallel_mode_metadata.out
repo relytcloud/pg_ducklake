@@ -1,20 +1,14 @@
--- Regression test for: parameter "client_min_messages" cannot be set during a
--- parallel operation.
+-- Regression test for DuckLake metadata reads after a PostgreSQL heap scan.
 --
--- libpgduckdb's PostgresTableReader calls EnterParallelMode() for every
--- non-temp heap relation whose scan plan is parallel-safe, and the backend then
--- stays in PG parallel mode for the rest of that DuckDB query.  The call does
--- not consult max_parallel_workers, so regression.conf's max_parallel_workers =
--- 0 does not prevent it; raising it does not either, since a worker then really
--- launches and the window is just as open.  This test therefore covers the
--- suite's configuration, not the only affected one.
+-- pg_ducklake disables recursive PostgreSQL parallel scans by setting
+-- duckdb_max_workers_per_postgres_scan to zero.  PostgresTableReader used to
+-- call EnterParallelMode() anyway, leaving the backend in parallel mode for the
+-- rest of the DuckDB query.  PostgreSQL 14-16 then rejected the internal
+-- subtransaction used to protect the metadata SPI query.  On newer PostgreSQL,
+-- this also left an unnecessary parallel-operation window around SPI work.
 --
--- A DuckLake metadata query issued inside that window runs over
--- SPI, which sets client_min_messages and search_path -- and guc.c rejects
--- GUC_ACTION_SET in parallel mode.  The ereport then longjmps out of
--- CreateSPIResult past its std::lock_guard on GlobalProcessLock, so the lock is
--- never released and every later DuckDB operation in the backend blocks
--- forever.
+-- The zero-worker path must remain entirely in-process and must not enter
+-- PostgreSQL parallel mode.
 --
 -- Both halves have to land in one DuckDB query, in this order:
 --   * count(*) over a plain heap table, written first so its

@@ -84,6 +84,7 @@ PostgresTableReader::InitUnsafe(const char *table_scan_query, bool count_tuples_
 	table_scan_planstate = ExecInitNode(planned_stmt->planTree, table_scan_query_desc->estate, 0);
 
 	bool run_scan_with_parallel_workers = persistence != RELPERSISTENCE_TEMP;
+	run_scan_with_parallel_workers &= duckdb_max_workers_per_postgres_scan > 0;
 	run_scan_with_parallel_workers &= CanTableScanRunInParallel(table_scan_query_desc->planstate->plan);
 
 	/* Temp tables cannot be excuted with parallel workers, and whole plan should be parallel aware */

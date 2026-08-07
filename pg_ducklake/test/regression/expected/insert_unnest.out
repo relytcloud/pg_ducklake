@@ -80,6 +80,164 @@ SELECT * FROM insert_unnest_bypass ORDER BY id;
   3 | c
 (4 rows)
 
+-- Reordered target columns must preserve the INSERT mapping.
+CREATE TABLE insert_unnest_reordered (a int, b int) USING ducklake;
+INSERT INTO insert_unnest_reordered VALUES (0, 0);
+PREPARE insert_reordered (int[], int[]) AS
+INSERT INTO insert_unnest_reordered (b, a) SELECT UNNEST($1), UNNEST($2);
+SELECT ducklake.reset_direct_insert_stats();
+ reset_direct_insert_stats 
+---------------------------
+ 
+(1 row)
+
+EXECUTE insert_reordered(ARRAY[10, 20], ARRAY[1, 2]);
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+    pattern     | reason | count 
+----------------+--------+-------
+ matched_unnest | ok     |     1
+(1 row)
+
+SELECT * FROM insert_unnest_reordered ORDER BY a;
+ a | b  
+---+----
+ 0 |  0
+ 1 | 10
+ 2 | 20
+(3 rows)
+
+DEALLOCATE insert_reordered;
+DROP TABLE insert_unnest_reordered;
+-- Temporal UNNEST serialization must not depend on or alter DateStyle.
+CREATE TABLE insert_unnest_temporal (d date, ts timestamp) USING ducklake;
+INSERT INTO insert_unnest_temporal VALUES (DATE '2020-01-01', TIMESTAMP '2020-01-01');
+PREPARE insert_temporal (date[], timestamp[]) AS
+INSERT INTO insert_unnest_temporal SELECT UNNEST($1), UNNEST($2);
+SET DateStyle = 'SQL, DMY';
+EXECUTE insert_temporal(ARRAY[DATE '2030-12-31'], ARRAY[TIMESTAMP '2030-12-31 23:59:58']);
+SHOW DateStyle;
+ DateStyle 
+-----------
+ SQL, DMY
+(1 row)
+
+RESET DateStyle;
+SELECT extract(year FROM d) AS year, extract(second FROM ts) AS second
+FROM insert_unnest_temporal ORDER BY d;
+ year | second 
+------+--------
+ 2020 |      0
+ 2030 |     58
+(2 rows)
+
+DEALLOCATE insert_temporal;
+DROP TABLE insert_unnest_temporal;
+-- Only a bare SELECT list of built-in pg_catalog.unnest(anyarray) calls is
+-- eligible. Source clauses must not be ignored by the native writer.
+CREATE TABLE insert_unnest_matcher (id int) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('insert_unnest_matcher'::regclass);
+ count 
+-------
+     1
+(1 row)
+
+SELECT ducklake.reset_direct_insert_stats();
+ reset_direct_insert_stats 
+---------------------------
+ 
+(1 row)
+
+PREPARE unnest_where (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) WHERE false;
+EXECUTE unnest_where(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_from (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) FROM generate_series(1, 2);
+EXECUTE unnest_from(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_limit (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) LIMIT 1;
+EXECUTE unnest_limit(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_offset (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) OFFSET 1;
+EXECUTE unnest_offset(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_distinct (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT DISTINCT unnest($1);
+EXECUTE unnest_distinct(ARRAY[1, 1]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_group (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) GROUP BY ();
+EXECUTE unnest_group(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_having (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) HAVING false;
+EXECUTE unnest_having(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_window (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest($1) ORDER BY row_number() OVER ();
+EXECUTE unnest_window(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_setop (int[]) AS
+INSERT INTO insert_unnest_matcher
+SELECT unnest($1) UNION ALL SELECT unnest($1);
+EXECUTE unnest_setop(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+PREPARE unnest_cte (int[]) AS
+WITH source_cte AS (SELECT 1)
+INSERT INTO insert_unnest_matcher SELECT unnest($1);
+EXECUTE unnest_cte(ARRAY[1, 2]);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+CREATE SCHEMA unnest_matcher_user;
+CREATE TABLE unnest_matcher_user.calls (call_count int);
+CREATE FUNCTION unnest_matcher_user.unnest(int[]) RETURNS SETOF int
+LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  INSERT INTO unnest_matcher_user.calls VALUES (1);
+  RETURN QUERY SELECT value FROM pg_catalog.unnest($1) AS value;
+END
+$$;
+PREPARE unnest_user (int[]) AS
+INSERT INTO insert_unnest_matcher SELECT unnest_matcher_user.unnest($1);
+EXECUTE unnest_user(ARRAY[1, 2]);
+ERROR:  (PGDuckDB/CreatePlan) Not implemented Error: Could not convert DuckDB type: UNKNOWN to Postgres type
+SELECT count(*) AS inserted_rows FROM insert_unnest_matcher;
+ inserted_rows 
+---------------
+             0
+(1 row)
+
+SELECT count(*) AS user_function_calls FROM unnest_matcher_user.calls;
+ user_function_calls 
+---------------------
+                   0
+(1 row)
+
+SELECT pattern, reason, count
+FROM ducklake.direct_insert_stats() WHERE count > 0
+ORDER BY pattern, reason;
+  pattern  |          reason          | count 
+-----------+--------------------------+-------
+ unmatched | unsupported_insert_shape |    11
+(1 row)
+
+DEALLOCATE unnest_where;
+DEALLOCATE unnest_from;
+DEALLOCATE unnest_limit;
+DEALLOCATE unnest_offset;
+DEALLOCATE unnest_distinct;
+DEALLOCATE unnest_group;
+DEALLOCATE unnest_having;
+DEALLOCATE unnest_window;
+DEALLOCATE unnest_setop;
+DEALLOCATE unnest_cte;
+DEALLOCATE unnest_user;
+DROP SCHEMA unnest_matcher_user CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to table unnest_matcher_user.calls
+drop cascades to function unnest_matcher_user.unnest(integer[])
+DROP TABLE insert_unnest_matcher;
 -- Test 3b: Verify EXPLAIN shows custom scan
 EXPLAIN EXECUTE insert_plan(ARRAY[10, 20], ARRAY['x', 'y']);
                               QUERY PLAN                              
@@ -87,7 +245,7 @@ EXPLAIN EXECUTE insert_plan(ARRAY[10, 20], ARRAY['x', 'y']);
  Custom Scan (DuckLakeDirectInsert)  (cost=0.00..0.00 rows=0 width=0)
    Custom Scan: DuckLakeDirectInsert
    Pattern: UNNEST
-   Expected Rows: 2
+   Expected Rows: bound at execution
 (4 rows)
 
 -- Test 3c: Execute the previous plan
@@ -103,10 +261,16 @@ SELECT * FROM insert_unnest_bypass ORDER BY id;
  20 | y
 (6 rows)
 
--- Test 3d: Disable optimization (should fallback to DuckDB)
+-- Test 3d: Parameterized UNNEST has no DuckDB fallback. Disabled-direct and
+-- explicit-transaction execution fail before DuckDB with the same stable error.
 SET ducklake.enable_direct_insert = false;
 EXECUTE insert_plan(ARRAY[100, 200], ARRAY['p', 'q']);
-ERROR:  (PGDuckDB/CreatePlan) Not implemented Error: Could not convert DuckDB type: UNKNOWN to Postgres type
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+SET ducklake.enable_direct_insert = true;
+BEGIN;
+EXECUTE insert_plan(ARRAY[100, 200], ARRAY['p', 'q']);
+ERROR:  parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT
+ROLLBACK;
 SELECT COUNT(*) FROM insert_unnest_bypass;
  count 
 -------
@@ -114,7 +278,6 @@ SELECT COUNT(*) FROM insert_unnest_bypass;
 (1 row)
 
 -- Test 3e: Re-enable and test large batch
-SET ducklake.enable_direct_insert = true;
 PREPARE insert_large (int[]) AS
 INSERT INTO insert_unnest_bypass SELECT UNNEST($1), 'batch';
 -- Execute with 100 rows
@@ -128,5 +291,87 @@ SELECT COUNT(*) FROM insert_unnest_bypass WHERE val = 'batch';
      0
 (1 row)
 
+-- Parameter values and SRF cardinality are bound at execution so generic plans
+-- preserve target-list lockstep semantics. Empty/NULL-only input does not
+-- publish a snapshot, and shorter inputs are NULL-padded to the longest input.
+CREATE TABLE insert_unnest_generic (id int, val text) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('insert_unnest_generic'::regclass);
+ count 
+-------
+     1
+(1 row)
+
+SET plan_cache_mode = force_generic_plan;
+PREPARE insert_force_generic (int[], text[]) AS
+INSERT INTO insert_unnest_generic SELECT UNNEST($1), UNNEST($2);
+SELECT max(snapshot_id) AS snapshot_before_empty
+FROM ducklake.ducklake_snapshot \gset
+EXECUTE insert_force_generic(ARRAY[]::int[], ARRAY[]::text[]);
+EXECUTE insert_force_generic(NULL::int[], NULL::text[]);
+SELECT max(snapshot_id) = :snapshot_before_empty AS no_empty_snapshot
+FROM ducklake.ducklake_snapshot;
+ no_empty_snapshot 
+-------------------
+ t
+(1 row)
+
+EXECUTE insert_force_generic(ARRAY[1, 2, 3], ARRAY['a']);
+EXECUTE insert_force_generic(ARRAY[]::int[], ARRAY['x', 'y']);
+EXECUTE insert_force_generic(NULL::int[], ARRAY['z']);
+SELECT count(*) AS force_rows,
+       count(*) FILTER (WHERE id IS NULL) AS padded_ids,
+       count(*) FILTER (WHERE val IS NULL) AS padded_vals
+FROM insert_unnest_generic;
+ force_rows | padded_ids | padded_vals 
+------------+------------+-------------
+          6 |          3 |           2
+(1 row)
+
+SELECT generic_plans, custom_plans
+FROM pg_prepared_statements WHERE name = 'insert_force_generic';
+ generic_plans | custom_plans 
+---------------+--------------
+             5 |            0
+(1 row)
+
+DEALLOCATE insert_force_generic;
+SET plan_cache_mode = auto;
+PREPARE insert_auto_generic (int[], text[]) AS
+INSERT INTO insert_unnest_generic SELECT UNNEST($1), UNNEST($2);
+EXECUTE insert_auto_generic(ARRAY[10], ARRAY['ten']);
+EXECUTE insert_auto_generic(ARRAY[20, 21], ARRAY['twenty']);
+EXECUTE insert_auto_generic(ARRAY[]::int[], ARRAY['thirty']);
+EXECUTE insert_auto_generic(NULL::int[], ARRAY['forty', 'forty-one']);
+EXECUTE insert_auto_generic(ARRAY[50], NULL::text[]);
+EXECUTE insert_auto_generic(ARRAY[60, 61, 62], ARRAY['sixty', 'sixty-one']);
+SELECT max(snapshot_id) AS snapshot_before_auto_empty
+FROM ducklake.ducklake_snapshot \gset
+EXECUTE insert_auto_generic(ARRAY[]::int[], ARRAY[]::text[]);
+SELECT max(snapshot_id) = :snapshot_before_auto_empty AS no_auto_empty_snapshot
+FROM ducklake.ducklake_snapshot;
+ no_auto_empty_snapshot 
+------------------------
+ t
+(1 row)
+
+SELECT generic_plans > 0 AS selected_generic, custom_plans
+FROM pg_prepared_statements WHERE name = 'insert_auto_generic';
+ selected_generic | custom_plans 
+------------------+--------------
+ t                |            5
+(1 row)
+
+SELECT count(*) AS all_rows,
+       count(*) FILTER (WHERE id IS NULL) AS padded_ids,
+       count(*) FILTER (WHERE val IS NULL) AS padded_vals
+FROM insert_unnest_generic;
+ all_rows | padded_ids | padded_vals 
+----------+------------+-------------
+       16 |          6 |           5
+(1 row)
+
+DEALLOCATE insert_auto_generic;
+RESET plan_cache_mode;
+DROP TABLE insert_unnest_generic;
 -- Clean up
 DROP TABLE insert_unnest_bypass;

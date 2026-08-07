@@ -133,8 +133,7 @@ class PgCluster:
             # No background flush/compaction: tests drive maintenance
             # explicitly so file layouts stay deterministic.
             conf.write("ducklake.maintenance_enabled = false\n")
-            # No max_parallel_workers=0 workaround needed (unlike regression.conf):
-            # the kernel defaults DuckDB to one thread, so PG parallelism is safe.
+            conf.write("ducklake.native_writer_reservation_queue_capacity = 8\n")
             conf.write("fsync = off\n")
             conf.write("logging_collector = off\n")
             conf.write("log_destination = stderr\n")

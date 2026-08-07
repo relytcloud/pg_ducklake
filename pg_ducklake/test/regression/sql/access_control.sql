@@ -5,8 +5,8 @@
 -- created by the extension with ducklake metadata grants. This test creates
 -- LOGIN users in those roles and verifies behavior.
 --
--- Current state: the libpgddb planner hook sets permInfos = NULL, so most
--- DML permission checks are bypassed when queries are routed through DuckDB.
+-- Current state: INSERT checks PostgreSQL permissions before either the
+-- native or DuckDB path. UPDATE and DELETE still bypass permission checks.
 
 -- Verify predefined roles exist
 SELECT rolname FROM pg_roles
@@ -77,15 +77,14 @@ RESET ROLE;
 VACUUM acl_test;
 
 -- ============================================================
--- 4. Known gap: DML permissions not enforced
---    Reader can INSERT/UPDATE/DELETE (should fail but doesn't)
+-- 4. INSERT permissions are enforced; DuckDB DELETE still has a gap
 -- ============================================================
 SET ROLE test_lake_reader;
 
 -- SELECT works (expected)
 SELECT count(*) FROM acl_test;
 
--- These succeed even though reader only has SELECT (known gap)
+-- INSERT fails before writer selection; DELETE still uses the known gap.
 INSERT INTO acl_test VALUES (10, 'Ghost', 'x');
 DELETE FROM acl_test WHERE id = 10;
 

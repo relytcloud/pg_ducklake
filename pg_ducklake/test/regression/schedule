@@ -12,6 +12,7 @@ test: temp_table
 test: insert_unnest
 test: insert_values
 test: insert_values_stable
+test: native_producer_semantics
 test: copy_from
 test: insert_cte
 test: ctas
@@ -21,6 +22,7 @@ test: options
 test: data_inlining_row_limit
 test: create_with_options
 test: direct_insert_stats
+test: native_writer_stats
 test: direct_insert_metadata
 test: inlined_data_schema_change
 test: alter_partition_inlining

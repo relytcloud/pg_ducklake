@@ -14,13 +14,20 @@ struct DirectInsertContext {
 	Oid target_table_oid;
 	uint64_t table_id;
 	uint64_t schema_version;
-	List *param_infos; // List of ParamInfo*
-	int expected_row_count;
+	List *param_infos;      // List of ParamInfo*
 	List *target_col_names; // List of char*
 	List *target_col_types; // List of Oid
 };
 
-PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params);
+// Returns true for an INSERT targeting a DuckLake table after recursively
+// enforcing PostgreSQL permissions and rejecting semantics neither writer preserves.
+bool CheckDucklakeInsertSafety(Query *parse);
+
+// DuckDB cannot bind PostgreSQL parameters in UNNEST. Reject before handing an
+// unmatched native shape to DuckDB.
+void RejectParameterizedUnnestFallback(Query *parse);
+
+PlannedStmt *TryCreateDirectInsertPlan(Query *parse);
 
 // Must be called on DuckDB recycle: table_id/schema_version may change.
 void ResetDirectInsertCaches();

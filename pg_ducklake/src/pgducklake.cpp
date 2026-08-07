@@ -4,6 +4,8 @@
 
 #include "pgducklake/constants.hpp"
 #include "pgducklake/duckdb_manager.hpp"
+#include "pgducklake/direct_insert/native_inline_writer.hpp"
+#include "pgducklake/direct_insert/native_writer_queue.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
 #include <storage/ducklake_metadata_manager.hpp>
@@ -55,6 +57,8 @@ _PG_init(void) {
 	pgducklake::InitGUCs();
 	pgducklake::InitMaintenanceWorker();
 	pgducklake::InitDirectInsertStatsShmem();
+	pgducklake::InitNativeWriterStatsShmem();
+	pgducklake::InitNativeWriterQueueShmem();
 	pgducklake::InitDuckDBManager();
 	pgddb::InitNode("DuckLakeScan");
 	pgducklake::RegisterDirectInsertNode();

@@ -2,6 +2,12 @@
 SHOW ducklake.default_table_path;
 SHOW ducklake.vacuum_delete_threshold;
 SHOW ducklake.enable_direct_insert;
+SHOW ducklake.native_writer_reservation_queue;
+SHOW ducklake.native_writer_reservation_queue_capacity;
+SHOW ducklake.native_writer_reservation_queue_wait_ms;
+SHOW ducklake.native_writer_max_retry_count;
+SHOW ducklake.native_writer_retry_wait_ms;
+SHOW ducklake.native_writer_retry_backoff;
 SHOW ducklake.threads;
 
 -- Test setting GUCs
@@ -17,6 +23,24 @@ RESET ducklake.vacuum_delete_threshold;
 SET ducklake.enable_direct_insert = false;
 SHOW ducklake.enable_direct_insert;
 RESET ducklake.enable_direct_insert;
+
+SET ducklake.native_writer_reservation_queue = true;
+SHOW ducklake.native_writer_reservation_queue;
+RESET ducklake.native_writer_reservation_queue;
+
+SET ducklake.native_writer_reservation_queue_wait_ms = 25;
+SHOW ducklake.native_writer_reservation_queue_wait_ms;
+RESET ducklake.native_writer_reservation_queue_wait_ms;
+
+SET ducklake.native_writer_max_retry_count = 20;
+SET ducklake.native_writer_retry_wait_ms = 5;
+SET ducklake.native_writer_retry_backoff = 2;
+SHOW ducklake.native_writer_max_retry_count;
+SHOW ducklake.native_writer_retry_wait_ms;
+SHOW ducklake.native_writer_retry_backoff;
+RESET ducklake.native_writer_max_retry_count;
+RESET ducklake.native_writer_retry_wait_ms;
+RESET ducklake.native_writer_retry_backoff;
 
 SET ducklake.threads = 4;
 SHOW ducklake.threads;

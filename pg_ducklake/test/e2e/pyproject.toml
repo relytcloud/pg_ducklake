@@ -18,6 +18,7 @@ dependencies = [
     "duckdb>=1.4",
     "minio>=7.2",
     "filelock>=3.13",
+    "psycopg[binary]>=3.2",
 ]
 
 [tool.uv]

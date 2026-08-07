@@ -6,6 +6,8 @@ setup
 session s1
 step s1_begin    { BEGIN; }
 step s1_insert   { INSERT INTO iso_tx_commit_t VALUES (1); }
+step s1_insert2  { INSERT INTO iso_tx_commit_t VALUES (2), (3); }
+step s1_own      { SELECT count(*) FROM iso_tx_commit_t; }
 step s1_commit   { COMMIT; }
 step s1_rollback { ROLLBACK; }
 
@@ -20,7 +22,7 @@ teardown
 }
 
 # Committed data becomes visible after commit
-permutation s1_begin s1_insert s2_count s1_commit s2_count
+permutation s1_begin s1_insert s1_insert2 s1_own s2_count s1_commit s2_count
 
 # Rolled-back data is never visible
 permutation s1_begin s1_insert s2_count s1_rollback s2_count

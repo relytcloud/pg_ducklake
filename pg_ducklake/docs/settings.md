@@ -14,14 +14,21 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 | [`ducklake.default_table_path`](#ducklakedefault_table_path) | `""` | Per-session |
 | [`ducklake.enable_direct_insert`](#ducklakeenable_direct_insert) | `true` | Per-session |
 | [`ducklake.enable_metadata_sync`](#ducklakeenable_metadata_sync) | `true` | Per-session |
-| [`ducklake.maintenance_enabled`](#ducklakemaintenance_enabled) | `true` | Reload (`SIGHUP`) |
-| [`ducklake.maintenance_naptime`](#ducklakemaintenance_naptime) | `60` | Reload (`SIGHUP`) |
-| [`ducklake.maintenance_max_workers`](#ducklakemaintenance_max_workers) | `3` | Requires restart |
-| [`ducklake.maintenance_flush_inlined_data`](#ducklakemaintenance_flush_inlined_data) | `true` | Reload (`SIGHUP`) |
-| [`ducklake.maintenance_expire_snapshots`](#ducklakemaintenance_expire_snapshots) | `true` | Reload (`SIGHUP`) |
 | [`ducklake.maintenance_cleanup_old_files`](#ducklakemaintenance_cleanup_old_files) | `false` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_enabled`](#ducklakemaintenance_enabled) | `true` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_expire_snapshots`](#ducklakemaintenance_expire_snapshots) | `true` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_flush_inlined_data`](#ducklakemaintenance_flush_inlined_data) | `true` | Reload (`SIGHUP`) |
+| [`ducklake.maintenance_max_workers`](#ducklakemaintenance_max_workers) | `3` | Requires restart |
+| [`ducklake.maintenance_naptime`](#ducklakemaintenance_naptime) | `60` | Reload (`SIGHUP`) |
+| [`ducklake.native_writer_max_retry_count`](#ducklakenative_writer_retry_settings) | `10` | Per-session |
+| [`ducklake.native_writer_reservation_queue`](#ducklakenative_writer_reservation_queue) | `true` | Per-session |
+| [`ducklake.native_writer_reservation_queue_capacity`](#ducklakenative_writer_reservation_queue_capacity) | `256` | Requires restart; superuser only |
+| [`ducklake.native_writer_reservation_queue_wait_ms`](#ducklakenative_writer_reservation_queue_wait_ms) | `10ms` | Per-session |
+| [`ducklake.native_writer_retry_backoff`](#ducklakenative_writer_retry_settings) | `1.5` | Per-session |
+| [`ducklake.native_writer_retry_wait_ms`](#ducklakenative_writer_retry_settings) | `1ms` | Per-session |
 | [`ducklake.reader_role`](#ducklakereader_role) | `"ducklake_reader"` | Requires restart |
 | [`ducklake.superuser_role`](#ducklakesuperuser_role) | `"ducklake_superuser"` | Requires restart |
+| [`ducklake.test_native_writer_fault`](#ducklaketest_native_writer_fault) | `off` | Superuser by default; test use |
 | [`ducklake.vacuum_delete_threshold`](#ducklakevacuum_delete_threshold) | `0.1` | Per-session |
 | [`ducklake.writer_role`](#ducklakewriter_role) | `"ducklake_writer"` | Requires restart |
 
@@ -116,10 +123,87 @@ Minimum fraction of deleted rows before the background maintenance worker rewrit
 
 ### `ducklake.enable_direct_insert`
 
-Enable direct insert optimization for `INSERT ... SELECT UNNEST($n)` statements.
+Enable the PostgreSQL-native writer for supported `INSERT ... VALUES` and
+`INSERT ... SELECT UNNEST($n)` statements. It is used only for a single
+implicit `READ COMMITTED` statement. Explicit transactions and unsupported
+INSERT shapes normally use DuckDB's transaction-aware path. Parameterized
+`UNNEST` is the exception: DuckDB cannot bind PostgreSQL parameters in this
+shape, so it fails with SQLSTATE `0A000` (`FEATURE_NOT_SUPPORTED`) and the
+message
+`parameterized UNNEST is not supported by the DuckDB fallback for DuckLake INSERT`
+if the native writer is disabled, the statement runs in an
+explicit transaction, or the native writer otherwise declines it. Tables with
+PostgreSQL triggers, rules, or row-level security are rejected. Source relation
+permissions are enforced recursively, and source row-level security is
+rejected, because DuckDB cannot preserve
+those PostgreSQL-only semantics. Prepared UNNEST parameters are bound when the
+plan executes, including generic plans. Multiple target-list UNNEST calls run in
+lockstep to the longest array and NULL-pad shorter, empty, or NULL arrays; an
+all-empty batch publishes no snapshot.
 
 - **Default**: `true`
 - **Access**: Per-session
+
+### `ducklake.native_writer_reservation_queue`
+
+Use a process-shared, per-catalog ticket queue to speculatively assign snapshot
+order and per-table row-ID ranges to native writers. Publishers wait in ticket
+order, but every publisher still reloads protocol metadata and claims the
+standard snapshot primary key. Queue loss, invalidation, cancellation, backend
+exit, non-native commits, and wait-cap expiration fall back to the normal rebase
+path. The bounded-progress deadline prevents a stalled same- or cross-table
+head from indefinitely delaying followers.
+
+- **Default**: `true`
+- **Access**: Per-session
+
+### `ducklake.native_writer_reservation_queue_capacity`
+
+Set the process-shared reservation capacity. Invalid and dead-transaction slots
+are reclaimed before a full queue falls back to ordinary optimistic
+publication.
+
+- **Default**: `256`
+- **Access**: Requires restart; superuser only
+
+### `ducklake.native_writer_reservation_queue_wait_ms`
+
+Bound the time a reservation may wait without predecessor progress during
+same-table row-ID assignment or publication ordering. Each time the blocking
+predecessor advances, the deadline resets; a single stalled predecessor cannot
+reset its own deadline. The effective interval is the smaller of this cap and
+the retry wait/backoff budget. A zero value disables waiting. On expiration,
+the writer abandons its speculative reservation and immediately continues
+through ordinary optimistic publication; metadata reload and the snapshot
+primary-key claim remain authoritative. The condition-variable wait is
+interruptible by cancellation and statement timeout.
+
+- **Default**: `10ms`
+- **Range**: 0 -- 60000ms
+- **Access**: Per-session
+
+### `ducklake.native_writer_retry_settings`
+
+`ducklake.native_writer_max_retry_count`,
+`ducklake.native_writer_retry_wait_ms`, and
+`ducklake.native_writer_retry_backoff` bound and pace snapshot-claim retries.
+Queue waits remain interruptible and do not bypass statement cancellation.
+
+- **Defaults**: `10`, `1ms`, and `1.5`
+- **Access**: Per-session
+
+### `ducklake.test_native_writer_fault`
+
+Test-only fault injection for the native inline publication protocol. The
+accepted values are `off`, `after_prewrite`, `after_claim`, `after_retag`,
+`after_table_stats`, `after_column_stats`, `after_change_record`, and
+`after_publication`. The setting is hidden from `SHOW ALL` and the sample
+configuration and must remain `off` outside controlled validation tests.
+
+- **Default**: `off`
+- **Access**: Superuser by default; on PostgreSQL 15 and later, a superuser can
+  delegate access with `GRANT SET ON PARAMETER
+  ducklake.test_native_writer_fault TO role_name`
 
 ### `ducklake.enable_metadata_sync`
 
