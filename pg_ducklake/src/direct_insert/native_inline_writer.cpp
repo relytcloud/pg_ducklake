@@ -139,10 +139,7 @@ ReadPublicationState(const NativeInlineWriteBatch &batch, uint64_t changes_after
 	PublicationState state = {};
 	MemoryContext caller_context = CurrentMemoryContext;
 
-	int ret = SPI_connect();
-	if (ret < 0) {
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("native inline writer: SPI_connect failed: %d", ret)));
-	}
+	SPI_connect();
 	MemoryContext spi_context = CurrentMemoryContext;
 
 	StringInfoData query;
@@ -170,7 +167,7 @@ ReadPublicationState(const NativeInlineWriteBatch &batch, uint64_t changes_after
 	                 (unsigned long long)changes_after, (unsigned long long)batch.table_id);
 
 	/* read_only=false gives each retry a fresh READ COMMITTED SPI snapshot. */
-	ret = SPI_execute(query.data, false, 1);
+	int ret = SPI_execute(query.data, false, 1);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1) {
 		SPI_finish();
 		ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
@@ -460,10 +457,7 @@ PrepareMergedColumnStats(const NativeInlineWriteBatch &batch, bool initializing)
 
 	MemoryContext caller_context = CurrentMemoryContext;
 	prepared.stats = (MergedColumnStat *)palloc0(sizeof(MergedColumnStat) * prepared.count);
-	int ret = SPI_connect();
-	if (ret < 0) {
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("native inline writer: SPI_connect failed: %d", ret)));
-	}
+	SPI_connect();
 	MemoryContext spi_context = CurrentMemoryContext;
 
 	for (uint64_t i = 0; i < prepared.count; i++) {
@@ -478,7 +472,7 @@ PrepareMergedColumnStats(const NativeInlineWriteBatch &batch, bool initializing)
 		                 "FROM ducklake.ducklake_table_column_stats "
 		                 "WHERE table_id = %llu AND column_id = %llu",
 		                 (unsigned long long)batch.table_id, (unsigned long long)incoming.column_id);
-		ret = SPI_execute(query.data, false, 1);
+		int ret = SPI_execute(query.data, false, 1);
 		if (ret != SPI_OK_SELECT) {
 			SPI_finish();
 			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -722,7 +716,6 @@ RunPublicationAttempt(const NativeInlineWriteBatch &batch, const PublicationStat
 	MemoryContext old_context = CurrentMemoryContext;
 	ResourceOwner old_owner = CurrentResourceOwner;
 	bool old_skip_snapshot_sync = skip_snapshot_sync;
-	volatile bool spi_connected = false;
 	volatile bool claimed = false;
 
 	StringInfoData claim_query;
@@ -741,16 +734,11 @@ RunPublicationAttempt(const NativeInlineWriteBatch &batch, const PublicationStat
 
 	PG_TRY();
 	{
-		int ret = SPI_connect();
-		if (ret < 0) {
-			ereport(ERROR,
-			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("native inline writer: SPI_connect failed: %d", ret)));
-		}
-		spi_connected = true;
+		SPI_connect();
 
 		/* The snapshot claim is the first protocol mutation in this attempt. */
 		skip_snapshot_sync = true;
-		ret = SPI_execute(claim_query.data, false, 1);
+		int ret = SPI_execute(claim_query.data, false, 1);
 		skip_snapshot_sync = old_skip_snapshot_sync;
 		if (ret != SPI_OK_INSERT_RETURNING) {
 			ereport(ERROR,
@@ -834,7 +822,6 @@ RunPublicationAttempt(const NativeInlineWriteBatch &batch, const PublicationStat
 		}
 
 		SPI_finish();
-		spi_connected = false;
 		ReleaseCurrentSubTransaction();
 	}
 	PG_CATCH();
@@ -844,7 +831,6 @@ RunPublicationAttempt(const NativeInlineWriteBatch &batch, const PublicationStat
 		FlushErrorState();
 		skip_snapshot_sync = old_skip_snapshot_sync;
 		/* Child-owned SPI resources are released by subtransaction rollback. */
-		spi_connected = false;
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(old_context);
 		CurrentResourceOwner = old_owner;
@@ -853,7 +839,6 @@ RunPublicationAttempt(const NativeInlineWriteBatch &batch, const PublicationStat
 	}
 	PG_END_TRY();
 
-	(void)spi_connected;
 	skip_snapshot_sync = old_skip_snapshot_sync;
 	MemoryContextSwitchTo(old_context);
 	CurrentResourceOwner = old_owner;

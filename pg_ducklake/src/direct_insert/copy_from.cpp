@@ -224,10 +224,7 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 
 	ColumnConvInfo *conv = BuildColumnConvInfo(user_tupdesc, inlined_tupdesc);
 
-	int ret = SPI_connect();
-	if (ret < 0) {
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed: %d", ret)));
-	}
+	SPI_connect();
 	InlineColStats *col_stats = CreateInlineColStats(table_id, live_natts);
 	SPI_finish();
 	int stats_col = 0;

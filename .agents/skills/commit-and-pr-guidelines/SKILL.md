@@ -140,7 +140,8 @@ EOF
 
 Write pull request descriptions for human reviewers, not as exhaustive change
 logs. Keep them brief and focus on why the change is needed, along with context,
-tradeoffs, or design decisions that are not obvious from the diff.
+tradeoffs, or design decisions that are not obvious from the diff. Do not
+hard-wrap prose paragraphs; keep each paragraph on one line.
 
 Do not summarize code that reviewers can read in the diff. Omit routine testing
 sections when CI already provides the relevant result; mention testing only when

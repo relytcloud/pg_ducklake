@@ -1549,10 +1549,7 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 		}
 	}
 
-	int ret = SPI_connect();
-	if (ret < 0) {
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed: %d", ret)));
-	}
+	SPI_connect();
 	InlineColStats *col_stats = CreateInlineColStats(state->table_id, num_params);
 	SPI_finish();
 	for (int i = 0; i < num_params; i++) {
@@ -1678,10 +1675,7 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWri
 	int num_cols = state->values_num_cols;
 	ExprContext *econtext = state->css.ss.ps.ps_ExprContext;
 
-	int ret = SPI_connect();
-	if (ret < 0) {
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed: %d", ret)));
-	}
+	SPI_connect();
 	InlineColStats *col_stats = CreateInlineColStats(state->table_id, num_cols);
 	SPI_finish();
 
