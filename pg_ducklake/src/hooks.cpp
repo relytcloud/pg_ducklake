@@ -4,6 +4,7 @@
 #include "pgducklake/direct_insert/direct_insert.hpp"
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/ducklake_fdw.hpp"
+#include "pgducklake/ducklake_table.hpp"
 #include "pgducklake/ducklake_types.hpp"
 #include "pgducklake/functions.hpp"
 #include "pgducklake/guc.hpp"
@@ -673,8 +674,13 @@ DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only
 
 	/* CREATE TABLE ... USING ducklake WITH (ducklake.*) -- strip the
 	 * ducklake.* DefElems before standard_ProcessUtility validates the
-	 * remaining options. The create-table event trigger drains the stash. */
+	 * remaining options. The create-table event trigger drains the stash.
+	 *
+	 * PostgreSQL's CTAS path also passes its Query directly to the planner,
+	 * which destructively consumes subquery RTEs. Keep an untouched query for
+	 * the event trigger and let PostgreSQL plan a copy. */
 	bool stripped_ducklake_options = false;
+	Query *preserved_ctas_query = NULL;
 	if (IsA(parsetree, CreateStmt) || IsA(parsetree, CreateTableAsStmt)) {
 		List **options_ref = NULL;
 		const char *access_method = NULL;
@@ -690,10 +696,13 @@ DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only
 			}
 		}
 
-		if (access_method && strcmp(access_method, "ducklake") == 0 && options_ref && *options_ref != NIL) {
-			/* If the parsetree is shared (read_only_tree), copy pstmt before we
-			 * rewrite the options list so we don't poison a cached plan. */
-			if (read_only_tree) {
+		if (access_method && strcmp(access_method, "ducklake") == 0) {
+			bool is_ctas = IsA(parsetree, CreateTableAsStmt);
+			bool has_ducklake_options = options_ref && *options_ref != NIL;
+
+			/* If the parsetree is shared, copy pstmt before rewriting either
+			 * the options list or the CTAS query pointer. */
+			if (read_only_tree && (is_ctas || has_ducklake_options)) {
 				/* Use copyObjectImpl directly: the copyObject macro uses typeof
 				 * which expands poorly under our C++ build flags. */
 				pstmt = (PlannedStmt *)copyObjectImpl(pstmt);
@@ -704,7 +713,23 @@ DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only
 					options_ref = &castNode(CreateTableAsStmt, parsetree)->into->options;
 				read_only_tree = false;
 			}
-			stripped_ducklake_options = pgducklake::StripDucklakeCreateOptions(options_ref);
+
+			Node *ctas_query_copy = NULL;
+			if (is_ctas) {
+				CreateTableAsStmt *cstmt = castNode(CreateTableAsStmt, parsetree);
+				if (!IsA(cstmt->query, Query))
+					elog(ERROR, "expected analyzed Query in DuckLake CTAS");
+				preserved_ctas_query = castNode(Query, cstmt->query);
+				ctas_query_copy = (Node *)copyObjectImpl(preserved_ctas_query);
+			}
+
+			if (options_ref && *options_ref != NIL)
+				stripped_ducklake_options = pgducklake::StripDucklakeCreateOptions(options_ref);
+
+			if (is_ctas) {
+				castNode(CreateTableAsStmt, parsetree)->query = ctas_query_copy;
+				pgducklake::PushPendingCtasQuery(preserved_ctas_query);
+			}
 		}
 	}
 
@@ -716,9 +741,18 @@ DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only
 	{
 		if (stripped_ducklake_options)
 			pgducklake::ClearPendingCreateOptions();
+		if (preserved_ctas_query) {
+			pgducklake::RemovePendingCtasQuery(preserved_ctas_query);
+			castNode(CreateTableAsStmt, parsetree)->query = (Node *)preserved_ctas_query;
+		}
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+
+	if (preserved_ctas_query) {
+		pgducklake::RemovePendingCtasQuery(preserved_ctas_query);
+		castNode(CreateTableAsStmt, parsetree)->query = (Node *)preserved_ctas_query;
+	}
 
 	pgducklake::HandleDropSortedIndex(sorted_drops);
 
