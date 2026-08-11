@@ -1,0 +1,78 @@
+Parsed test spec with 3 sessions
+check_session: NOTICE:  identifier "isolation/ducklake/transaction/transaction_conflicts_delete/check_session" will be truncated to "isolation/ducklake/transaction/transaction_conflicts_delete/che"
+
+starting permutation: s1_begin s2_begin s1_delete_partial s2_delete_partial s1_commit s2_commit check_partial
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_delete_partial: DELETE FROM upstream_iso_delete_conflict WHERE i < 200;
+step s2_delete_partial: DELETE FROM upstream_iso_delete_conflict WHERE i < 100;
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
+Transaction conflict - attempting to delete from file with index "0" - but another transaction has deleted from it
+step check_partial: SELECT count(*), min(i), max(i) FROM upstream_iso_delete_conflict;
+count|min|max
+-----+---+---
+  800|200|999
+(1 row)
+
+
+starting permutation: s1_begin s2_begin s1_delete_all s2_delete_all s1_commit s2_commit check_empty
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+step s1_delete_all: DELETE FROM upstream_iso_delete_conflict;
+step s2_delete_all: DELETE FROM upstream_iso_delete_conflict;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step check_empty: SELECT count(*) FROM upstream_iso_delete_conflict;
+count
+-----
+    0
+(1 row)
+
+
+starting permutation: s1_begin s2_begin s1_drop s2_delete_all s1_commit s2_rollback check_dropped
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_drop: DROP TABLE upstream_iso_delete_conflict;
+step s2_delete_all: DELETE FROM upstream_iso_delete_conflict; <waiting ...>
+step s1_commit: COMMIT;
+step s2_delete_all: <... completed>
+ERROR:  relation "upstream_iso_delete_conflict" does not exist
+step s2_rollback: ROLLBACK;
+step check_dropped: SELECT to_regclass('upstream_iso_delete_conflict') IS NULL;
+?column?
+--------
+t       
+(1 row)
+
+check_session: NOTICE:  table "upstream_iso_delete_conflict" does not exist, skipping
+
+starting permutation: s1_begin s2_begin s1_alter s2_delete_all s1_commit s2_rollback check_altered
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_alter: ALTER TABLE upstream_iso_delete_conflict ADD COLUMN j integer;
+step s2_delete_all: DELETE FROM upstream_iso_delete_conflict; <waiting ...>
+step s1_commit: COMMIT;
+step s2_delete_all: <... completed>
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Binder Error: Catalog "pgducklake" does not exist!
+step s2_rollback: ROLLBACK;
+step check_altered: 
+  SELECT attname FROM pg_attribute
+  WHERE attrelid = 'upstream_iso_delete_conflict'::regclass
+    AND attnum > 0 AND NOT attisdropped ORDER BY attnum;
+  SELECT count(*) FROM upstream_iso_delete_conflict;
+
+attname
+-------
+i      
+j      
+(2 rows)
+
+count
+-----
+ 1000
+(1 row)
+

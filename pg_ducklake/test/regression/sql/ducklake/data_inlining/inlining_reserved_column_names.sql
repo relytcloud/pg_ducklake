@@ -1,0 +1,20 @@
+-- Upstream: test/sql/data_inlining/inlining_reserved_column_names.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_reserved_fail (row_id integer, v integer) USING ducklake;
+CREATE TABLE upstream_inline_reserved_fail (begin_snapshot integer, v integer) USING ducklake;
+CREATE TABLE upstream_inline_reserved_fail (end_snapshot integer, v integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CREATE TABLE upstream_inline_reserved (row_id integer, v integer) USING ducklake;
+INSERT INTO upstream_inline_reserved VALUES (1,10), (2,20);
+ALTER TABLE upstream_inline_reserved ADD COLUMN begin_snapshot integer;
+ALTER TABLE upstream_inline_reserved RENAME COLUMN v TO end_snapshot;
+CALL ducklake.set_option('data_inlining_row_limit', 10, 'upstream_inline_reserved'::regclass);
+CALL ducklake.set_option('data_inlining_row_limit', 0, 'upstream_inline_reserved'::regclass);
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_reserved_ok (i integer, j integer) USING ducklake;
+INSERT INTO upstream_inline_reserved_ok VALUES (1,2), (3,4);
+INSERT INTO upstream_inline_reserved VALUES (3,30,300);
+SELECT * FROM upstream_inline_reserved ORDER BY row_id;
+SELECT * FROM upstream_inline_reserved_ok ORDER BY i;
+DROP TABLE upstream_inline_reserved, upstream_inline_reserved_ok;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

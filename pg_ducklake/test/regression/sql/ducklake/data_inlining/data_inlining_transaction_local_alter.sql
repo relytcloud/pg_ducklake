@@ -1,0 +1,20 @@
+-- Upstream: test/sql/data_inlining/data_inlining_transaction_local_alter.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_tx_alter (i integer, j integer) USING ducklake;
+BEGIN;
+INSERT INTO upstream_inline_tx_alter VALUES (42, 84);
+ALTER TABLE upstream_inline_tx_alter ADD COLUMN k integer;
+SELECT * FROM upstream_inline_tx_alter;
+COMMIT;
+BEGIN;
+INSERT INTO upstream_inline_tx_alter VALUES (100, 200, 300);
+ALTER TABLE upstream_inline_tx_alter ADD COLUMN l integer DEFAULT 42;
+SELECT * FROM upstream_inline_tx_alter ORDER BY i;
+COMMIT;
+BEGIN;
+ALTER TABLE upstream_inline_tx_alter ADD COLUMN m text;
+INSERT INTO upstream_inline_tx_alter VALUES (500, 600, 700, 800, 'hello');
+COMMIT;
+SELECT * FROM upstream_inline_tx_alter ORDER BY i;
+DROP TABLE upstream_inline_tx_alter;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

@@ -1,0 +1,12 @@
+-- Upstream: test/sql/sorted_table/merge_adjacent_sorted_drop_recreate.test
+-- Skip: Physical compaction order is not exposed by the PostgreSQL API.
+-- Sort metadata from a dropped table does not attach to a replacement of the same name.
+CREATE TABLE upstream_merge_sort_recreate (old_key integer) USING ducklake;
+CALL ducklake.set_sort('upstream_merge_sort_recreate'::regclass, 'old_key ASC');
+DROP TABLE upstream_merge_sort_recreate;
+CREATE TABLE upstream_merge_sort_recreate (id integer, new_key integer) USING ducklake;
+INSERT INTO upstream_merge_sort_recreate VALUES (2, 20), (1, 10);
+SELECT * FROM ducklake.get_sort('upstream_merge_sort_recreate'::regclass);
+SELECT count(*) > 0 AS merged FROM ducklake.merge_adjacent_files('upstream_merge_sort_recreate'::regclass);
+SELECT * FROM upstream_merge_sort_recreate ORDER BY id;
+DROP TABLE upstream_merge_sort_recreate;

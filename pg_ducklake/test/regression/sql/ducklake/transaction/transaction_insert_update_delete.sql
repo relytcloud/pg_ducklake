@@ -1,0 +1,13 @@
+-- Upstream: test/sql/transaction/transaction_insert_update_delete.test
+-- INSERT, UPDATE, and DELETE must compose on transaction-local rows.
+
+CREATE TABLE upstream_tx_iud (c1 integer) USING ducklake;
+BEGIN;
+INSERT INTO upstream_tx_iud VALUES (1), (2);
+UPDATE upstream_tx_iud SET c1 = 3 WHERE c1 = 1;
+DELETE FROM upstream_tx_iud WHERE c1 = 2;
+SELECT * FROM upstream_tx_iud;
+COMMIT;
+SELECT * FROM upstream_tx_iud;
+
+DROP TABLE upstream_tx_iud;

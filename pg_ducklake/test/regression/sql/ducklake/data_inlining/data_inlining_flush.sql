@@ -1,0 +1,20 @@
+-- Upstream: test/sql/data_inlining/data_inlining_flush.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_flush (i integer) USING ducklake;
+SELECT max(snapshot_id) AS vcreate FROM ducklake.ducklake_snapshot \gset
+INSERT INTO upstream_inline_flush SELECT g FROM generate_series(0, 9) g;
+SELECT max(snapshot_id) AS vinsert FROM ducklake.ducklake_snapshot \gset
+SELECT count(*), min(i), max(i) FROM upstream_inline_flush;
+SELECT count(*) AS active_files
+FROM ducklake.ducklake_data_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_inline_flush' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+SELECT count(*) FROM ducklake.time_travel('upstream_inline_flush'::regclass, :vinsert);
+SELECT count(*) FROM ducklake.table_insertions('upstream_inline_flush'::regclass, :vcreate, :vinsert);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_flush'::regclass);
+SELECT count(*), min(i), max(i) FROM upstream_inline_flush;
+SELECT count(*) AS active_files
+FROM ducklake.ducklake_data_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_inline_flush' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+SELECT count(*) FROM ducklake.time_travel('upstream_inline_flush'::regclass, :vinsert);
+DROP TABLE upstream_inline_flush;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

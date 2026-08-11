@@ -1,0 +1,9 @@
+-- Upstream: test/sql/alter/issue_944.test
+CREATE TABLE upstream_issue_944 (row_id integer) USING ducklake;
+ERROR:  (PGDuckDB/ducklake_create_table_trigger_cpp) Binder Error: Column name "row_id" is reserved by DuckLake for internal use when data inlining is enabled. If you must use this column name, disable inlining by calling ducklake_set_option('data_inlining_row_limit', 0).
+CREATE TABLE upstream_issue_944 (a integer) USING ducklake;
+ALTER TABLE upstream_issue_944 ADD COLUMN row_id integer;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Column name "row_id" is reserved by DuckLake for internal use when data inlining is enabled. If you must use this column name, disable inlining by calling ducklake_set_option('data_inlining_row_limit', 0).
+ALTER TABLE upstream_issue_944 RENAME COLUMN a TO row_id;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Column name "row_id" is reserved by DuckLake for internal use when data inlining is enabled. If you must use this column name, disable inlining by calling ducklake_set_option('data_inlining_row_limit', 0).
+DROP TABLE upstream_issue_944;

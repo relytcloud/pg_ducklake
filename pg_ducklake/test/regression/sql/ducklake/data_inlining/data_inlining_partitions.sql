@@ -1,0 +1,20 @@
+-- Upstream: test/sql/data_inlining/data_inlining_partitions.test
+-- Skip: Physical year/month partition layout is not exposed by the PostgreSQL API.
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+CREATE TABLE upstream_inline_partition (id integer, ts timestamp, val text) USING ducklake;
+CALL ducklake.set_partition('upstream_inline_partition'::regclass, 'year(ts)', 'month(ts)');
+INSERT INTO upstream_inline_partition
+SELECT g, TIMESTAMP '2020-01-01' + g * INTERVAL '1 hour', 'value_' || g
+FROM generate_series(0, 999) g;
+INSERT INTO upstream_inline_partition
+SELECT g, TIMESTAMP '2020-01-01' + g * INTERVAL '1 hour', 'value_' || g
+FROM generate_series(1000, 1999) g;
+SELECT extract(year FROM ts)::integer, count(*)
+FROM upstream_inline_partition GROUP BY 1 ORDER BY 1;
+SELECT count(*) FROM upstream_inline_partition WHERE ts >= TIMESTAMP '2020-02-01';
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_partition'::regclass);
+SELECT extract(year FROM ts)::integer, count(*)
+FROM upstream_inline_partition GROUP BY 1 ORDER BY 1;
+SELECT * FROM ducklake.get_partition('upstream_inline_partition'::regclass);
+DROP TABLE upstream_inline_partition;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

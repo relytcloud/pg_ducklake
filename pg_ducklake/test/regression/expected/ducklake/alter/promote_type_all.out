@@ -1,0 +1,39 @@
+-- Upstream: test/sql/alter/promote_type_all.test
+-- Skip: PostgreSQL lacks DuckDB's tinyint, hugeint, and unsigned integer type families.
+CREATE TABLE upstream_promote_int (c smallint) USING ducklake;
+ALTER TABLE upstream_promote_int ALTER COLUMN c TYPE integer;
+ALTER TABLE upstream_promote_int ALTER COLUMN c TYPE bigint;
+ALTER TABLE upstream_promote_int ALTER COLUMN c TYPE integer;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Cannot change type of column c from BIGINT to INTEGER - only widening type promotions are allowed
+CREATE TABLE upstream_promote_float (c real) USING ducklake;
+ALTER TABLE upstream_promote_float ALTER COLUMN c TYPE double precision;
+ALTER TABLE upstream_promote_float ALTER COLUMN c TYPE real;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Cannot change type of column c from DOUBLE to FLOAT - only widening type promotions are allowed
+CREATE TABLE upstream_promote_ts (c timestamp) USING ducklake;
+ALTER TABLE upstream_promote_ts ALTER COLUMN c TYPE timestamptz;
+ALTER TABLE upstream_promote_ts ALTER COLUMN c TYPE timestamp;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Cannot change type of column c from TIMESTAMP WITH TIME ZONE to TIMESTAMP - only widening type promotions are allowed
+CREATE TABLE upstream_promote_reject (c integer) USING ducklake;
+ALTER TABLE upstream_promote_reject ALTER COLUMN c TYPE text;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Cannot change type of column c from INTEGER to VARCHAR - only widening type promotions are allowed
+ALTER TABLE upstream_promote_reject ALTER COLUMN c TYPE boolean;
+ERROR:  column "c" cannot be cast automatically to type boolean
+HINT:  You might need to specify "USING c::boolean".
+CREATE TABLE upstream_promote_same (c integer) USING ducklake;
+ALTER TABLE upstream_promote_same ALTER COLUMN c TYPE integer;
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_name IN ('upstream_promote_int', 'upstream_promote_float',
+                     'upstream_promote_ts', 'upstream_promote_reject', 'upstream_promote_same')
+ORDER BY table_name, ordinal_position;
+       table_name        | column_name |        data_type         
+-------------------------+-------------+--------------------------
+ upstream_promote_float  | c           | double precision
+ upstream_promote_int    | c           | bigint
+ upstream_promote_reject | c           | integer
+ upstream_promote_same   | c           | integer
+ upstream_promote_ts     | c           | timestamp with time zone
+(5 rows)
+
+DROP TABLE upstream_promote_int, upstream_promote_float, upstream_promote_ts,
+           upstream_promote_reject, upstream_promote_same;

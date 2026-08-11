@@ -1,0 +1,12 @@
+-- Upstream: test/sql/sorted_table/data_inlining_flush_sorted_sequential_updates.test
+-- Sorted flush uses physical file order rather than row identifiers for deletes.
+CREATE TABLE upstream_flush_sequential_updates (id integer, val integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_flush_sequential_updates'::regclass);
+INSERT INTO upstream_flush_sequential_updates VALUES (2, 0), (1, 0), (3, 0);
+UPDATE upstream_flush_sequential_updates SET val = val + 1 WHERE id = 2;
+UPDATE upstream_flush_sequential_updates SET val = val + 1 WHERE id = 2;
+UPDATE upstream_flush_sequential_updates SET val = val + 1 WHERE id = 2;
+CALL ducklake.set_sort('upstream_flush_sequential_updates'::regclass, 'id ASC NULLS LAST');
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_flush_sequential_updates'::regclass);
+SELECT id, count(*), max(val) FROM upstream_flush_sequential_updates GROUP BY id ORDER BY id;
+DROP TABLE upstream_flush_sequential_updates;

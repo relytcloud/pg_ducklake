@@ -1,0 +1,37 @@
+-- Upstream: test/sql/alter/add_column.test
+CREATE TABLE upstream_alter_add_column (col1 integer) USING ducklake;
+ALTER TABLE upstream_alter_add_column ADD COLUMN new_col2 integer;
+ALTER TABLE upstream_alter_add_column ADD COLUMN new_col2 integer;
+ERROR:  column "new_col2" of relation "upstream_alter_add_column" already exists
+ALTER TABLE upstream_alter_add_column ADD COLUMN IF NOT EXISTS new_col2 integer;
+NOTICE:  column "new_col2" of relation "upstream_alter_add_column" already exists, skipping
+INSERT INTO upstream_alter_add_column VALUES (1, 2), (NULL, 3);
+ALTER TABLE upstream_alter_add_column ADD COLUMN new_col3 text;
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'upstream_alter_add_column'
+ORDER BY ordinal_position;
+ column_name | data_type | is_nullable 
+-------------+-----------+-------------
+ col1        | integer   | YES
+ new_col2    | integer   | YES
+ new_col3    | text      | YES
+(3 rows)
+
+INSERT INTO upstream_alter_add_column VALUES (1, 2, 'hello'), (NULL, 3, 'world');
+SELECT * FROM upstream_alter_add_column ORDER BY col1 NULLS LAST, new_col3 NULLS FIRST;
+ col1 | new_col2 | new_col3 
+------+----------+----------
+    1 |        2 | 
+    1 |        2 | hello
+      |        3 | 
+      |        3 | world
+(4 rows)
+
+SELECT * FROM upstream_alter_add_column WHERE new_col3 = 'hello' ORDER BY col1;
+ col1 | new_col2 | new_col3 
+------+----------+----------
+    1 |        2 | hello
+(1 row)
+
+DROP TABLE upstream_alter_add_column;

@@ -1,0 +1,23 @@
+-- Upstream: test/sql/deletion_inlining/test_deletion_inlining_partitions.test
+-- Skip: Physical delete-file and inlined-delete transitions are not fully exposed by the PostgreSQL API.
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_delete_partition (id integer, ts timestamp, val text) USING ducklake;
+CALL ducklake.set_partition('upstream_delete_partition'::regclass, 'year(ts)', 'month(ts)');
+INSERT INTO upstream_delete_partition
+SELECT g, TIMESTAMP '2020-01-15' + g * INTERVAL '1 minute', 'v_' || g FROM generate_series(0,49) g;
+INSERT INTO upstream_delete_partition
+SELECT g, TIMESTAMP '2020-02-15' + (g-100) * INTERVAL '1 minute', 'v_' || g FROM generate_series(100,149) g;
+INSERT INTO upstream_delete_partition
+SELECT g, TIMESTAMP '2021-01-15' + (g-200) * INTERVAL '1 minute', 'v_' || g FROM generate_series(200,249) g;
+SELECT max(snapshot_id) AS vinsert FROM ducklake.ducklake_snapshot \gset
+DELETE FROM upstream_delete_partition WHERE id < 3;
+DELETE FROM upstream_delete_partition WHERE id BETWEEN 100 AND 102;
+DELETE FROM upstream_delete_partition WHERE id BETWEEN 200 AND 202;
+SELECT count(*) FROM upstream_delete_partition;
+SELECT extract(year FROM ts)::integer, count(*) FROM upstream_delete_partition GROUP BY 1 ORDER BY 1;
+SELECT * FROM ducklake.flush_inlined_data('upstream_delete_partition'::regclass);
+SELECT count(*) FROM upstream_delete_partition;
+SELECT count(*) FROM ducklake.time_travel('upstream_delete_partition'::regclass, :vinsert);
+SELECT * FROM ducklake.get_partition('upstream_delete_partition'::regclass);
+DROP TABLE upstream_delete_partition;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

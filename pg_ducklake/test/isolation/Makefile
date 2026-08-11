@@ -9,6 +9,7 @@ include $(ROOT_DIR)/Makefile.pgxs
 # Since 1.0.0 moved pg_ducklake's readers into the ducklake schema, the old
 # public read_csv/read_parquet collision with pg_duckdb is gone.
 check-isolation:
+	@cd specs && find ducklake -type d -exec mkdir -p ../output_iso/results/{} \;
 	TEST_DIR=$(CURDIR) $(pg_isolation_regress_installcheck) \
 	--encoding=UTF8 \
 	--no-locale \

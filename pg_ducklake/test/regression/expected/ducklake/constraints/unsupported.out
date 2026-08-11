@@ -1,0 +1,14 @@
+-- Upstream: test/sql/constraints/unsupported.test
+-- Skip: DuckLake currently accepts PRIMARY KEY, while upstream requires it to be rejected.
+CREATE TABLE upstream_constraint_primary (
+  i integer PRIMARY KEY,
+  j integer
+) USING ducklake;
+CREATE TABLE upstream_constraint_check (
+  i integer,
+  j integer,
+  CHECK (i > j)
+) USING ducklake;
+ERROR:  (PGDuckDB/ducklake_create_table_trigger_cpp) Not implemented Error: CHECK constraints are not supported in DuckLake
+DROP TABLE IF EXISTS upstream_constraint_primary, upstream_constraint_check;
+NOTICE:  table "upstream_constraint_check" does not exist, skipping

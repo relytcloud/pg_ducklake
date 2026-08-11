@@ -1,0 +1,24 @@
+-- Upstream: test/sql/data_inlining/data_inlining_flush_schema.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE SCHEMA upstream_inline_s1;
+CREATE SCHEMA upstream_inline_s2;
+CREATE TABLE upstream_inline_flush_main (i integer) USING ducklake;
+CREATE TABLE upstream_inline_s1.t (j text) USING ducklake;
+CREATE TABLE upstream_inline_s1.t2 (d date) USING ducklake;
+CREATE TABLE upstream_inline_s2.t (i text, j integer) USING ducklake;
+INSERT INTO upstream_inline_flush_main VALUES (42);
+INSERT INTO upstream_inline_s1.t VALUES ('hello world');
+INSERT INTO upstream_inline_s1.t2 VALUES (DATE '1992-01-01');
+INSERT INTO upstream_inline_s2.t VALUES ('42', 84);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_flush_main'::regclass);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_s1.t'::regclass);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_s1.t2'::regclass);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_s2.t'::regclass);
+SELECT * FROM upstream_inline_flush_main;
+SELECT * FROM upstream_inline_s1.t;
+SELECT * FROM upstream_inline_s1.t2;
+SELECT * FROM upstream_inline_s2.t;
+SELECT * FROM ducklake.flush_inlined_data('missing_schema', 'missing_table');
+DROP TABLE upstream_inline_flush_main, upstream_inline_s1.t, upstream_inline_s1.t2, upstream_inline_s2.t;
+DROP SCHEMA upstream_inline_s1, upstream_inline_s2;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

@@ -1,0 +1,23 @@
+-- Upstream: test/sql/sorted_table/insert_sorted_expression.test
+-- Skip: Requires implementation: pg_ducklake does not yet support expression sort keys.
+-- INSERT accepts expression-based sort keys.
+CREATE TABLE upstream_insert_sort_expression (a integer, b integer, name text) USING ducklake;
+CALL ducklake.set_sort('upstream_insert_sort_expression'::regclass, 'length(name) ASC', '(a * b) DESC');
+ERROR:  unsupported expression type in index key
+CONTEXT:  SQL statement "CREATE INDEX ON public.upstream_insert_sort_expression USING ducklake_sorted (length(name) ASC, (a * b) DESC)"
+INSERT INTO upstream_insert_sort_expression VALUES (3, 4, 'ab'), (2, 5, 'abc'), (1, 1, 'ab'), (7, 1, 'a');
+SELECT * FROM ducklake.get_sort('upstream_insert_sort_expression'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+(0 rows)
+
+SELECT a, b, name FROM upstream_insert_sort_expression ORDER BY length(name), a * b DESC, a;
+ a | b | name 
+---+---+------
+ 7 | 1 | a
+ 3 | 4 | ab
+ 1 | 1 | ab
+ 2 | 5 | abc
+(4 rows)
+
+DROP TABLE upstream_insert_sort_expression;

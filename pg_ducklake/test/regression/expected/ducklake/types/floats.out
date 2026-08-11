@@ -1,0 +1,152 @@
+-- Upstream: test/sql/types/floats.test
+CREATE TABLE upstream_float_real (f real) USING ducklake;
+INSERT INTO upstream_float_real VALUES (1), (10), ('NaN'), (1);
+SELECT count(*) FROM upstream_float_real WHERE f = 'NaN';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f > 'NaN';
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f >= 'NaN';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f < 'NaN';
+ count 
+-------
+     3
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f <= 'NaN';
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f > 1;
+ count 
+-------
+     2
+(1 row)
+
+INSERT INTO upstream_float_real VALUES ('Infinity'), ('-Infinity');
+SELECT count(*) FROM upstream_float_real WHERE f > 'Infinity';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f >= 'Infinity';
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f < 'Infinity';
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f <= 'Infinity';
+ count 
+-------
+     5
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f > '-Infinity';
+ count 
+-------
+     5
+(1 row)
+
+SELECT count(*) FROM upstream_float_real WHERE f >= '-Infinity';
+ count 
+-------
+     6
+(1 row)
+
+CREATE TABLE upstream_float_double (f double precision) USING ducklake;
+INSERT INTO upstream_float_double VALUES (1), (10), ('NaN'), (1);
+SELECT count(*) FROM upstream_float_double WHERE f = 'NaN';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f > 'NaN';
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f >= 'NaN';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f < 'NaN';
+ count 
+-------
+     3
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f <= 'NaN';
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f > 1;
+ count 
+-------
+     2
+(1 row)
+
+INSERT INTO upstream_float_double VALUES ('Infinity'), ('-Infinity');
+SELECT count(*) FROM upstream_float_double WHERE f > 'Infinity';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f >= 'Infinity';
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f < 'Infinity';
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f <= 'Infinity';
+ count 
+-------
+     5
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f > '-Infinity';
+ count 
+-------
+     5
+(1 row)
+
+SELECT count(*) FROM upstream_float_double WHERE f >= '-Infinity';
+ count 
+-------
+     6
+(1 row)
+
+DROP TABLE upstream_float_real, upstream_float_double;

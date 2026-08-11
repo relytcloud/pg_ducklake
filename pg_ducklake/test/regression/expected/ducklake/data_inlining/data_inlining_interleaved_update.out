@@ -1,0 +1,60 @@
+NOTICE:  identifier "pg_regress/ducklake/data_inlining/data_inlining_interleaved_update" will be truncated to "pg_regress/ducklake/data_inlining/data_inlining_interleaved_upd"
+-- Upstream: test/sql/data_inlining/data_inlining_interleaved_update.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_interleave (id integer, val text) USING ducklake;
+INSERT INTO upstream_inline_interleave VALUES (1, 'a'), (2, 'b');
+SELECT max(snapshot_id) AS initial_snapshot FROM ducklake.ducklake_snapshot \gset
+BEGIN;
+INSERT INTO upstream_inline_interleave VALUES (3, 'c');
+UPDATE upstream_inline_interleave SET val = 'aa' WHERE id = 1;
+INSERT INTO upstream_inline_interleave VALUES (4, 'd');
+COMMIT;
+SELECT max(snapshot_id) AS first_snapshot FROM ducklake.ducklake_snapshot \gset
+SELECT ducklake.rowid(), id, val FROM upstream_inline_interleave ORDER BY id;
+ rowid | id | val 
+-------+----+-----
+     0 |  1 | aa
+     1 |  2 | b
+     2 |  3 | c
+     3 |  4 | d
+(4 rows)
+
+SELECT r['change_type']::text AS change_type, count(*) AS rows,
+       array_agg(r['id']::integer ORDER BY r['id']::integer) AS ids
+FROM ducklake.table_changes('upstream_inline_interleave'::regclass, :first_snapshot, :first_snapshot) AS r
+GROUP BY r['change_type']::text ORDER BY change_type;
+   change_type    | rows |  ids  
+------------------+------+-------
+ insert           |    2 | {3,4}
+ update_postimage |    1 | {1}
+ update_preimage  |    1 | {1}
+(3 rows)
+
+BEGIN;
+UPDATE upstream_inline_interleave SET val = 'bb' WHERE id = 2;
+INSERT INTO upstream_inline_interleave VALUES (5, 'e');
+COMMIT;
+SELECT max(snapshot_id) AS second_snapshot FROM ducklake.ducklake_snapshot \gset
+SELECT ducklake.rowid(), id, val FROM upstream_inline_interleave ORDER BY id;
+ rowid | id | val 
+-------+----+-----
+     0 |  1 | aa
+     1 |  2 | bb
+     2 |  3 | c
+     3 |  4 | d
+     4 |  5 | e
+(5 rows)
+
+SELECT r['change_type']::text AS change_type, count(*) AS rows,
+       array_agg(r['id']::integer ORDER BY r['id']::integer) AS ids
+FROM ducklake.table_changes('upstream_inline_interleave'::regclass, :second_snapshot, :second_snapshot) AS r
+GROUP BY r['change_type']::text ORDER BY change_type;
+   change_type    | rows | ids 
+------------------+------+-----
+ insert           |    1 | {5}
+ update_postimage |    1 | {2}
+ update_preimage  |    1 | {2}
+(3 rows)
+
+DROP TABLE upstream_inline_interleave;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

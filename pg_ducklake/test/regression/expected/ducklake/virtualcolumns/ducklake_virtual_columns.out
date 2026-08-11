@@ -1,0 +1,36 @@
+-- Upstream: test/sql/virtualcolumns/ducklake_virtual_columns.test
+CREATE TABLE upstream_virtual_columns (i integer) USING ducklake;
+INSERT INTO upstream_virtual_columns VALUES (1), (2), (3);
+SELECT * FROM ducklake.flush_inlined_data('upstream_virtual_columns'::regclass);
+ schema_name |        table_name        | rows_flushed 
+-------------+--------------------------+--------------
+ public      | upstream_virtual_columns |            3
+(1 row)
+
+SELECT ducklake.file_row_number(), i FROM upstream_virtual_columns ORDER BY i;
+ file_row_number | i 
+-----------------+---
+               0 | 1
+               1 | 2
+               2 | 3
+(3 rows)
+
+SELECT i FROM upstream_virtual_columns WHERE ducklake.file_row_number() = 1;
+ i 
+---
+ 2
+(1 row)
+
+SELECT count(DISTINCT ducklake.filename()) FROM upstream_virtual_columns;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(DISTINCT ducklake.file_index()) FROM upstream_virtual_columns;
+ count 
+-------
+     1
+(1 row)
+
+DROP TABLE upstream_virtual_columns;

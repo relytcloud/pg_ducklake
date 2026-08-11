@@ -1,0 +1,66 @@
+-- Upstream: test/sql/default/add_column_with_default.test
+CREATE TABLE upstream_default_add (i integer) USING ducklake;
+INSERT INTO upstream_default_add VALUES (1), (2);
+BEGIN;
+ALTER TABLE upstream_default_add ADD COLUMN j integer DEFAULT 42;
+INSERT INTO upstream_default_add VALUES (100, 100);
+SELECT * FROM upstream_default_add ORDER BY i NULLS LAST, j NULLS LAST;
+  i  |  j  
+-----+-----
+   1 |  42
+   2 |  42
+ 100 | 100
+(3 rows)
+
+COMMIT;
+INSERT INTO upstream_default_add DEFAULT VALUES;
+BEGIN;
+ALTER TABLE upstream_default_add ALTER i SET DEFAULT 1000;
+ALTER TABLE upstream_default_add ALTER j DROP DEFAULT;
+INSERT INTO upstream_default_add DEFAULT VALUES;
+SELECT * FROM upstream_default_add ORDER BY i NULLS LAST, j NULLS LAST;
+  i   |  j  
+------+-----
+    1 |  42
+    2 |  42
+  100 | 100
+ 1000 |    
+      |  42
+(5 rows)
+
+ROLLBACK;
+BEGIN;
+ALTER TABLE upstream_default_add ALTER i SET DEFAULT 1000;
+ALTER TABLE upstream_default_add ALTER j DROP DEFAULT;
+INSERT INTO upstream_default_add DEFAULT VALUES;
+COMMIT;
+INSERT INTO upstream_default_add DEFAULT VALUES;
+SELECT * FROM upstream_default_add ORDER BY i NULLS LAST, j NULLS LAST;
+  i   |  j  
+------+-----
+    1 |  42
+    2 |  42
+  100 | 100
+ 1000 |    
+ 1000 |    
+      |  42
+(6 rows)
+
+SELECT c.column_name, c.initial_default, c.default_value
+FROM ducklake.ducklake_column c
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_default_add'
+ORDER BY c.column_id, c.begin_snapshot;
+ column_name | initial_default | default_value 
+-------------+-----------------+---------------
+ i           |                 | NULL
+ i           |                 | 1000
+ j           | 42              | 42
+ j           | 42              | NULL
+(4 rows)
+
+ALTER TABLE upstream_default_add ALTER nonexistent_column SET DEFAULT 1000;
+ERROR:  column "nonexistent_column" of relation "upstream_default_add" does not exist
+ALTER TABLE upstream_default_add ALTER nonexistent_column DROP DEFAULT;
+ERROR:  column "nonexistent_column" of relation "upstream_default_add" does not exist
+DROP TABLE upstream_default_add;

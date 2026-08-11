@@ -1,0 +1,15 @@
+-- Upstream: test/sql/alter/test_insert_select_alter_column_persistence.test
+SET TIME ZONE 'UTC';
+CREATE TABLE upstream_alter_insert_target (id integer, name text) USING ducklake;
+INSERT INTO upstream_alter_insert_target VALUES (1, 'a');
+ALTER TABLE upstream_alter_insert_target ADD COLUMN ts timestamptz;
+CREATE TABLE upstream_alter_insert_source (id integer, name text) USING ducklake;
+INSERT INTO upstream_alter_insert_source VALUES (2, 'b');
+INSERT INTO upstream_alter_insert_target (id, name, ts)
+SELECT id, name, TIMESTAMPTZ '2026-01-01 00:00:00+00'
+FROM upstream_alter_insert_source;
+SELECT * FROM upstream_alter_insert_target ORDER BY id;
+CALL ducklake.recycle_ddb();
+SELECT * FROM upstream_alter_insert_target ORDER BY id;
+DROP TABLE upstream_alter_insert_target, upstream_alter_insert_source;
+SET TIME ZONE DEFAULT;

@@ -1,0 +1,42 @@
+NOTICE:  identifier "pg_regress/ducklake/sorted_table/merge_adjacent_sorted_expression" will be truncated to "pg_regress/ducklake/sorted_table/merge_adjacent_sorted_expressi"
+-- Upstream: test/sql/sorted_table/merge_adjacent_sorted_expression.test
+-- Skip: Requires implementation: expression-sorted compaction is unsupported.
+-- Compaction supports a sort expression over multiple columns.
+CREATE TABLE upstream_merge_sort_expression (id bigint, first_part text, second_part text) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_merge_sort_expression'::regclass);
+INSERT INTO upstream_merge_sort_expression VALUES (2, 'b', '2');
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_sort_expression'::regclass);
+ flushed 
+---------
+ t
+(1 row)
+
+INSERT INTO upstream_merge_sort_expression VALUES (1, 'a', '1');
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_sort_expression'::regclass);
+ flushed 
+---------
+ t
+(1 row)
+
+CALL ducklake.set_sort('upstream_merge_sort_expression'::regclass, '(first_part || second_part) ASC NULLS LAST');
+ERROR:  unsupported expression type in index key
+CONTEXT:  SQL statement "CREATE INDEX ON public.upstream_merge_sort_expression USING ducklake_sorted ((first_part || second_part) ASC NULLS LAST)"
+SELECT count(*) > 0 AS merged FROM ducklake.merge_adjacent_files('upstream_merge_sort_expression'::regclass);
+ merged 
+--------
+ t
+(1 row)
+
+SELECT * FROM ducklake.get_sort('upstream_merge_sort_expression'::regclass);
+ sort_key_index | expression | direction | null_order 
+----------------+------------+-----------+------------
+(0 rows)
+
+SELECT * FROM upstream_merge_sort_expression ORDER BY id;
+ id | first_part | second_part 
+----+------------+-------------
+  1 | a          | 1
+  2 | b          | 2
+(2 rows)
+
+DROP TABLE upstream_merge_sort_expression;

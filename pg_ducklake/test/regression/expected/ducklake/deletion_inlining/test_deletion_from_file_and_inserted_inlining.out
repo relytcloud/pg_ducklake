@@ -1,0 +1,53 @@
+NOTICE:  identifier "pg_regress/ducklake/deletion_inlining/test_deletion_from_file_and_inserted_inlining" will be truncated to "pg_regress/ducklake/deletion_inlining/test_deletion_from_file_a"
+-- Upstream: test/sql/deletion_inlining/test_deletion_from_file_and_inserted_inlining.test
+-- Skip: Per-snapshot inlined insertion/deletion row metadata is not exposed by the PostgreSQL API.
+CALL ducklake.set_option('data_inlining_row_limit', 5);
+CREATE TABLE upstream_delete_mixed USING ducklake AS SELECT g AS a FROM generate_series(0, 9) g;
+INSERT INTO upstream_delete_mixed VALUES (11), (12), (13);
+DELETE FROM upstream_delete_mixed WHERE a IN (5, 12);
+SELECT count(*), sum(a) FROM upstream_delete_mixed;
+ count | sum 
+-------+-----
+    11 |  64
+(1 row)
+
+SELECT count(*) AS active_delete_files
+FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_mixed' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+ active_delete_files 
+---------------------
+                   0
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('upstream_delete_mixed'::regclass);
+ schema_name |      table_name       | rows_flushed 
+-------------+-----------------------+--------------
+ public      | upstream_delete_mixed |            3
+(1 row)
+
+SELECT count(*) AS active_delete_files
+FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_mixed' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+ active_delete_files 
+---------------------
+                   2
+(1 row)
+
+SELECT * FROM upstream_delete_mixed ORDER BY a;
+ a  
+----
+  0
+  1
+  2
+  3
+  4
+  6
+  7
+  8
+  9
+ 11
+ 13
+(11 rows)
+
+DROP TABLE upstream_delete_mixed;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

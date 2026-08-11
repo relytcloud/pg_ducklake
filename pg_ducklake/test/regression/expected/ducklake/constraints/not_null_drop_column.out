@@ -1,0 +1,18 @@
+-- Upstream: test/sql/constraints/not_null_drop_column.test
+CREATE TABLE upstream_not_null_drop (i integer NOT NULL, j integer, k integer NOT NULL) USING ducklake;
+INSERT INTO upstream_not_null_drop VALUES (42, NULL, 3);
+INSERT INTO upstream_not_null_drop VALUES (NULL, 84, 3);
+ERROR:  (PGDuckDB/Duckdb_ExecCustomScan_Cpp) Constraint Error: NOT NULL constraint failed: upstream_not_null_drop.i
+ALTER TABLE upstream_not_null_drop DROP COLUMN j;
+INSERT INTO upstream_not_null_drop VALUES (42, NULL);
+ERROR:  (PGDuckDB/Duckdb_ExecCustomScan_Cpp) Constraint Error: NOT NULL constraint failed: upstream_not_null_drop.k
+ALTER TABLE upstream_not_null_drop DROP COLUMN k;
+INSERT INTO upstream_not_null_drop VALUES (NULL);
+ERROR:  (PGDuckDB/Duckdb_ExecCustomScan_Cpp) Constraint Error: NOT NULL constraint failed: upstream_not_null_drop.i
+SELECT * FROM upstream_not_null_drop ORDER BY i;
+ i  
+----
+ 42
+(1 row)
+
+DROP TABLE upstream_not_null_drop;

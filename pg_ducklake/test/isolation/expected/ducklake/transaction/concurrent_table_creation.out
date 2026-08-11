@@ -1,0 +1,23 @@
+Parsed test spec with 3 sessions
+check_session: NOTICE:  identifier "isolation/ducklake/transaction/concurrent_table_creation/check_session" will be truncated to "isolation/ducklake/transaction/concurrent_table_creation/check_"
+
+starting permutation: s1_begin s2_begin s1_create s2_create s1_commit s2_commit check_rows
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_create: CREATE TABLE upstream_iso_create_one USING ducklake AS SELECT 42 AS i;
+step s2_create: CREATE TABLE upstream_iso_create_two USING ducklake AS SELECT 'hello world'::text AS s;
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
+Transaction conflict - attempting to create schema with name "public" - but another transaction has created a schema with this name already
+step check_rows: 
+  SELECT * FROM upstream_iso_create_one;
+  SELECT * FROM upstream_iso_create_two;
+
+ i
+--
+42
+(1 row)
+
+ERROR:  relation "upstream_iso_create_two" does not exist
+teardown of session check_session failed: ERROR:  (PGDuckDB/ducklake_drop_table_trigger_cpp) Binder Error: Catalog "pgducklake" does not exist!

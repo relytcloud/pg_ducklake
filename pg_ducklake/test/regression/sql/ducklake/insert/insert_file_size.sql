@@ -1,0 +1,20 @@
+-- Upstream: test/sql/insert/insert_file_size.test
+-- A small target file size must split one large INSERT across data files.
+
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CALL ducklake.set_option('target_file_size', '16KB');
+
+CREATE TABLE upstream_insert_file_size (id integer, s text) USING ducklake;
+INSERT INTO upstream_insert_file_size
+SELECT i, repeat('this is a sufficiently long string ', 4) || i
+FROM generate_series(1, 30000) AS g(i);
+
+SELECT count(*) FROM upstream_insert_file_size;
+SELECT count(*) > 1 AS split_across_files
+FROM ducklake.ducklake_data_file f
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_insert_file_size'
+  AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+
+DROP TABLE upstream_insert_file_size;
+CALL ducklake.set_option('target_file_size', '512MB');

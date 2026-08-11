@@ -1,0 +1,36 @@
+NOTICE:  identifier "pg_regress/ducklake/table_changes/ducklake_table_deletions_projection_order" will be truncated to "pg_regress/ducklake/table_changes/ducklake_table_deletions_proj"
+-- Upstream: test/sql/table_changes/ducklake_table_deletions_projection_order.test
+-- Skip: pg_ducklake.table_deletions does not expose rowid/snapshot_id, so their projection-order invariant is unobservable.
+-- Retain value and per-snapshot cardinality checks without blessing binder errors.
+CREATE TABLE upstream_delete_projection (k integer, v integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 0, 'upstream_delete_projection'::regclass);
+INSERT INTO upstream_delete_projection VALUES (1,100), (2,200), (3,300);
+SELECT max(r['snapshot_id']::bigint) AS sins FROM ducklake.snapshots() AS r \gset
+DELETE FROM upstream_delete_projection WHERE k = 1;
+SELECT max(r['snapshot_id']::bigint) AS sd1 FROM ducklake.snapshots() AS r \gset
+DELETE FROM upstream_delete_projection WHERE k = 2;
+SELECT max(r['snapshot_id']::bigint) AS sd2 FROM ducklake.snapshots() AS r \gset
+SELECT r['k']::integer, r['v']::integer
+FROM ducklake.table_deletions('upstream_delete_projection'::regclass, :sins, :sd2) AS r
+ORDER BY 1;
+ r |  r  
+---+-----
+ 1 | 100
+ 2 | 200
+(2 rows)
+
+SELECT count(*) = 1 AS first_delete_snapshot_ok
+FROM ducklake.table_deletions('upstream_delete_projection'::regclass, :sd1, :sd1);
+ first_delete_snapshot_ok 
+--------------------------
+ t
+(1 row)
+
+SELECT count(*) = 1 AS second_delete_snapshot_ok
+FROM ducklake.table_deletions('upstream_delete_projection'::regclass, :sd2, :sd2);
+ second_delete_snapshot_ok 
+---------------------------
+ t
+(1 row)
+
+DROP TABLE upstream_delete_projection;

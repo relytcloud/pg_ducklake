@@ -1,0 +1,44 @@
+-- Upstream: test/sql/delete/test_delete_partial_max_snapshot.test
+-- Consolidated delete files must retain a partial maximum snapshot.
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CREATE TABLE upstream_delete_partial USING ducklake AS
+SELECT i AS id FROM generate_series(0, 9) AS g(i);
+INSERT INTO upstream_delete_partial VALUES (11), (12), (13);
+DELETE FROM upstream_delete_partial WHERE id = 1;
+SELECT max(snapshot_id) AS delete_snapshot_1 FROM ducklake.ducklake_snapshot \gset
+DELETE FROM upstream_delete_partial WHERE id = 5;
+SELECT max(snapshot_id) AS delete_snapshot_2 FROM ducklake.ducklake_snapshot \gset
+DELETE FROM upstream_delete_partial WHERE id = 12;
+SELECT max(snapshot_id) AS delete_snapshot_3 FROM ducklake.ducklake_snapshot \gset
+SELECT count(*) AS consolidated_files,
+       bool_and(f.partial_max = CASE f.delete_count
+         WHEN 1 THEN :delete_snapshot_1
+         WHEN 2 THEN :delete_snapshot_2
+         WHEN 3 THEN :delete_snapshot_3
+       END) AS partial_max_matches_nth_delete
+FROM ducklake.ducklake_delete_file f
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_partial'
+  AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL
+  AND f.delete_count > 1;
+ consolidated_files | partial_max_matches_nth_delete 
+--------------------+--------------------------------
+                  1 | t
+(1 row)
+
+SELECT * FROM upstream_delete_partial ORDER BY id;
+ id 
+----
+  0
+  2
+  3
+  4
+  6
+  7
+  8
+  9
+ 11
+ 13
+(10 rows)
+
+DROP TABLE upstream_delete_partial;

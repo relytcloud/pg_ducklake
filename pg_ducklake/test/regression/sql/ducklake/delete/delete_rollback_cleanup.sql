@@ -1,0 +1,21 @@
+-- Upstream: test/sql/delete/delete_rollback_cleanup.test
+-- Skip: orphaned physical parquet cleanup is not observable through PostgreSQL metadata.
+-- Rolling back a DELETE must restore rows and discard delete-file metadata.
+
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CREATE TABLE upstream_delete_rollback USING ducklake AS
+SELECT i AS id FROM generate_series(0, 999) AS g(i);
+
+BEGIN;
+DELETE FROM upstream_delete_rollback WHERE id % 2 = 0;
+SELECT count(*) FROM upstream_delete_rollback;
+ROLLBACK;
+
+SELECT count(*) FROM upstream_delete_rollback;
+SELECT count(*) AS active_delete_files
+FROM ducklake.ducklake_delete_file f
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_rollback'
+  AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+
+DROP TABLE upstream_delete_rollback;

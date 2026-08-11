@@ -1,0 +1,12 @@
+-- Upstream: test/sql/rowid/ducklake_row_id_update.test
+-- A partition-changing MERGE update retains distinct row lineage.
+
+CREATE TABLE upstream_row_id_update (i integer, j integer) USING ducklake;
+CALL ducklake.set_partition('upstream_row_id_update'::regclass, 'i');
+INSERT INTO upstream_row_id_update VALUES (1,5), (2,5);
+MERGE INTO upstream_row_id_update AS target
+USING (VALUES (1,5)) AS source(i,j)
+ON target.j = source.j
+WHEN MATCHED THEN UPDATE SET i = source.i, j = source.j;
+SELECT ducklake.rowid(), i, j FROM upstream_row_id_update ORDER BY ducklake.rowid();
+DROP TABLE upstream_row_id_update;

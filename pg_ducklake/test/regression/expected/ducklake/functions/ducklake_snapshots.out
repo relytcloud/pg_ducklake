@@ -1,0 +1,31 @@
+-- Upstream: test/sql/functions/ducklake_snapshots.test
+-- Skip: pg_ducklake currently records a snapshot for transactional CREATE-then-DROP, unlike upstream's no-op invariant.
+-- Verify snapshot listing with IDs captured from the public snapshot API.
+SELECT max(r['snapshot_id']::bigint) AS base_snap FROM ducklake.snapshots() AS r \gset
+CREATE TABLE upstream_snapshots (i integer) USING ducklake;
+SELECT max(r['snapshot_id']::bigint) AS create_snap FROM ducklake.snapshots() AS r \gset
+INSERT INTO upstream_snapshots VALUES (42);
+SELECT max(r['snapshot_id']::bigint) AS insert_snap FROM ducklake.snapshots() AS r \gset
+SELECT * FROM ducklake.flush_inlined_data('upstream_snapshots'::regclass);
+ schema_name |     table_name     | rows_flushed 
+-------------+--------------------+--------------
+ public      | upstream_snapshots |            1
+(1 row)
+
+SELECT count(*) > 0 AS has_new_snapshots
+FROM ducklake.snapshots() AS r
+WHERE r['snapshot_id']::bigint > :base_snap;
+ has_new_snapshots 
+-------------------
+ t
+(1 row)
+
+SELECT r['schema_version']::bigint >= 0 AS valid_schema_version
+FROM ducklake.snapshots() AS r
+WHERE r['snapshot_id']::bigint = :create_snap;
+ valid_schema_version 
+----------------------
+ t
+(1 row)
+
+DROP TABLE upstream_snapshots;

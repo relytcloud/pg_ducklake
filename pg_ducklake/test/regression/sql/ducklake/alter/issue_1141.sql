@@ -1,0 +1,12 @@
+-- Upstream: test/sql/alter/issue_1141.test
+CREATE TABLE upstream_issue_1141 (a smallint) USING ducklake;
+BEGIN;
+ALTER TABLE upstream_issue_1141 ADD COLUMN b integer;
+ALTER TABLE upstream_issue_1141 RENAME COLUMN b TO c;
+ALTER TABLE upstream_issue_1141 ALTER COLUMN c TYPE bigint;
+COMMIT;
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'upstream_issue_1141'
+ORDER BY ordinal_position;
+DROP TABLE upstream_issue_1141;

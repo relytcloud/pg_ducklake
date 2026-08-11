@@ -1,0 +1,22 @@
+-- Upstream: test/sql/alter/promote_type.test
+CREATE TABLE upstream_promote_type (col1 smallint) USING ducklake;
+INSERT INTO upstream_promote_type VALUES (25);
+INSERT INTO upstream_promote_type VALUES (100000);
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Conversion Error: Type INT32 with value 100000 can't be cast because the value is out of range for the destination type INT16
+
+LINE 1: ... INTO pgducklake.public.upstream_promote_type (col1) VALUES (100000)
+                                                                        ^
+ALTER TABLE upstream_promote_type ALTER COLUMN col1 TYPE integer;
+INSERT INTO upstream_promote_type VALUES (100000);
+SELECT col1 FROM upstream_promote_type ORDER BY col1;
+  col1  
+--------
+     25
+ 100000
+(2 rows)
+
+ALTER TABLE upstream_promote_type ALTER COLUMN col1 TYPE smallint;
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Catalog Error: Cannot change type of column col1 from INTEGER to SMALLINT - only widening type promotions are allowed
+ALTER TABLE upstream_promote_type ALTER COLUMN nonexistent_column TYPE bigint;
+ERROR:  column "nonexistent_column" of relation "upstream_promote_type" does not exist
+DROP TABLE upstream_promote_type;

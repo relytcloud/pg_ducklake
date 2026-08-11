@@ -1,0 +1,9 @@
+-- Upstream: test/sql/sorted_table/drop_sorted_column.test
+-- Dropping a sort-key column is rejected until sorting is reset.
+CREATE TABLE upstream_drop_sorted_column (a integer, b integer) USING ducklake;
+CALL ducklake.set_sort('upstream_drop_sorted_column'::regclass, 'b ASC');
+ALTER TABLE upstream_drop_sorted_column DROP COLUMN b;
+CALL ducklake.reset_sort('upstream_drop_sorted_column'::regclass);
+ALTER TABLE upstream_drop_sorted_column DROP COLUMN b;
+SELECT attname FROM pg_attribute WHERE attrelid = 'upstream_drop_sorted_column'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum;
+DROP TABLE upstream_drop_sorted_column;

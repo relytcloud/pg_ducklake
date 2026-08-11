@@ -1,0 +1,21 @@
+-- Upstream: test/sql/partitioning/partition_null.test
+-- Skip: NULL partition paths and per-file pruning counts are not exposed by the PostgreSQL API.
+-- NULL identity partition values survive flush and filtering.
+CREATE TABLE upstream_partition_null (part_key integer, val text) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_partition_null'::regclass);
+CALL ducklake.set_partition('upstream_partition_null'::regclass, 'part_key');
+INSERT INTO upstream_partition_null
+SELECT CASE WHEN i % 3 = 0 THEN NULL ELSE i % 2 END, 'value_' || i
+FROM generate_series(0, 11) AS g(i);
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_partition_null'::regclass);
+SELECT count(*) FROM upstream_partition_null WHERE part_key = 0;
+SELECT count(*) FROM upstream_partition_null WHERE part_key IS NULL;
+SELECT count(*) FILTER (WHERE fpv.partition_value IS NULL) AS null_partition_values,
+       count(*) FILTER (WHERE fpv.partition_value IS NOT NULL) AS nonnull_partition_values
+FROM ducklake.ducklake_file_partition_value fpv
+JOIN ducklake.ducklake_data_file f USING (data_file_id)
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_partition_null'
+  AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+SELECT part_key, count(*) FROM upstream_partition_null GROUP BY part_key ORDER BY part_key NULLS LAST;
+DROP TABLE upstream_partition_null;

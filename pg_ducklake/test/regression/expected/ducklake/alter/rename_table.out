@@ -1,0 +1,76 @@
+-- Upstream: test/sql/alter/rename_table.test
+CREATE TABLE upstream_rename_table (i integer) USING ducklake;
+INSERT INTO upstream_rename_table VALUES (42);
+ALTER TABLE upstream_rename_table RENAME TO upstream_rename_table2;
+SELECT * FROM upstream_rename_table2 ORDER BY i;
+ i  
+----
+ 42
+(1 row)
+
+BEGIN;
+CREATE TABLE upstream_rename_local (i text) USING ducklake;
+INSERT INTO upstream_rename_local VALUES ('42');
+ALTER TABLE upstream_rename_local RENAME TO upstream_rename_local2;
+INSERT INTO upstream_rename_local2 VALUES ('84');
+ALTER TABLE upstream_rename_local2 RENAME TO upstream_rename_local3;
+SELECT * FROM upstream_rename_local3 ORDER BY i;
+ i  
+----
+ 42
+ 84
+(2 rows)
+
+COMMIT;
+SELECT * FROM upstream_rename_local3 ORDER BY i;
+ i  
+----
+ 42
+ 84
+(2 rows)
+
+BEGIN;
+INSERT INTO upstream_rename_table2 VALUES (1);
+ALTER TABLE upstream_rename_table2 RENAME TO upstream_rename_table3;
+INSERT INTO upstream_rename_table3 VALUES (2);
+ALTER TABLE upstream_rename_table3 RENAME TO upstream_rename_table4;
+INSERT INTO upstream_rename_table4 VALUES (3);
+ALTER TABLE upstream_rename_table4 RENAME TO upstream_rename_table5;
+INSERT INTO upstream_rename_table5 VALUES (4);
+COMMIT;
+SELECT * FROM upstream_rename_table5 ORDER BY i;
+ i  
+----
+  1
+  2
+  3
+  4
+ 42
+(5 rows)
+
+SELECT to_regclass('upstream_rename_table2'), to_regclass('upstream_rename_table3'),
+       to_regclass('upstream_rename_table4');
+ to_regclass | to_regclass | to_regclass 
+-------------+-------------+-------------
+             |             | 
+(1 row)
+
+BEGIN;
+ALTER TABLE upstream_rename_table5 RENAME TO upstream_rename_table6;
+DROP TABLE upstream_rename_table6;
+SAVEPOINT expected_dropped_name;
+ERROR:  (PGDuckDB/DuckLakeSubXactCallback_Cpp) Not implemented Error: SAVEPOINT is not supported in DuckDB
+SELECT * FROM upstream_rename_table6;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ROLLBACK TO SAVEPOINT expected_dropped_name;
+ERROR:  savepoint "expected_dropped_name" does not exist
+COMMIT;
+BEGIN;
+SAVEPOINT expected_missing_rename_source;
+ALTER TABLE upstream_nonexistent_table RENAME TO upstream_target;
+ERROR:  relation "upstream_nonexistent_table" does not exist
+ROLLBACK TO SAVEPOINT expected_missing_rename_source;
+COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
+DROP TABLE upstream_rename_local3;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block

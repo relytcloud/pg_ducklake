@@ -1,0 +1,22 @@
+-- Upstream: test/sql/partitioning/partition_key_name_conflict.test
+-- A column named year does not conflict with the year() transform.
+SET datestyle TO ISO;
+CREATE TABLE upstream_partition_key_conflict (year integer, ts timestamp, v text) USING ducklake;
+CALL ducklake.set_partition('upstream_partition_key_conflict'::regclass, 'year(ts)', 'year');
+INSERT INTO upstream_partition_key_conflict VALUES
+ (42, TIMESTAMP '2020-06-15', 'hello'), (99, TIMESTAMP '2021-12-25', 'world');
+SELECT * FROM ducklake.get_partition('upstream_partition_key_conflict'::regclass);
+ partition_key_index | column_name | transform 
+---------------------+-------------+-----------
+                   0 | ts          | year
+                   1 | year        | identity
+(2 rows)
+
+SELECT year, ts, v FROM upstream_partition_key_conflict ORDER BY year;
+ year |         ts          |   v   
+------+---------------------+-------
+   42 | 2020-06-15 00:00:00 | hello
+   99 | 2021-12-25 00:00:00 | world
+(2 rows)
+
+DROP TABLE upstream_partition_key_conflict;

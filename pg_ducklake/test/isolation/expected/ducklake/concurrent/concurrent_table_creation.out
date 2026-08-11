@@ -1,0 +1,21 @@
+Parsed test spec with 3 sessions
+check_session: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_table_creation/check_session" will be truncated to "isolation/ducklake/concurrent/concurrent_table_creation/check_s"
+
+starting permutation: s1_begin s1_table s1_view s1_insert s1_commit s2_begin s2_table s2_view s2_insert s2_commit check_rows
+step s1_begin: BEGIN;
+step s1_table: CREATE TABLE upstream_iso_create_a (i integer) USING ducklake;
+step s1_view: CREATE VIEW upstream_iso_view_a AS SELECT * FROM upstream_iso_create_a;
+step s1_insert: INSERT INTO upstream_iso_create_a VALUES (1001);
+step s1_commit: COMMIT;
+step s2_begin: BEGIN;
+step s2_table: CREATE TABLE upstream_iso_create_b (i integer) USING ducklake;
+step s2_view: CREATE VIEW upstream_iso_view_b AS SELECT * FROM upstream_iso_create_b;
+step s2_insert: INSERT INTO upstream_iso_create_b VALUES (2001);
+step s2_commit: COMMIT;
+step check_rows: SELECT * FROM upstream_iso_view_a UNION ALL SELECT * FROM upstream_iso_view_b ORDER BY 1;
+   i
+----
+1001
+2001
+(2 rows)
+

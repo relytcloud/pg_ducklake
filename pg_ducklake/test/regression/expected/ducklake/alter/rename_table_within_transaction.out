@@ -1,0 +1,27 @@
+-- Upstream: test/sql/alter/rename_table_within_transaction.test
+CREATE TABLE upstream_rename_within_tx (i integer) USING ducklake;
+INSERT INTO upstream_rename_within_tx VALUES (999), (100);
+BEGIN;
+ALTER TABLE upstream_rename_within_tx RENAME TO upstream_rename_within_tx2;
+SELECT to_regclass('upstream_rename_within_tx') IS NULL AS old_name_gone;
+ old_name_gone 
+---------------
+ t
+(1 row)
+
+SELECT * FROM upstream_rename_within_tx2 ORDER BY i;
+  i  
+-----
+ 100
+ 999
+(2 rows)
+
+COMMIT;
+SELECT * FROM upstream_rename_within_tx2 ORDER BY i;
+  i  
+-----
+ 100
+ 999
+(2 rows)
+
+DROP TABLE upstream_rename_within_tx2;

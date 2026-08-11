@@ -1,0 +1,39 @@
+NOTICE:  identifier "pg_regress/ducklake/data_inlining/data_inlining_transaction_local_alter" will be truncated to "pg_regress/ducklake/data_inlining/data_inlining_transaction_loc"
+-- Upstream: test/sql/data_inlining/data_inlining_transaction_local_alter.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_tx_alter (i integer, j integer) USING ducklake;
+BEGIN;
+INSERT INTO upstream_inline_tx_alter VALUES (42, 84);
+ALTER TABLE upstream_inline_tx_alter ADD COLUMN k integer;
+SELECT * FROM upstream_inline_tx_alter;
+ i  | j  | k 
+----+----+---
+ 42 | 84 |  
+(1 row)
+
+COMMIT;
+BEGIN;
+INSERT INTO upstream_inline_tx_alter VALUES (100, 200, 300);
+ALTER TABLE upstream_inline_tx_alter ADD COLUMN l integer DEFAULT 42;
+SELECT * FROM upstream_inline_tx_alter ORDER BY i;
+  i  |  j  |  k  | l  
+-----+-----+-----+----
+  42 |  84 |     | 42
+ 100 | 200 | 300 | 42
+(2 rows)
+
+COMMIT;
+BEGIN;
+ALTER TABLE upstream_inline_tx_alter ADD COLUMN m text;
+INSERT INTO upstream_inline_tx_alter VALUES (500, 600, 700, 800, 'hello');
+COMMIT;
+SELECT * FROM upstream_inline_tx_alter ORDER BY i;
+  i  |  j  |  k  |  l  |   m   
+-----+-----+-----+-----+-------
+  42 |  84 |     |  42 | 
+ 100 | 200 | 300 |  42 | 
+ 500 | 600 | 700 | 800 | hello
+(3 rows)
+
+DROP TABLE upstream_inline_tx_alter;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

@@ -1,0 +1,13 @@
+-- Upstream: test/sql/sorted_table/merge_adjacent_sorted_case_insensitivity.test
+-- Skip: Physical sorted compaction order is not exposed by the PostgreSQL API.
+-- Unquoted sort-key lookup is case insensitive during compaction.
+CREATE TABLE upstream_merge_sort_case (id bigint, sort_key_one bigint, sort_key_two text) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_merge_sort_case'::regclass);
+INSERT INTO upstream_merge_sort_case VALUES (2, 20, 'b');
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_sort_case'::regclass);
+INSERT INTO upstream_merge_sort_case VALUES (1, 10, 'a');
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_sort_case'::regclass);
+CALL ducklake.set_sort('upstream_merge_sort_case'::regclass, 'SORT_KEY_ONE ASC NULLS LAST', 'SoRt_KeY_TwO ASC NULLS LAST');
+SELECT count(*) > 0 AS merged FROM ducklake.merge_adjacent_files('upstream_merge_sort_case'::regclass);
+SELECT * FROM upstream_merge_sort_case ORDER BY id;
+DROP TABLE upstream_merge_sort_case;

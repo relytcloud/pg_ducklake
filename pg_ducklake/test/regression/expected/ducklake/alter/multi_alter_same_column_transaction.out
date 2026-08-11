@@ -1,0 +1,82 @@
+-- Upstream: test/sql/alter/multi_alter_same_column_transaction.test
+CREATE TABLE upstream_multi_alter (id integer, col1 integer) USING ducklake;
+INSERT INTO upstream_multi_alter VALUES (1, 10), (2, 20);
+BEGIN;
+ALTER TABLE upstream_multi_alter ALTER col1 SET NOT NULL;
+ALTER TABLE upstream_multi_alter ALTER col1 DROP NOT NULL;
+ALTER TABLE upstream_multi_alter ALTER col1 SET DEFAULT 42;
+ALTER TABLE upstream_multi_alter RENAME COLUMN col1 TO col1_final;
+COMMIT;
+INSERT INTO upstream_multi_alter VALUES (3, NULL);
+INSERT INTO upstream_multi_alter (id) VALUES (4);
+SELECT * FROM upstream_multi_alter ORDER BY id;
+ id | col1_final 
+----+------------
+  1 |         10
+  2 |         20
+  3 |           
+  4 |         42
+(4 rows)
+
+CREATE TABLE upstream_add_rename_flush (
+  unique_id integer, sort_key_1 text, sort_key_2 text
+) USING ducklake;
+INSERT INTO upstream_add_rename_flush VALUES
+  (0, 'a', 'val0'), (1, 'c', 'val1'), (2, 'b', 'val2'),
+  (3, 'a', 'val3'), (4, 'c', 'val4');
+BEGIN;
+ALTER TABLE upstream_add_rename_flush ADD COLUMN rename_column_1 text;
+ALTER TABLE upstream_add_rename_flush RENAME COLUMN rename_column_1 TO rename_column_2;
+ALTER TABLE upstream_add_rename_flush RENAME COLUMN rename_column_2 TO rename_column_3;
+SELECT * FROM ducklake.flush_inlined_data('upstream_add_rename_flush'::regclass);
+ schema_name |        table_name         | rows_flushed 
+-------------+---------------------------+--------------
+ public      | upstream_add_rename_flush |            5
+(1 row)
+
+COMMIT;
+SELECT unique_id, rename_column_3
+FROM upstream_add_rename_flush ORDER BY unique_id;
+ unique_id | rename_column_3 
+-----------+-----------------
+         0 | 
+         1 | 
+         2 | 
+         3 | 
+         4 | 
+(5 rows)
+
+CREATE TABLE upstream_add_rename_drop (id integer, val text) USING ducklake;
+INSERT INTO upstream_add_rename_drop VALUES (1, 'a'), (2, 'b');
+BEGIN;
+ALTER TABLE upstream_add_rename_drop ADD COLUMN tmp_col integer;
+ALTER TABLE upstream_add_rename_drop RENAME COLUMN tmp_col TO renamed_col;
+ALTER TABLE upstream_add_rename_drop DROP COLUMN renamed_col;
+COMMIT;
+SELECT * FROM upstream_add_rename_drop ORDER BY id;
+ id | val 
+----+-----
+  1 | a
+  2 | b
+(2 rows)
+
+CREATE TABLE upstream_rename_two (id integer) USING ducklake;
+INSERT INTO upstream_rename_two VALUES (1), (2), (3);
+BEGIN;
+ALTER TABLE upstream_rename_two ADD COLUMN col_a text;
+ALTER TABLE upstream_rename_two ADD COLUMN col_b integer;
+ALTER TABLE upstream_rename_two RENAME COLUMN col_a TO col_a_renamed;
+ALTER TABLE upstream_rename_two RENAME COLUMN col_b TO col_b_renamed;
+COMMIT;
+INSERT INTO upstream_rename_two VALUES (4, 'hello', 42);
+SELECT * FROM upstream_rename_two ORDER BY id;
+ id | col_a_renamed | col_b_renamed 
+----+---------------+---------------
+  1 |               |              
+  2 |               |              
+  3 |               |              
+  4 | hello         |            42
+(4 rows)
+
+DROP TABLE upstream_multi_alter, upstream_add_rename_flush,
+           upstream_add_rename_drop, upstream_rename_two;

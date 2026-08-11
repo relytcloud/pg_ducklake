@@ -1,0 +1,114 @@
+NOTICE:  identifier "pg_regress/ducklake/deletion_inlining/test_deletion_inlining_transaction" will be truncated to "pg_regress/ducklake/deletion_inlining/test_deletion_inlining_tr"
+-- Upstream: test/sql/deletion_inlining/test_deletion_inlining_transaction.test
+-- Skip: Internal inlined-delete row contents are not exposed by the PostgreSQL API.
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_delete_tx USING ducklake AS SELECT g AS a FROM generate_series(0,49) g;
+BEGIN;
+DELETE FROM upstream_delete_tx WHERE a < 5;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    45
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    50
+(1 row)
+
+BEGIN;
+INSERT INTO upstream_delete_tx VALUES (56),(57),(58),(59),(60),(61),(62),(63),(64),(65),(66),(67),(68),(69),(70);
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    65
+(1 row)
+
+DELETE FROM upstream_delete_tx WHERE a < 5 OR a = 65;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    59
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    50
+(1 row)
+
+BEGIN;
+DELETE FROM upstream_delete_tx WHERE a < 5;
+DELETE FROM upstream_delete_tx WHERE a < 10;
+DELETE FROM upstream_delete_tx WHERE a < 15;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    35
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    50
+(1 row)
+
+BEGIN;
+DELETE FROM upstream_delete_tx WHERE a < 5;
+DELETE FROM upstream_delete_tx WHERE a < 10;
+DELETE FROM upstream_delete_tx WHERE a < 15;
+COMMIT;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    35
+(1 row)
+
+BEGIN;
+SELECT * FROM ducklake.flush_inlined_data('upstream_delete_tx'::regclass);
+ schema_name | table_name | rows_flushed 
+-------------+------------+--------------
+(0 rows)
+
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    35
+(1 row)
+
+ROLLBACK;
+SELECT count(*) AS active_delete_files
+FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_tx' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+ active_delete_files 
+---------------------
+                   0
+(1 row)
+
+BEGIN;
+SELECT * FROM ducklake.flush_inlined_data('upstream_delete_tx'::regclass);
+ schema_name | table_name | rows_flushed 
+-------------+------------+--------------
+(0 rows)
+
+COMMIT;
+SELECT count(*) FROM upstream_delete_tx;
+ count 
+-------
+    35
+(1 row)
+
+SELECT sum(f.delete_count)
+FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_tx' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+ sum 
+-----
+  15
+(1 row)
+
+DROP TABLE upstream_delete_tx;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

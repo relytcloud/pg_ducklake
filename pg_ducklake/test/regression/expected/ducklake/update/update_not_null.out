@@ -1,0 +1,17 @@
+-- Upstream: test/sql/update/update_not_null.test
+-- A NOT NULL violation must abort the transaction and leave the row unchanged.
+CREATE TABLE upstream_update_not_null (i integer NOT NULL, j integer) USING ducklake;
+INSERT INTO upstream_update_not_null VALUES (42, NULL);
+BEGIN;
+UPDATE upstream_update_not_null SET i = NULL;
+ERROR:  (PGDuckDB/Duckdb_ExecCustomScan_Cpp) Constraint Error: NOT NULL constraint failed: upstream_update_not_null.i
+UPDATE upstream_update_not_null SET i = 100;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ROLLBACK;
+SELECT * FROM upstream_update_not_null;
+ i  | j 
+----+---
+ 42 |  
+(1 row)
+
+DROP TABLE upstream_update_not_null;

@@ -1,0 +1,78 @@
+-- Upstream: test/sql/stats/count_star_optimization_basic.test
+-- Metadata row counts remain correct across inserts, deletes, and transaction rollback.
+CREATE TABLE upstream_count_basic (i integer) USING ducklake;
+INSERT INTO upstream_count_basic SELECT i FROM generate_series(0, 999) AS g(i);
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1000
+(1 row)
+
+INSERT INTO upstream_count_basic SELECT i FROM generate_series(1000, 1499) AS g(i);
+DELETE FROM upstream_count_basic WHERE i < 100 OR i >= 1400;
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1300
+(1 row)
+
+BEGIN;
+INSERT INTO upstream_count_basic SELECT i FROM generate_series(1500, 1699) AS g(i);
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1500
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1300
+(1 row)
+
+BEGIN;
+DELETE FROM upstream_count_basic WHERE i >= 1200;
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1100
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1300
+(1 row)
+
+SELECT count(*) FROM upstream_count_basic WHERE i >= 100 AND i < 300;
+ count 
+-------
+   200
+(1 row)
+
+BEGIN;
+TRUNCATE upstream_count_basic;
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+     0
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+  1300
+(1 row)
+
+TRUNCATE upstream_count_basic;
+INSERT INTO upstream_count_basic VALUES (1), (2), (3), (4), (5);
+SELECT count(*) FROM upstream_count_basic;
+ count 
+-------
+     5
+(1 row)
+
+DROP TABLE upstream_count_basic;

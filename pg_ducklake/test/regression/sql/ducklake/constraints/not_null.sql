@@ -1,0 +1,67 @@
+-- Upstream: test/sql/constraints/not_null.test
+CREATE TABLE upstream_not_null (i integer NOT NULL, j integer) USING ducklake;
+INSERT INTO upstream_not_null VALUES (42, NULL);
+INSERT INTO upstream_not_null VALUES (NULL, 84);
+SELECT column_name, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'upstream_not_null'
+ORDER BY ordinal_position;
+ALTER TABLE upstream_not_null ALTER i SET NOT NULL;
+ALTER TABLE upstream_not_null ALTER j DROP NOT NULL;
+ALTER TABLE upstream_not_null ALTER nonexistent_column SET NOT NULL;
+ALTER TABLE upstream_not_null ALTER nonexistent_column DROP NOT NULL;
+ALTER TABLE upstream_not_null ALTER i DROP NOT NULL;
+BEGIN;
+ALTER TABLE upstream_not_null ALTER i SET NOT NULL;
+ROLLBACK;
+BEGIN;
+ALTER TABLE upstream_not_null ALTER i SET NOT NULL;
+INSERT INTO upstream_not_null VALUES (NULL, 42);
+ROLLBACK;
+BEGIN;
+INSERT INTO upstream_not_null VALUES (NULL, 84);
+ALTER TABLE upstream_not_null ALTER i SET NOT NULL;
+ROLLBACK;
+ALTER TABLE upstream_not_null ALTER j SET NOT NULL;
+INSERT INTO upstream_not_null VALUES (NULL, 84);
+CREATE TABLE upstream_not_null_delete (i integer) USING ducklake;
+INSERT INTO upstream_not_null_delete VALUES (NULL), (1);
+DELETE FROM upstream_not_null_delete WHERE i IS NULL;
+SELECT count(*) FROM upstream_not_null_delete WHERE i IS NULL;
+ALTER TABLE upstream_not_null_delete ALTER i SET NOT NULL;
+INSERT INTO upstream_not_null_delete VALUES (NULL);
+CREATE TABLE upstream_not_null_delete_tx (i integer) USING ducklake;
+INSERT INTO upstream_not_null_delete_tx VALUES (NULL), (1);
+BEGIN;
+DELETE FROM upstream_not_null_delete_tx WHERE i IS NULL;
+ALTER TABLE upstream_not_null_delete_tx ALTER i SET NOT NULL;
+COMMIT;
+INSERT INTO upstream_not_null_delete_tx VALUES (NULL);
+CREATE TABLE upstream_not_null_local_insert (i integer) USING ducklake;
+BEGIN;
+INSERT INTO upstream_not_null_local_insert VALUES (1);
+ALTER TABLE upstream_not_null_local_insert ALTER i SET NOT NULL;
+ROLLBACK;
+BEGIN;
+INSERT INTO upstream_not_null_local_insert VALUES (NULL);
+ALTER TABLE upstream_not_null_local_insert ALTER i SET NOT NULL;
+ROLLBACK;
+CREATE TABLE upstream_not_null_update (i integer) USING ducklake;
+INSERT INTO upstream_not_null_update VALUES (NULL), (1);
+UPDATE upstream_not_null_update SET i = 2 WHERE i IS NULL;
+ALTER TABLE upstream_not_null_update ALTER i SET NOT NULL;
+INSERT INTO upstream_not_null_update VALUES (NULL);
+CREATE TABLE upstream_not_null_introduced (i integer) USING ducklake;
+INSERT INTO upstream_not_null_introduced VALUES (1), (2);
+UPDATE upstream_not_null_introduced SET i = NULL WHERE i = 1;
+ALTER TABLE upstream_not_null_introduced ALTER i SET NOT NULL;
+CREATE TABLE upstream_not_null_update_tx (i integer) USING ducklake;
+INSERT INTO upstream_not_null_update_tx VALUES (NULL), (1);
+BEGIN;
+UPDATE upstream_not_null_update_tx SET i = 2 WHERE i IS NULL;
+ALTER TABLE upstream_not_null_update_tx ALTER i SET NOT NULL;
+COMMIT;
+INSERT INTO upstream_not_null_update_tx VALUES (NULL);
+DROP TABLE upstream_not_null, upstream_not_null_delete, upstream_not_null_delete_tx,
+  upstream_not_null_local_insert, upstream_not_null_update,
+  upstream_not_null_introduced, upstream_not_null_update_tx;

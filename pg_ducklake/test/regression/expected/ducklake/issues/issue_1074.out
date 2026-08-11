@@ -1,0 +1,38 @@
+-- Upstream: test/sql/issues/issue_1074.test
+-- Mix inlined and file-backed deletions, then verify every captured version.
+CREATE TABLE upstream_issue_1074 USING ducklake AS
+SELECT g AS id FROM generate_series(0, 99) AS g;
+SELECT max(r['snapshot_id']::bigint) AS screate FROM ducklake.snapshots() AS r \gset
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_issue_1074'::regclass);
+DELETE FROM upstream_issue_1074 WHERE id = 0;
+SELECT max(r['snapshot_id']::bigint) AS s1 FROM ducklake.snapshots() AS r \gset
+CALL ducklake.set_option('data_inlining_row_limit', 0, 'upstream_issue_1074'::regclass);
+DELETE FROM upstream_issue_1074 WHERE id = 1;
+SELECT max(r['snapshot_id']::bigint) AS s2 FROM ducklake.snapshots() AS r \gset
+DELETE FROM upstream_issue_1074 WHERE id = 2;
+SELECT max(r['snapshot_id']::bigint) AS s3 FROM ducklake.snapshots() AS r \gset
+SELECT count(*) FROM ducklake.time_travel('upstream_issue_1074'::regclass, :screate);
+ count 
+-------
+   100
+(1 row)
+
+SELECT count(*) FROM ducklake.time_travel('upstream_issue_1074'::regclass, :s1);
+ count 
+-------
+    99
+(1 row)
+
+SELECT count(*) FROM ducklake.time_travel('upstream_issue_1074'::regclass, :s2);
+ count 
+-------
+    98
+(1 row)
+
+SELECT count(*) FROM ducklake.time_travel('upstream_issue_1074'::regclass, :s3);
+ count 
+-------
+    97
+(1 row)
+
+DROP TABLE upstream_issue_1074;

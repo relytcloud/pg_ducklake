@@ -1,0 +1,44 @@
+NOTICE:  identifier "pg_regress/ducklake/compaction/compaction_schema_version_per_table" will be truncated to "pg_regress/ducklake/compaction/compaction_schema_version_per_ta"
+-- Upstream: test/sql/compaction/compaction_schema_version_per_table.test
+-- Compaction uses each table's schema version, not an unrelated catalog version.
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CREATE TABLE upstream_compact_schema_a (a integer) USING ducklake;
+INSERT INTO upstream_compact_schema_a VALUES (1), (2);
+CREATE TABLE upstream_compact_schema_b (x integer) USING ducklake;
+INSERT INTO upstream_compact_schema_b VALUES (100), (200);
+ALTER TABLE upstream_compact_schema_b ADD COLUMN y text;
+CREATE VIEW upstream_compact_schema_view AS SELECT * FROM upstream_compact_schema_b;
+DROP VIEW upstream_compact_schema_view;
+INSERT INTO upstream_compact_schema_a VALUES (3);
+INSERT INTO upstream_compact_schema_a VALUES (4);
+SELECT * FROM ducklake.merge_adjacent_files('upstream_compact_schema_a'::regclass);
+ schema_name |        table_name         | files_processed | files_created 
+-------------+---------------------------+-----------------+---------------
+ public      | upstream_compact_schema_a |               3 |             1
+(1 row)
+
+SELECT count(*) = 1 AS table_a_has_one_live_file
+FROM ducklake.list_files('upstream_compact_schema_a'::regclass);
+ table_a_has_one_live_file 
+---------------------------
+ t
+(1 row)
+
+SELECT * FROM upstream_compact_schema_a ORDER BY a;
+ a 
+---
+ 1
+ 2
+ 3
+ 4
+(4 rows)
+
+SELECT * FROM upstream_compact_schema_b ORDER BY x;
+  x  | y 
+-----+---
+ 100 | 
+ 200 | 
+(2 rows)
+
+DROP TABLE upstream_compact_schema_a;
+DROP TABLE upstream_compact_schema_b;

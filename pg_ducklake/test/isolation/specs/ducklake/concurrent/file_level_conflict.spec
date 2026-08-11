@@ -1,0 +1,21 @@
+# Upstream: test/sql/concurrent/file_level_conflict.test
+# Concurrent deletes of disjoint partition files can both commit.
+setup {
+ CALL ducklake.set_option('data_inlining_row_limit', 0);
+ CREATE TABLE upstream_iso_file_conflict (key integer, grouping integer) USING ducklake;
+ CALL ducklake.set_partition('upstream_iso_file_conflict'::regclass, 'grouping');
+ INSERT INTO upstream_iso_file_conflict SELECT i, i % 2 FROM generate_series(0, 19) AS g(i);
+}
+session s1
+step s1_begin { BEGIN; }
+step s1_delete { DELETE FROM upstream_iso_file_conflict WHERE key = 1; }
+step s1_commit { COMMIT; }
+session s2
+step s2_begin { BEGIN; }
+step s2_delete { DELETE FROM upstream_iso_file_conflict WHERE key = 2; }
+step s2_commit { COMMIT; }
+session check_session
+step check_rows { SELECT count(*), sum(key) FROM upstream_iso_file_conflict; }
+teardown { DROP TABLE upstream_iso_file_conflict; }
+permutation s1_begin s2_begin s1_delete s2_delete s1_commit s2_commit check_rows
+permutation s1_begin s2_begin s1_delete s2_delete s2_commit s1_commit check_rows

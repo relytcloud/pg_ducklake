@@ -1,0 +1,26 @@
+-- Upstream: test/sql/types/timestamp.test
+SET TIME ZONE 'UTC';
+CREATE TABLE upstream_type_timestamp (ts timestamp) USING ducklake;
+INSERT INTO upstream_type_timestamp VALUES
+  (TIMESTAMP '1992-01-01'), (TIMESTAMP '2020-01-01'),
+  ('infinity'), (TIMESTAMP '2022-01-01');
+SELECT count(*) FROM upstream_type_timestamp WHERE ts = 'infinity';
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM upstream_type_timestamp WHERE ts <= 'infinity';
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM upstream_type_timestamp WHERE ts > '-infinity';
+ count 
+-------
+     4
+(1 row)
+
+DROP TABLE upstream_type_timestamp;
+SET TIME ZONE DEFAULT;

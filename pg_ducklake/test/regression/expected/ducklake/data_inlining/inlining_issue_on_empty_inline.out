@@ -1,0 +1,28 @@
+NOTICE:  identifier "pg_regress/ducklake/data_inlining/inlining_issue_on_empty_inline" will be truncated to "pg_regress/ducklake/data_inlining/inlining_issue_on_empty_inlin"
+-- Upstream: test/sql/data_inlining/inlining_issue_on_empty_inline.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_empty_seed (i integer) USING ducklake;
+INSERT INTO upstream_inline_empty_seed VALUES (1), (2), (3);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_empty_seed'::regclass);
+ schema_name |         table_name         | rows_flushed 
+-------------+----------------------------+--------------
+ public      | upstream_inline_empty_seed |            3
+(1 row)
+
+CREATE TABLE upstream_inline_empty (id integer) USING ducklake;
+ALTER TABLE upstream_inline_empty ADD COLUMN k integer;
+CALL ducklake.recycle_ddb();
+SELECT count(*) FROM ducklake.flush_inlined_data();
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM upstream_inline_empty;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE upstream_inline_empty_seed, upstream_inline_empty;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

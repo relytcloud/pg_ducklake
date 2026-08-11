@@ -1,0 +1,34 @@
+-- Upstream: test/sql/comments/comment_preserves_other_tags.test
+-- Skip: pre-existing non-comment column tags currently make COMMENT ON COLUMN fail.
+CREATE TABLE upstream_comment_tags (i integer) USING ducklake;
+INSERT INTO ducklake.ducklake_tag (object_id, begin_snapshot, end_snapshot, key, value)
+SELECT t.table_id, (SELECT max(snapshot_id) FROM ducklake.ducklake_snapshot), NULL, 'owner', 'alice'
+FROM ducklake.ducklake_table t
+WHERE t.table_name = 'upstream_comment_tags' AND t.end_snapshot IS NULL;
+COMMENT ON TABLE upstream_comment_tags IS 'my comment';
+SELECT tag.key, tag.value, tag.end_snapshot IS NULL AS active
+FROM ducklake.ducklake_tag tag
+JOIN ducklake.ducklake_table t ON t.table_id = tag.object_id
+WHERE t.table_name = 'upstream_comment_tags'
+ORDER BY tag.key, tag.end_snapshot NULLS LAST;
+COMMENT ON TABLE upstream_comment_tags IS 'updated comment';
+SELECT tag.key, tag.value, tag.end_snapshot IS NULL AS active
+FROM ducklake.ducklake_tag tag
+JOIN ducklake.ducklake_table t ON t.table_id = tag.object_id
+WHERE t.table_name = 'upstream_comment_tags'
+ORDER BY tag.key, active;
+INSERT INTO ducklake.ducklake_column_tag
+  (table_id, column_id, begin_snapshot, end_snapshot, key, value)
+SELECT t.table_id, c.column_id,
+       (SELECT max(snapshot_id) FROM ducklake.ducklake_snapshot), NULL, 'pii', 'true'
+FROM ducklake.ducklake_table t
+JOIN ducklake.ducklake_column c USING (table_id)
+WHERE t.table_name = 'upstream_comment_tags' AND t.end_snapshot IS NULL
+  AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+COMMENT ON COLUMN upstream_comment_tags.i IS 'col comment';
+SELECT tag.key, tag.value, tag.end_snapshot IS NULL AS active
+FROM ducklake.ducklake_column_tag tag
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_comment_tags'
+ORDER BY tag.key, active;
+DROP TABLE upstream_comment_tags;

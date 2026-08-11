@@ -1,0 +1,10 @@
+-- Upstream: test/sql/alter/mixed_alter2.test
+-- Skip: PostgreSQL has no anonymous STRUCT column type equivalent to the omitted add-column case.
+CREATE TABLE upstream_mixed_alter2 (col1 integer) USING ducklake;
+INSERT INTO upstream_mixed_alter2 VALUES (42);
+ALTER TABLE upstream_mixed_alter2 ADD COLUMN col2 text;
+ALTER TABLE upstream_mixed_alter2 ADD COLUMN new_column text DEFAULT 'my_default';
+SELECT * FROM upstream_mixed_alter2 ORDER BY col1;
+ALTER TABLE upstream_mixed_alter2 DROP COLUMN new_column;
+SELECT * FROM upstream_mixed_alter2 ORDER BY col1;
+DROP TABLE upstream_mixed_alter2;

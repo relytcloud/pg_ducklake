@@ -1,0 +1,62 @@
+NOTICE:  identifier "pg_regress/ducklake/deletion_inlining/test_deletion_inlining_large" will be truncated to "pg_regress/ducklake/deletion_inlining/test_deletion_inlining_la"
+-- Upstream: test/sql/deletion_inlining/test_deletion_inlining_large.test
+CALL ducklake.set_option('data_inlining_row_limit', 300);
+CREATE TABLE upstream_delete_large USING ducklake AS SELECT g AS a, g * 2 AS b FROM generate_series(0, 999) g;
+SELECT max(snapshot_id) AS vorig FROM ducklake.ducklake_snapshot \gset
+DELETE FROM upstream_delete_large WHERE a IN (100, 500, 999);
+DELETE FROM upstream_delete_large WHERE a IN (50, 250, 750);
+DELETE FROM upstream_delete_large WHERE a >= 300 AND a < 590;
+SELECT max(snapshot_id) AS vdeleted FROM ducklake.ducklake_snapshot \gset
+SELECT count(*), sum(a) FROM upstream_delete_large;
+ count |  sum   
+-------+--------
+   705 | 368446
+(1 row)
+
+SELECT count(*) AS active_delete_files
+FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_delete_large' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+ active_delete_files 
+---------------------
+                   0
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('upstream_delete_large'::regclass);
+ schema_name | table_name | rows_flushed 
+-------------+------------+--------------
+(0 rows)
+
+SELECT count(*), sum(a) FROM upstream_delete_large;
+ count |  sum   
+-------+--------
+   705 | 368446
+(1 row)
+
+SELECT count(*), sum(r['a']::integer)
+FROM ducklake.time_travel('upstream_delete_large'::regclass, :vorig) AS r;
+ count |  sum   
+-------+--------
+  1000 | 499500
+(1 row)
+
+SELECT count(*), sum(r['a']::integer)
+FROM ducklake.time_travel('upstream_delete_large'::regclass, :vdeleted) AS r;
+ count |  sum   
+-------+--------
+   705 | 368446
+(1 row)
+
+DELETE FROM upstream_delete_large WHERE a >= 900;
+SELECT * FROM ducklake.flush_inlined_data('upstream_delete_large'::regclass);
+ schema_name | table_name | rows_flushed 
+-------------+------------+--------------
+(0 rows)
+
+SELECT count(*), sum(a) FROM upstream_delete_large;
+ count |  sum   
+-------+--------
+   606 | 274495
+(1 row)
+
+DROP TABLE upstream_delete_large;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

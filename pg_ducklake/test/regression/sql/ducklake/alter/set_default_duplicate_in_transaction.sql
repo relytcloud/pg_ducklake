@@ -1,0 +1,35 @@
+-- Upstream: test/sql/alter/set_default_duplicate_in_transaction.test
+-- Repeated SET DEFAULT operations in one transaction must leave one active column.
+
+CREATE TABLE upstream_set_default (a integer) USING ducklake;
+
+BEGIN;
+ALTER TABLE upstream_set_default ALTER a SET DEFAULT 99;
+ALTER TABLE upstream_set_default ALTER a SET DEFAULT 9;
+COMMIT;
+
+BEGIN;
+ALTER TABLE upstream_set_default ALTER a SET DEFAULT 8;
+COMMIT;
+
+INSERT INTO upstream_set_default DEFAULT VALUES;
+SELECT a FROM upstream_set_default;
+
+BEGIN;
+ALTER TABLE upstream_set_default ALTER a SET DEFAULT 100;
+ALTER TABLE upstream_set_default ALTER a SET DEFAULT 200;
+ALTER TABLE upstream_set_default ALTER a SET DEFAULT 300;
+COMMIT;
+
+INSERT INTO upstream_set_default DEFAULT VALUES;
+SELECT a FROM upstream_set_default ORDER BY a;
+
+SELECT count(*) AS active_columns
+FROM ducklake.ducklake_column c
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_set_default'
+  AND t.end_snapshot IS NULL
+  AND c.column_name = 'a'
+  AND c.end_snapshot IS NULL;
+
+DROP TABLE upstream_set_default;

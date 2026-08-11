@@ -1,0 +1,50 @@
+-- Upstream: test/sql/partitioning/update_partition_function.test
+-- UPDATE must preserve rows when changing identity and transformed partition keys.
+SET datestyle TO ISO;
+CREATE TABLE upstream_update_partition (
+    p text,
+    ts timestamp,
+    v text
+) USING ducklake;
+CALL ducklake.set_partition(
+    'upstream_update_partition'::regclass,
+    'p',
+    'day(ts)'
+);
+INSERT INTO upstream_update_partition VALUES
+    ('p1', TIMESTAMP '2026-02-05', 'va'),
+    ('p2', TIMESTAMP '2026-03-10', 'vb');
+UPDATE upstream_update_partition SET p = 'p3' WHERE v = 'va';
+SELECT * FROM upstream_update_partition ORDER BY p;
+ p  |         ts          | v  
+----+---------------------+----
+ p2 | 2026-03-10 00:00:00 | vb
+ p3 | 2026-02-05 00:00:00 | va
+(2 rows)
+
+UPDATE upstream_update_partition SET v = 'vc' WHERE p = 'p2';
+SELECT * FROM upstream_update_partition ORDER BY p;
+ p  |         ts          | v  
+----+---------------------+----
+ p2 | 2026-03-10 00:00:00 | vc
+ p3 | 2026-02-05 00:00:00 | va
+(2 rows)
+
+UPDATE upstream_update_partition
+SET ts = TIMESTAMP '2026-06-15'
+WHERE p = 'p3';
+SELECT * FROM upstream_update_partition ORDER BY p;
+ p  |         ts          | v  
+----+---------------------+----
+ p2 | 2026-03-10 00:00:00 | vc
+ p3 | 2026-06-15 00:00:00 | va
+(2 rows)
+
+SELECT * FROM ducklake.get_partition('upstream_update_partition'::regclass);
+ partition_key_index | column_name | transform 
+---------------------+-------------+-----------
+                   0 | p           | identity
+                   1 | ts          | day
+(2 rows)
+
+DROP TABLE upstream_update_partition;

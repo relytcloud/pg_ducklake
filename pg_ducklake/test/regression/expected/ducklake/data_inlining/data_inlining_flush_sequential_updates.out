@@ -1,0 +1,60 @@
+NOTICE:  identifier "pg_regress/ducklake/data_inlining/data_inlining_flush_sequential_updates" will be truncated to "pg_regress/ducklake/data_inlining/data_inlining_flush_sequentia"
+-- Upstream: test/sql/data_inlining/data_inlining_flush_sequential_updates.test
+CALL ducklake.set_option('data_inlining_row_limit', 50);
+CREATE TABLE upstream_inline_seq (id integer, val integer) USING ducklake;
+INSERT INTO upstream_inline_seq SELECT g, 0 FROM generate_series(0, 19) g;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+SELECT min(val), max(val), count(*) FROM upstream_inline_seq;
+ min | max | count 
+-----+-----+-------
+  10 |  10 |    20
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_seq'::regclass);
+ schema_name |     table_name      | rows_flushed 
+-------------+---------------------+--------------
+ public      | upstream_inline_seq |          220
+(1 row)
+
+SELECT min(val), max(val), count(*) FROM upstream_inline_seq;
+ min | max | count 
+-----+-----+-------
+  10 |  10 |    20
+(1 row)
+
+SELECT id, val FROM upstream_inline_seq ORDER BY id;
+ id | val 
+----+-----
+  0 |  10
+  1 |  10
+  2 |  10
+  3 |  10
+  4 |  10
+  5 |  10
+  6 |  10
+  7 |  10
+  8 |  10
+  9 |  10
+ 10 |  10
+ 11 |  10
+ 12 |  10
+ 13 |  10
+ 14 |  10
+ 15 |  10
+ 16 |  10
+ 17 |  10
+ 18 |  10
+ 19 |  10
+(20 rows)
+
+DROP TABLE upstream_inline_seq;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

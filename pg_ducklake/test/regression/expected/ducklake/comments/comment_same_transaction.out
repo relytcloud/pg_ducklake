@@ -1,0 +1,55 @@
+-- Upstream: test/sql/comments/comment_same_transaction.test
+-- Skip: PostgreSQL views do not have DuckLake view-comment metadata.
+CREATE TABLE upstream_comment_same_tx (a integer, b text) USING ducklake;
+SELECT count(*) AS schema_versions
+FROM ducklake.ducklake_schema_versions sv
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_comment_same_tx' AND t.end_snapshot IS NULL;
+ schema_versions 
+-----------------
+               1
+(1 row)
+
+BEGIN;
+COMMENT ON TABLE upstream_comment_same_tx IS 'my table comment';
+ALTER TABLE upstream_comment_same_tx ADD COLUMN c bigint;
+COMMENT ON COLUMN upstream_comment_same_tx.c IS 'new column comment';
+COMMIT;
+SELECT count(*) AS schema_versions
+FROM ducklake.ducklake_schema_versions sv
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_comment_same_tx' AND t.end_snapshot IS NULL;
+ schema_versions 
+-----------------
+               2
+(1 row)
+
+SELECT obj_description('upstream_comment_same_tx'::regclass, 'pg_class');
+ obj_description  
+------------------
+ my table comment
+(1 row)
+
+SELECT a.attname, col_description(a.attrelid, a.attnum)
+FROM pg_attribute a
+WHERE a.attrelid = 'upstream_comment_same_tx'::regclass
+  AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+ attname |  col_description   
+---------+--------------------
+ a       | 
+ b       | 
+ c       | new column comment
+(3 rows)
+
+ALTER TABLE upstream_comment_same_tx ADD COLUMN d bigint;
+SELECT count(*) AS schema_versions
+FROM ducklake.ducklake_schema_versions sv
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_comment_same_tx' AND t.end_snapshot IS NULL;
+ schema_versions 
+-----------------
+               3
+(1 row)
+
+DROP TABLE upstream_comment_same_tx;

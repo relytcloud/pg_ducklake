@@ -1,0 +1,10 @@
+-- Upstream: test/sql/sorted_table/flush_sorted_rename_quoted.test
+-- Quoted column names work with sorted flushes and deletes.
+CREATE TABLE upstream_flush_quoted ("My Col" integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_flush_quoted'::regclass);
+INSERT INTO upstream_flush_quoted VALUES (3), (1), (2);
+DELETE FROM upstream_flush_quoted WHERE "My Col" = 1;
+CALL ducklake.set_sort('upstream_flush_quoted'::regclass, '"My Col" DESC');
+SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_flush_quoted'::regclass);
+SELECT "My Col" FROM upstream_flush_quoted ORDER BY "My Col" DESC;
+DROP TABLE upstream_flush_quoted;

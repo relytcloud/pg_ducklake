@@ -1,0 +1,15 @@
+-- Upstream: test/sql/alter/alter_timestamptz_promotion.test
+SET TIME ZONE 'UTC';
+CREATE TABLE upstream_promote_timestamptz (col1 timestamp) USING ducklake;
+INSERT INTO upstream_promote_timestamptz VALUES (TIMESTAMP '2025-01-15 12:30:45');
+ALTER TABLE upstream_promote_timestamptz ALTER COLUMN col1 TYPE timestamptz;
+INSERT INTO upstream_promote_timestamptz VALUES (TIMESTAMPTZ '2025-01-15 12:30:45+00');
+SELECT col1 FROM upstream_promote_timestamptz ORDER BY col1;
+             col1             
+------------------------------
+ Wed Jan 15 12:30:45 2025 UTC
+ Wed Jan 15 12:30:45 2025 UTC
+(2 rows)
+
+DROP TABLE upstream_promote_timestamptz;
+SET TIME ZONE DEFAULT;

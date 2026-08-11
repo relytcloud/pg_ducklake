@@ -1,0 +1,7 @@
+-- Upstream: test/sql/data_inlining/inlining_double.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_double (id integer, latitude double precision, longitude double precision) USING ducklake;
+INSERT INTO upstream_inline_double VALUES (1, 37.7749, -122.4194);
+SELECT * FROM upstream_inline_double;
+DROP TABLE upstream_inline_double;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

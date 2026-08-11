@@ -60,3 +60,9 @@ test: create_view_shapes
 test: parallel_mode_metadata
 test: scan_error_unwind
 test: same_txn_create_drop
+
+test: ducklake/alter/set_default_duplicate_in_transaction
+test: ducklake/partitioning/partition_rename_in_transaction
+test: ducklake/partitioning/update_partition_function
+test: ducklake/sorted_table/set_sorted_by_rollback_mixed
+test: ducklake/table_changes/window_partition_row_loss

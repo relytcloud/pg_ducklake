@@ -1,0 +1,63 @@
+-- Upstream: test/sql/default/default_expressions.test
+CREATE TABLE upstream_default_expr_time (
+  id integer,
+  created_at timestamp DEFAULT now()
+) USING ducklake;
+INSERT INTO upstream_default_expr_time (id) VALUES (1);
+SELECT id, created_at < clock_timestamp() AS default_precedes_read
+FROM upstream_default_expr_time ORDER BY id;
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Catalog Error: Scalar Function with name clock_timestamp does not exist!
+Did you mean "to_timestamp"?
+
+LINE 1: SELECT id, (created_at < clock_timestamp()) AS default_precedes_read FROM pgducklake...
+                                 ^
+CREATE TABLE upstream_default_expr_num (id integer, id_plus integer DEFAULT 1) USING ducklake;
+INSERT INTO upstream_default_expr_num (id) VALUES (0);
+ALTER TABLE upstream_default_expr_num ALTER id_plus SET DEFAULT round(pi());
+INSERT INTO upstream_default_expr_num (id) VALUES (1);
+SELECT * FROM upstream_default_expr_num ORDER BY id;
+ id | id_plus 
+----+---------
+  0 |       1
+  1 |       3
+(2 rows)
+
+CREATE TABLE upstream_default_expr_literal (a integer, b text) USING ducklake;
+ALTER TABLE upstream_default_expr_literal ALTER b SET DEFAULT 'random()';
+INSERT INTO upstream_default_expr_literal (a) VALUES (1);
+SELECT * FROM upstream_default_expr_literal ORDER BY a;
+ a |    b     
+---+----------
+ 1 | random()
+(1 row)
+
+SELECT t.table_name, c.column_name, c.default_value,
+       c.default_value_type, c.default_value_dialect,
+       c.end_snapshot IS NULL AS active
+FROM ducklake.ducklake_table t
+JOIN ducklake.ducklake_column c USING (table_id)
+WHERE t.table_name IN ('upstream_default_expr_time',
+                       'upstream_default_expr_num',
+                       'upstream_default_expr_literal')
+ORDER BY t.table_name, c.column_order, c.begin_snapshot;
+          table_name           | column_name |        default_value        | default_value_type | default_value_dialect | active 
+-------------------------------+-------------+-----------------------------+--------------------+-----------------------+--------
+ upstream_default_expr_literal | a           | NULL                        | literal            | duckdb                | t
+ upstream_default_expr_literal | b           | NULL                        | literal            | duckdb                | f
+ upstream_default_expr_literal | b           | CAST('random()' AS VARCHAR) | expression         | duckdb                | t
+ upstream_default_expr_num     | id          | NULL                        | literal            | duckdb                | t
+ upstream_default_expr_num     | id_plus     | 1                           | literal            | duckdb                | f
+ upstream_default_expr_num     | id_plus     | round(pi())                 | expression         | duckdb                | t
+ upstream_default_expr_time    | id          | NULL                        | literal            | duckdb                | t
+ upstream_default_expr_time    | created_at  | now()                       | expression         | duckdb                | t
+(8 rows)
+
+BEGIN;
+SAVEPOINT expected_nonliteral_add_default;
+ALTER TABLE upstream_default_expr_literal ADD COLUMN j double precision DEFAULT random();
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
+ROLLBACK TO SAVEPOINT expected_nonliteral_add_default;
+COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
+DROP TABLE upstream_default_expr_time, upstream_default_expr_num, upstream_default_expr_literal;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block

@@ -17,6 +17,7 @@ dataset: $(CURDIR)/data/titanic.csv
 # WITH_PG_DUCKDB=1 also preloads + creates community pg_duckdb, exercising the
 # suite with both extensions co-installed (coexist.conf overrides the preload).
 check-regression: dataset
+	@cd sql && find ducklake -type d -exec mkdir -p ../results/{} \;
 	TEST_DIR=$(CURDIR) $(pg_regress_installcheck) \
 	--encoding=UTF8 \
 	--no-locale \

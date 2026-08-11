@@ -1,0 +1,20 @@
+-- Upstream: test/sql/data_inlining/data_inlining_flush_sequential_updates.test
+CALL ducklake.set_option('data_inlining_row_limit', 50);
+CREATE TABLE upstream_inline_seq (id integer, val integer) USING ducklake;
+INSERT INTO upstream_inline_seq SELECT g, 0 FROM generate_series(0, 19) g;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+UPDATE upstream_inline_seq SET val = val + 1;
+SELECT min(val), max(val), count(*) FROM upstream_inline_seq;
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_seq'::regclass);
+SELECT min(val), max(val), count(*) FROM upstream_inline_seq;
+SELECT id, val FROM upstream_inline_seq ORDER BY id;
+DROP TABLE upstream_inline_seq;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

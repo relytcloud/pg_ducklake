@@ -1,0 +1,87 @@
+-- Upstream: test/sql/stats/global_stats.test
+-- Global column stats merge values, nullability, types, and transaction-local changes.
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+CREATE TABLE upstream_global_stats (i integer) USING ducklake;
+INSERT INTO upstream_global_stats VALUES (42);
+SELECT s.min_value, s.max_value, s.contains_null
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'upstream_global_stats' AND t.end_snapshot IS NULL
+  AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+ min_value | max_value | contains_null 
+-----------+-----------+---------------
+ 42        | 42        | f
+(1 row)
+
+INSERT INTO upstream_global_stats VALUES (84), (NULL);
+SELECT s.min_value, s.max_value, s.contains_null
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'upstream_global_stats' AND t.end_snapshot IS NULL
+  AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+ min_value | max_value | contains_null 
+-----------+-----------+---------------
+ 42        | 84        | t
+(1 row)
+
+BEGIN;
+INSERT INTO upstream_global_stats VALUES (85), (86), (87);
+COMMIT;
+SELECT s.min_value, s.max_value, s.contains_null
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'upstream_global_stats' AND t.end_snapshot IS NULL
+  AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+ min_value | max_value | contains_null 
+-----------+-----------+---------------
+ 42        | 87        | t
+(1 row)
+
+BEGIN;
+INSERT INTO upstream_global_stats VALUES (100);
+SELECT * FROM upstream_global_stats WHERE i = 100;
+  i  
+-----
+ 100
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FILTER (WHERE i = 100) FROM upstream_global_stats;
+ count 
+-------
+     0
+(1 row)
+
+CREATE TABLE upstream_global_stats_dates (d date) USING ducklake;
+INSERT INTO upstream_global_stats_dates VALUES (date '1992-01-01'), (date '2000-02-03');
+SELECT s.min_value, s.max_value, s.contains_null
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'upstream_global_stats_dates' AND t.end_snapshot IS NULL
+  AND c.column_name = 'd' AND c.end_snapshot IS NULL;
+ min_value  | max_value  | contains_null 
+------------+------------+---------------
+ 1992-01-01 | 2000-02-03 | f
+(1 row)
+
+CREATE TABLE upstream_global_stats_text (s text) USING ducklake;
+INSERT INTO upstream_global_stats_text VALUES ('hello world'), ('bye bye world');
+SELECT s.min_value, s.max_value, s.contains_null
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'upstream_global_stats_text' AND t.end_snapshot IS NULL
+  AND c.column_name = 's' AND c.end_snapshot IS NULL;
+   min_value   |  max_value  | contains_null 
+---------------+-------------+---------------
+ bye bye world | hello world | f
+(1 row)
+
+DROP TABLE upstream_global_stats;
+DROP TABLE upstream_global_stats_dates;
+DROP TABLE upstream_global_stats_text;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

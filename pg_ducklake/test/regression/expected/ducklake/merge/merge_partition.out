@@ -1,0 +1,49 @@
+-- Upstream: test/sql/merge/merge_partition.test
+-- MERGE inserts and updates must work on transformed partition keys.
+SET datestyle TO ISO;
+CREATE TABLE upstream_merge_timeseries (ts timestamp, x double precision) USING ducklake;
+CALL ducklake.set_partition('upstream_merge_timeseries'::regclass, 'year(ts)');
+INSERT INTO upstream_merge_timeseries VALUES (TIMESTAMP '2025-09-15', 42);
+MERGE INTO upstream_merge_timeseries AS old
+USING (VALUES (TIMESTAMP '2025-09-17', 42::double precision)) AS new(ts, x)
+ON old.ts = new.ts
+WHEN NOT MATCHED THEN INSERT (ts, x) VALUES (new.ts, new.x);
+SELECT * FROM upstream_merge_timeseries ORDER BY ts;
+         ts          | x  
+---------------------+----
+ 2025-09-15 00:00:00 | 42
+ 2025-09-17 00:00:00 | 42
+(2 rows)
+
+MERGE INTO upstream_merge_timeseries AS old
+USING (VALUES (TIMESTAMP '2025-09-17', 43::double precision)) AS new(ts, x)
+ON old.ts = new.ts
+WHEN MATCHED THEN UPDATE SET x = new.x;
+SELECT * FROM upstream_merge_timeseries ORDER BY ts;
+         ts          | x  
+---------------------+----
+ 2025-09-15 00:00:00 | 42
+ 2025-09-17 00:00:00 | 43
+(2 rows)
+
+DROP TABLE upstream_merge_timeseries;
+CREATE TABLE upstream_merge_timeseries (
+    ts timestamp, x double precision, y double precision
+) USING ducklake;
+INSERT INTO upstream_merge_timeseries VALUES (TIMESTAMP '2025-09-15', 43, 39);
+CREATE TABLE upstream_merge_timeseries_new (
+    ts timestamp, x double precision, y double precision
+) USING ducklake;
+INSERT INTO upstream_merge_timeseries_new VALUES (TIMESTAMP '2025-09-15', 43, 33);
+MERGE INTO upstream_merge_timeseries AS old
+USING upstream_merge_timeseries_new AS new ON old.ts = new.ts
+WHEN MATCHED AND old.x IS DISTINCT FROM new.y
+THEN UPDATE SET x = new.x, y = new.y;
+SELECT * FROM upstream_merge_timeseries;
+         ts          | x  | y  
+---------------------+----+----
+ 2025-09-15 00:00:00 | 43 | 33
+(1 row)
+
+DROP TABLE upstream_merge_timeseries_new;
+DROP TABLE upstream_merge_timeseries;

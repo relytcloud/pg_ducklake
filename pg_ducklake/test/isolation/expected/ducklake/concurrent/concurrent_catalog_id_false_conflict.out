@@ -1,0 +1,26 @@
+Parsed test spec with 2 sessions
+NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_catalog_id_false_conflict" will be truncated to "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl"
+NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_catalog_id_false_conflict" will be truncated to "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl"
+s1: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl/s1" will be truncated to "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl"
+NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_catalog_id_false_conflict" will be truncated to "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl"
+s2: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl/s2" will be truncated to "isolation/ducklake/concurrent/concurrent_catalog_id_false_confl"
+
+starting permutation: s1_begin s2_begin s1_read s2_read s1_create s2_create s1_commit s1_drop s2_commit
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_read: SELECT * FROM upstream_iso_catalog_seed;
+x
+-
+(0 rows)
+
+step s2_read: SELECT * FROM upstream_iso_catalog_seed;
+x
+-
+(0 rows)
+
+step s1_create: CREATE TABLE upstream_iso_catalog_a (x integer) USING ducklake;
+step s2_create: CREATE TABLE upstream_iso_catalog_b (x integer) USING ducklake;
+step s1_commit: COMMIT;
+step s1_drop: DROP TABLE upstream_iso_catalog_a;
+step s2_commit: COMMIT;
+s2: NOTICE:  table "upstream_iso_catalog_a" does not exist, skipping

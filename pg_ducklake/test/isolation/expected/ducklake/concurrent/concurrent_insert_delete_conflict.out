@@ -1,0 +1,24 @@
+Parsed test spec with 3 sessions
+s1: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_delete_conflict/s1" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_delete_conflict"
+s2: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_delete_conflict/s2" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_delete_conflict"
+check_session: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_delete_conflict/check_session" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_delete_conflict"
+
+starting permutation: s1_begin s2_begin s1_delete s2_insert s1_commit s2_commit check_rows
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_delete: DELETE FROM upstream_iso_insert_delete WHERE key = 1;
+step s2_insert: INSERT INTO upstream_iso_insert_delete VALUES (101);
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
+Transaction conflict - attempting to insert into table with index "2" - but another transaction has deleted from it
+step check_rows: 
+ SELECT count(*), count(*) FILTER (WHERE key = 1), count(*) FILTER (WHERE key = 101),
+        count(*) - count(DISTINCT key) AS duplicates
+ FROM upstream_iso_insert_delete;
+
+count|count|count|duplicates
+-----+-----+-----+----------
+    9|    0|    0|         0
+(1 row)
+

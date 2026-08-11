@@ -1,0 +1,17 @@
+-- Upstream: test/sql/catalog/quoted_identifiers.test
+CREATE TABLE "upstream quoted 'table' ""name""" (
+    "quoted 'column' ""name""" integer
+) USING ducklake;
+SELECT "quoted 'column' ""name""" FROM "upstream quoted 'table' ""name""";
+ quoted 'column' "name" 
+------------------------
+(0 rows)
+
+INSERT INTO "upstream quoted 'table' ""name""" VALUES (42);
+SELECT "quoted 'column' ""name""" FROM "upstream quoted 'table' ""name""";
+ quoted 'column' "name" 
+------------------------
+                     42
+(1 row)
+
+DROP TABLE "upstream quoted 'table' ""name""";

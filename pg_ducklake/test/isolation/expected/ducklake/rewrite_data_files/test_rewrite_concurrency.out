@@ -1,0 +1,32 @@
+Parsed test spec with 3 sessions
+s1: NOTICE:  identifier "isolation/ducklake/rewrite_data_files/test_rewrite_concurrency/s1" will be truncated to "isolation/ducklake/rewrite_data_files/test_rewrite_concurrency/"
+s2: NOTICE:  identifier "isolation/ducklake/rewrite_data_files/test_rewrite_concurrency/s2" will be truncated to "isolation/ducklake/rewrite_data_files/test_rewrite_concurrency/"
+check_session: NOTICE:  identifier "isolation/ducklake/rewrite_data_files/test_rewrite_concurrency/check_session" will be truncated to "isolation/ducklake/rewrite_data_files/test_rewrite_concurrency/"
+
+starting permutation: s1_begin s2_begin s1_rewrite s2_rewrite s1_commit s2_commit check_rows
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_rewrite: SELECT * FROM ducklake.rewrite_data_files('upstream_iso_rewrite'::regclass);
+schema_name|table_name          |files_processed|files_created
+-----------+--------------------+---------------+-------------
+public     |upstream_iso_rewrite|              1|            1
+(1 row)
+
+step s2_rewrite: SELECT * FROM ducklake.rewrite_data_files('upstream_iso_rewrite'::regclass);
+schema_name|table_name          |files_processed|files_created
+-----------+--------------------+---------------+-------------
+public     |upstream_iso_rewrite|              1|            1
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
+Transaction conflict - attempting to compact table with index "2" - but another transaction has compacted it
+step check_rows: SELECT * FROM upstream_iso_rewrite ORDER BY key;
+key|value
+---+-----
+ 39|v39  
+ 40|v40  
+ 41|v41  
+(3 rows)
+

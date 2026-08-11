@@ -1,0 +1,90 @@
+NOTICE:  identifier "pg_regress/ducklake/rewrite_data_files/test_rewrite_preserves_row_id" will be truncated to "pg_regress/ducklake/rewrite_data_files/test_rewrite_preserves_r"
+-- Upstream: test/sql/rewrite_data_files/test_rewrite_preserves_row_id.test
+-- Rewriting physical files preserves stable DuckLake row lineage identifiers.
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+CALL ducklake.set_option('rewrite_delete_threshold', 0);
+CREATE TABLE upstream_rewrite_rowid (a integer, b integer) USING ducklake;
+INSERT INTO upstream_rewrite_rowid SELECT i, i * 10 FROM generate_series(1, 10) AS g(i);
+SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+     0 |  1 |  10
+     1 |  2 |  20
+     2 |  3 |  30
+     3 |  4 |  40
+     4 |  5 |  50
+     5 |  6 |  60
+     6 |  7 |  70
+     7 |  8 |  80
+     8 |  9 |  90
+     9 | 10 | 100
+(10 rows)
+
+DELETE FROM upstream_rewrite_rowid WHERE a % 2 = 0;
+SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
+ rowid | a | b  
+-------+---+----
+     0 | 1 | 10
+     2 | 3 | 30
+     4 | 5 | 50
+     6 | 7 | 70
+     8 | 9 | 90
+(5 rows)
+
+CREATE TEMP TABLE upstream_rewrite_saved_rowids AS
+SELECT a, ducklake.rowid() AS rowid FROM upstream_rewrite_rowid;
+SELECT count(*) = 1 AS delete_file_present
+FROM ducklake.ducklake_delete_file df
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_rewrite_rowid' AND t.end_snapshot IS NULL
+  AND df.end_snapshot IS NULL;
+ delete_file_present 
+---------------------
+ t
+(1 row)
+
+SELECT * FROM ducklake.rewrite_data_files('upstream_rewrite_rowid'::regclass);
+ schema_name |       table_name       | files_processed | files_created 
+-------------+------------------------+-----------------+---------------
+ public      | upstream_rewrite_rowid |               1 |             1
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
+ rowid | a | b  
+-------+---+----
+     0 | 1 | 10
+     2 | 3 | 30
+     4 | 5 | 50
+     6 | 7 | 70
+     8 | 9 | 90
+(5 rows)
+
+SELECT count(*) = 0 AS no_rowids_changed
+FROM upstream_rewrite_rowid r
+JOIN upstream_rewrite_saved_rowids s USING (a)
+WHERE ducklake.rowid() <> s.rowid;
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Binder Error: Ambiguous reference to column name "rowid" (use: "r.rowid" or "s.rowid")
+
+LINE 1: SELECT (count(*) = 0) AS no_rowids_changed FROM (pgducklake.public...
+               ^
+INSERT INTO upstream_rewrite_rowid VALUES (11, 110), (12, 120);
+DELETE FROM upstream_rewrite_rowid WHERE a = 3;
+SELECT * FROM ducklake.rewrite_data_files('upstream_rewrite_rowid'::regclass);
+ schema_name |       table_name       | files_processed | files_created 
+-------------+------------------------+-----------------+---------------
+ public      | upstream_rewrite_rowid |               1 |             1
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+     0 |  1 |  10
+     4 |  5 |  50
+     6 |  7 |  70
+     8 |  9 |  90
+    10 | 11 | 110
+    11 | 12 | 120
+(6 rows)
+
+DROP TABLE upstream_rewrite_saved_rowids;
+DROP TABLE upstream_rewrite_rowid;

@@ -1,0 +1,12 @@
+-- Upstream: test/sql/update/update_same_transaction.test
+-- A row inserted and updated in the creating transaction must persist once.
+
+BEGIN;
+CREATE TABLE upstream_update_same_tx (id integer, name text) USING ducklake;
+INSERT INTO upstream_update_same_tx VALUES (1, 'Bob');
+UPDATE upstream_update_same_tx SET name = 'Alice' WHERE id = 1;
+COMMIT;
+
+SELECT * FROM upstream_update_same_tx;
+
+DROP TABLE upstream_update_same_tx;

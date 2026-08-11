@@ -1,0 +1,15 @@
+-- Upstream: test/sql/update/test_update_expression.test
+-- CASE expressions in UPDATE assignments must be evaluated correctly.
+CREATE TABLE upstream_monthly_sales (
+    empid integer, amount integer, month text, status text
+) USING ducklake;
+INSERT INTO upstream_monthly_sales VALUES (1, 10000, '1-JAN', 'regular');
+UPDATE upstream_monthly_sales
+SET status = CASE WHEN amount >= 10000 THEN 'important' ELSE 'regular' END;
+SELECT * FROM upstream_monthly_sales;
+ empid | amount | month |  status   
+-------+--------+-------+-----------
+     1 |  10000 | 1-JAN | important
+(1 row)
+
+DROP TABLE upstream_monthly_sales;

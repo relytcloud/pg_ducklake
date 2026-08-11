@@ -1,0 +1,23 @@
+-- Upstream: test/sql/data_inlining/data_inlining_types.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+SET TIME ZONE 'UTC';
+CREATE TABLE upstream_inline_types (
+  b boolean, si smallint, i integer, bi bigint, r real, d double precision,
+  n numeric(12,3), dt date, tm time, ts timestamp, tstz timestamptz,
+  u uuid, txt text
+) USING ducklake;
+INSERT INTO upstream_inline_types VALUES (
+ true, -12, 42, 9000000000, 1.5, -2.25, 1234.500,
+ DATE '2025-11-12', TIME '15:30:45', TIMESTAMP '2025-11-12 15:30:45',
+ TIMESTAMPTZ '2025-11-12 15:30:45+00',
+ '00000000-0000-0000-0000-000000000001', 'sample'
+), (NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+SELECT b, si, i, bi, r, d, n, dt, tm, ts,
+       tstz AT TIME ZONE 'UTC' AS tstz_utc, u, txt
+FROM upstream_inline_types ORDER BY i NULLS LAST;
+SELECT count(*) AS active_files
+FROM ducklake.ducklake_data_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_inline_types' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+DROP TABLE upstream_inline_types;
+RESET TIME ZONE;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

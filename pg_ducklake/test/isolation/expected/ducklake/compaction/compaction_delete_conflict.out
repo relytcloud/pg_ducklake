@@ -1,0 +1,23 @@
+Parsed test spec with 3 sessions
+check_session: NOTICE:  identifier "isolation/ducklake/compaction/compaction_delete_conflict/check_session" will be truncated to "isolation/ducklake/compaction/compaction_delete_conflict/check_"
+
+starting permutation: s1_begin s2_begin s1_compact s2_delete s1_commit s2_commit check_rows
+step s1_begin: BEGIN;
+step s2_begin: BEGIN;
+step s1_compact: SELECT * FROM ducklake.merge_adjacent_files('upstream_iso_compact_delete'::regclass);
+schema_name|table_name                 |files_processed|files_created
+-----------+---------------------------+---------------+-------------
+public     |upstream_iso_compact_delete|              2|            1
+(1 row)
+
+step s2_delete: DELETE FROM upstream_iso_compact_delete WHERE i < 50;
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
+Transaction conflict - attempting to delete from table with index "2" - but another transaction has compacted it
+step check_rows: SELECT count(*), min(i), max(i) FROM upstream_iso_compact_delete;
+count|min|max
+-----+---+---
+  200|  0|199
+(1 row)
+

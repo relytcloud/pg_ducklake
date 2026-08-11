@@ -1,0 +1,34 @@
+-- Upstream: test/sql/delete/delete_same_transaction.test
+-- Skip: exact physical delete-file consolidation is not observable through PostgreSQL metadata.
+-- Multiple deletes of transaction-local rows must compose without resurrecting data.
+BEGIN;
+CREATE TABLE upstream_delete_same_tx USING ducklake AS
+SELECT i AS id FROM generate_series(0, 999) AS g(i);
+DELETE FROM upstream_delete_same_tx WHERE id % 2 = 0;
+SELECT count(*) FROM upstream_delete_same_tx WHERE id <= 250;
+ count 
+-------
+   125
+(1 row)
+
+DELETE FROM upstream_delete_same_tx WHERE id <= 250;
+SELECT count(*) FROM upstream_delete_same_tx WHERE id <= 250;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*), count(*) FILTER (WHERE id % 2 = 0) FROM upstream_delete_same_tx;
+ count | count 
+-------+-------
+   375 |     0
+(1 row)
+
+COMMIT;
+SELECT count(*), count(*) FILTER (WHERE id % 2 = 0) FROM upstream_delete_same_tx;
+ count | count 
+-------+-------
+   375 |     0
+(1 row)
+
+DROP TABLE upstream_delete_same_tx;

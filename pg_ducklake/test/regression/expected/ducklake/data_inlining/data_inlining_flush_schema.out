@@ -1,0 +1,69 @@
+-- Upstream: test/sql/data_inlining/data_inlining_flush_schema.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE SCHEMA upstream_inline_s1;
+CREATE SCHEMA upstream_inline_s2;
+CREATE TABLE upstream_inline_flush_main (i integer) USING ducklake;
+CREATE TABLE upstream_inline_s1.t (j text) USING ducklake;
+CREATE TABLE upstream_inline_s1.t2 (d date) USING ducklake;
+CREATE TABLE upstream_inline_s2.t (i text, j integer) USING ducklake;
+INSERT INTO upstream_inline_flush_main VALUES (42);
+INSERT INTO upstream_inline_s1.t VALUES ('hello world');
+INSERT INTO upstream_inline_s1.t2 VALUES (DATE '1992-01-01');
+INSERT INTO upstream_inline_s2.t VALUES ('42', 84);
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_flush_main'::regclass);
+ schema_name |         table_name         | rows_flushed 
+-------------+----------------------------+--------------
+ public      | upstream_inline_flush_main |            1
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_s1.t'::regclass);
+    schema_name     | table_name | rows_flushed 
+--------------------+------------+--------------
+ upstream_inline_s1 | t          |            1
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_s1.t2'::regclass);
+    schema_name     | table_name | rows_flushed 
+--------------------+------------+--------------
+ upstream_inline_s1 | t2         |            1
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('upstream_inline_s2.t'::regclass);
+    schema_name     | table_name | rows_flushed 
+--------------------+------------+--------------
+ upstream_inline_s2 | t          |            1
+(1 row)
+
+SELECT * FROM upstream_inline_flush_main;
+ i  
+----
+ 42
+(1 row)
+
+SELECT * FROM upstream_inline_s1.t;
+      j      
+-------------
+ hello world
+(1 row)
+
+SELECT * FROM upstream_inline_s1.t2;
+     d      
+------------
+ 01-01-1992
+(1 row)
+
+SELECT * FROM upstream_inline_s2.t;
+ i  | j  
+----+----
+ 42 | 84
+(1 row)
+
+SELECT * FROM ducklake.flush_inlined_data('missing_schema', 'missing_table');
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Catalog Error: Table with name missing_table does not exist!
+Did you mean "pg_catalog.pg_tables"?
+
+LINE 1: SELECT flush_inlined_data.* FROM system.main.flush_inlined_data('missing_schema'::text, ...
+                                         ^
+DROP TABLE upstream_inline_flush_main, upstream_inline_s1.t, upstream_inline_s1.t2, upstream_inline_s2.t;
+DROP SCHEMA upstream_inline_s1, upstream_inline_s2;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

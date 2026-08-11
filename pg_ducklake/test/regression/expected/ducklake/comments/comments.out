@@ -1,0 +1,33 @@
+-- Upstream: test/sql/comments/comments.test
+-- Skip: PostgreSQL views do not have DuckLake view-comment metadata.
+CREATE TABLE upstream_comments (i integer, j integer) USING ducklake;
+COMMENT ON TABLE upstream_comments IS 'very gezellige table';
+SELECT obj_description('upstream_comments'::regclass, 'pg_class');
+   obj_description    
+----------------------
+ very gezellige table
+(1 row)
+
+COMMENT ON TABLE upstream_comments IS NULL;
+SELECT obj_description('upstream_comments'::regclass, 'pg_class');
+ obj_description 
+-----------------
+ 
+(1 row)
+
+BEGIN;
+COMMENT ON TABLE upstream_comments IS 'rolled back comment';
+SELECT obj_description('upstream_comments'::regclass, 'pg_class');
+   obj_description   
+---------------------
+ rolled back comment
+(1 row)
+
+ROLLBACK;
+SELECT obj_description('upstream_comments'::regclass, 'pg_class');
+ obj_description 
+-----------------
+ 
+(1 row)
+
+DROP TABLE upstream_comments;

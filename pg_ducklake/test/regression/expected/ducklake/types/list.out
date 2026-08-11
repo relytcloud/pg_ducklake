@@ -1,0 +1,56 @@
+-- Upstream: test/sql/types/list.test
+-- Skip: the PostgreSQL path does not expose DuckDB's stats(l[1]) min/max/null summary.
+CREATE TABLE upstream_type_list (id integer, l integer[]) USING ducklake;
+SELECT count(*) FROM upstream_type_list;
+ count 
+-------
+     0
+(1 row)
+
+INSERT INTO upstream_type_list VALUES
+  (1, ARRAY[1]), (2, ARRAY[NULL::integer]), (3, NULL), (4, ARRAY[3]);
+SELECT id, l FROM upstream_type_list ORDER BY id;
+ id |   l    
+----+--------
+  1 | {1}
+  2 | {NULL}
+  3 | 
+  4 | {3}
+(4 rows)
+
+SELECT id, l FROM upstream_type_list WHERE l[1] = 1 ORDER BY id;
+ id |  l  
+----+-----
+  1 | {1}
+(1 row)
+
+SELECT id, l FROM upstream_type_list WHERE l[1] = 100 ORDER BY id;
+ id | l 
+----+---
+(0 rows)
+
+INSERT INTO upstream_type_list VALUES (5, ARRAY[4, 5]), (6, ARRAY[6, 7]);
+SELECT id, l FROM upstream_type_list ORDER BY id;
+ id |   l    
+----+--------
+  1 | {1}
+  2 | {NULL}
+  3 | 
+  4 | {3}
+  5 | {4,5}
+  6 | {6,7}
+(6 rows)
+
+CALL ducklake.recycle_ddb();
+SELECT id, l FROM upstream_type_list ORDER BY id;
+ id |   l    
+----+--------
+  1 | {1}
+  2 | {NULL}
+  3 | 
+  4 | {3}
+  5 | {4,5}
+  6 | {6,7}
+(6 rows)
+
+DROP TABLE upstream_type_list;

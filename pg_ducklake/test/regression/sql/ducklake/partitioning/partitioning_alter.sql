@@ -1,0 +1,20 @@
+-- Upstream: test/sql/partitioning/partitioning_alter.test
+-- Skip: Physical transformed-partition directory layout is not exposed by the PostgreSQL API.
+-- Unrelated column drops do not disturb transformed partitioning.
+SET datestyle TO ISO;
+CREATE TABLE upstream_partition_alter (id integer, ts timestamp, val text) USING ducklake;
+CALL ducklake.set_partition('upstream_partition_alter'::regclass, 'year(ts)', 'month(ts)');
+INSERT INTO upstream_partition_alter VALUES (1, TIMESTAMP '2020-01-01', 'a'), (2, TIMESTAMP '2021-02-01', 'b');
+ALTER TABLE upstream_partition_alter DROP COLUMN id;
+INSERT INTO upstream_partition_alter VALUES (TIMESTAMP '2020-03-01', 'c');
+SELECT * FROM ducklake.get_partition('upstream_partition_alter'::regclass);
+SELECT fpv.partition_key_index, fpv.partition_value, count(*) AS files
+FROM ducklake.ducklake_file_partition_value fpv
+JOIN ducklake.ducklake_data_file f USING (data_file_id)
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_partition_alter'
+  AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL
+GROUP BY fpv.partition_key_index, fpv.partition_value
+ORDER BY fpv.partition_key_index, fpv.partition_value;
+SELECT extract(year FROM ts)::integer AS year, count(*) FROM upstream_partition_alter GROUP BY 1 ORDER BY 1;
+DROP TABLE upstream_partition_alter;

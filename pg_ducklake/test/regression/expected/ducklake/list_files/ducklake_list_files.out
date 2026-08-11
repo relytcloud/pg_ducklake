@@ -1,0 +1,41 @@
+-- Upstream: test/sql/list_files/ducklake_list_files.test
+-- The PostgreSQL API exposes current file lists through text and regclass overloads.
+CREATE TABLE upstream_list_files (i integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 0, 'upstream_list_files'::regclass);
+INSERT INTO upstream_list_files SELECT g FROM generate_series(0, 99) AS g;
+INSERT INTO upstream_list_files SELECT g FROM generate_series(100, 199) AS g;
+INSERT INTO upstream_list_files SELECT g FROM generate_series(200, 299) AS g;
+SELECT count(*) FROM ducklake.list_files('public', 'upstream_list_files');
+ count 
+-------
+     3
+(1 row)
+
+SELECT count(*) FROM ducklake.list_files('upstream_list_files'::regclass);
+ count 
+-------
+     3
+(1 row)
+
+SELECT min(i), max(i), count(*), avg(i) FROM upstream_list_files;
+ min | max | count |  avg  
+-----+-----+-------+-------
+   0 | 299 |   300 | 149.5
+(1 row)
+
+DELETE FROM upstream_list_files WHERE i % 2 = 0 AND i < 150;
+SELECT count(*) > 0 AS has_delete_files
+FROM ducklake.list_files('upstream_list_files'::regclass) AS r
+WHERE r['delete_file']::text IS NOT NULL;
+ has_delete_files 
+------------------
+ t
+(1 row)
+
+SELECT count(*) FROM ducklake.list_files('public', 'upstream_list_files_missing');
+ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Catalog Error: Table with name upstream_list_files_missing does not exist!
+Did you mean "upstream_list_files"?
+
+LINE 1: SELECT count(*) AS count FROM system.main.list_files('public'::text, 'upstream_list_files...
+                                      ^
+DROP TABLE upstream_list_files;

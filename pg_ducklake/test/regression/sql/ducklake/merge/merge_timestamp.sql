@@ -1,0 +1,21 @@
+-- Upstream: test/sql/merge/merge_timestamp.test
+-- MERGE with UUID and timestamptz columns must populate timestamp partitions.
+
+CREATE TABLE upstream_merge_timestamp (id uuid, ts timestamptz) USING ducklake;
+CALL ducklake.set_partition(
+    'upstream_merge_timestamp'::regclass, 'year(ts)', 'month(ts)'
+);
+
+MERGE INTO upstream_merge_timestamp AS old
+USING (VALUES (
+    UUID '018f3e56-7b00-7000-8000-000000000001',
+    TIMESTAMPTZ '2025-04-10 12:00:00+00'
+)) AS new(id, ts)
+ON old.id = new.id
+WHEN MATCHED THEN UPDATE SET id = new.id, ts = new.ts
+WHEN NOT MATCHED THEN INSERT (id, ts) VALUES (new.id, new.ts);
+
+SELECT count(*) FROM upstream_merge_timestamp;
+SELECT * FROM ducklake.get_partition('upstream_merge_timestamp'::regclass);
+
+DROP TABLE upstream_merge_timestamp;

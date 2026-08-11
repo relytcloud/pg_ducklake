@@ -1,0 +1,25 @@
+-- Upstream: test/sql/table_changes/ducklake_lower_timestamp.test
+CREATE TABLE upstream_lower_timestamp (foo integer, bar text, update_ts timestamptz) USING ducklake;
+SELECT max(r['snapshot_id']::bigint) AS lower_start FROM ducklake.snapshots() AS r \gset
+INSERT INTO upstream_lower_timestamp VALUES (1, '1', current_timestamp);
+INSERT INTO upstream_lower_timestamp VALUES (2, '2', current_timestamp);
+INSERT INTO upstream_lower_timestamp VALUES (3, '3', current_timestamp);
+SELECT max(r['snapshot_id']::bigint) AS lower_end FROM ducklake.snapshots() AS r \gset
+SELECT count(*) = 3 AS integer_overload_ok
+FROM ducklake.table_changes('upstream_lower_timestamp'::regclass, :lower_start, :lower_end);
+ integer_overload_ok 
+---------------------
+ t
+(1 row)
+
+SELECT count(*)
+FROM ducklake.table_changes(
+    'upstream_lower_timestamp'::regclass,
+    timestamptz '1970-01-01 00:00:00+00', now()
+);
+ count 
+-------
+     3
+(1 row)
+
+DROP TABLE upstream_lower_timestamp;

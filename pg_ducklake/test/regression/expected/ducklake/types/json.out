@@ -1,0 +1,23 @@
+-- Upstream: test/sql/types/json.test
+CREATE TABLE upstream_type_json (id integer, value json) USING ducklake;
+SELECT count(*) FROM upstream_type_json;
+ count 
+-------
+     0
+(1 row)
+
+INSERT INTO upstream_type_json VALUES (1, '{"key": "value"}');
+SELECT id, value::text, pg_typeof(value) FROM upstream_type_json ORDER BY id;
+ id |      value       | pg_typeof 
+----+------------------+-----------
+  1 | {"key": "value"} | json
+(1 row)
+
+CALL ducklake.recycle_ddb();
+SELECT id, value::text, pg_typeof(value) FROM upstream_type_json ORDER BY id;
+ id |      value       | pg_typeof 
+----+------------------+-----------
+  1 | {"key": "value"} | json
+(1 row)
+
+DROP TABLE upstream_type_json;

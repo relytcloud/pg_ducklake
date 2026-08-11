@@ -1,0 +1,25 @@
+-- Upstream: test/sql/alter/rename_column.test
+CREATE TABLE upstream_rename_column (col1 integer, col2 integer) USING ducklake;
+ALTER TABLE upstream_rename_column RENAME COLUMN col1 TO new_col1;
+INSERT INTO upstream_rename_column VALUES (1, 2), (NULL, 3);
+ALTER TABLE upstream_rename_column RENAME COLUMN col2 TO new_col2;
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'upstream_rename_column'
+ORDER BY ordinal_position;
+ column_name | data_type 
+-------------+-----------
+ new_col1    | integer
+ new_col2    | integer
+(2 rows)
+
+SELECT * FROM upstream_rename_column ORDER BY new_col1 NULLS LAST;
+ new_col1 | new_col2 
+----------+----------
+        1 |        2
+          |        3
+(2 rows)
+
+ALTER TABLE upstream_rename_column RENAME COLUMN blablabla TO k;
+ERROR:  column "blablabla" does not exist
+DROP TABLE upstream_rename_column;

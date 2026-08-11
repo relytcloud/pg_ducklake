@@ -1,0 +1,41 @@
+NOTICE:  identifier "pg_regress/ducklake/compaction/rewrite_deletes_full_file_delete_after_flush" will be truncated to "pg_regress/ducklake/compaction/rewrite_deletes_full_file_delete"
+-- Upstream: test/sql/compaction/rewrite_deletes_full_file_delete_after_flush.test
+-- Rewriting after flushing a full-file delete keeps current and historical visibility.
+CALL ducklake.set_option('data_inlining_row_limit', 100);
+CREATE TABLE upstream_rewrite_full_flush (id integer) USING ducklake;
+INSERT INTO upstream_rewrite_full_flush SELECT i FROM generate_series(0, 19) AS g(i);
+SELECT max(snapshot_id) AS inserted_snapshot FROM ducklake.ducklake_snapshot \gset
+DELETE FROM upstream_rewrite_full_flush WHERE id < 20;
+SELECT max(snapshot_id) AS deleted_snapshot FROM ducklake.ducklake_snapshot \gset
+SELECT * FROM ducklake.flush_inlined_data('upstream_rewrite_full_flush'::regclass);
+ schema_name |         table_name          | rows_flushed 
+-------------+-----------------------------+--------------
+ public      | upstream_rewrite_full_flush |           20
+(1 row)
+
+CALL ducklake.set_option('rewrite_delete_threshold', 0);
+SELECT * FROM ducklake.rewrite_data_files('upstream_rewrite_full_flush'::regclass);
+ schema_name |         table_name          | files_processed | files_created 
+-------------+-----------------------------+-----------------+---------------
+ public      | upstream_rewrite_full_flush |               1 |             0
+(1 row)
+
+SELECT count(*) FROM upstream_rewrite_full_flush;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM ducklake.time_travel('upstream_rewrite_full_flush', :inserted_snapshot);
+ count 
+-------
+    20
+(1 row)
+
+SELECT count(*) FROM ducklake.time_travel('upstream_rewrite_full_flush', :deleted_snapshot);
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE upstream_rewrite_full_flush;

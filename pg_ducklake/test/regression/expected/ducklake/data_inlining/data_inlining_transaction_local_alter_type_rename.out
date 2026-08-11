@@ -1,0 +1,83 @@
+NOTICE:  identifier "pg_regress/ducklake/data_inlining/data_inlining_transaction_local_alter_type_rename" will be truncated to "pg_regress/ducklake/data_inlining/data_inlining_transaction_loc"
+-- Upstream: test/sql/data_inlining/data_inlining_transaction_local_alter_type_rename.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_inline_tx_rename (i integer, j text) USING ducklake;
+BEGIN;
+INSERT INTO upstream_inline_tx_rename VALUES (1, 'hello'), (2, 'world');
+ALTER TABLE upstream_inline_tx_rename RENAME COLUMN j TO name;
+SELECT * FROM upstream_inline_tx_rename ORDER BY i;
+ i | name  
+---+-------
+ 1 | hello
+ 2 | world
+(2 rows)
+
+COMMIT;
+SELECT i, name FROM upstream_inline_tx_rename ORDER BY i;
+ i | name  
+---+-------
+ 1 | hello
+ 2 | world
+(2 rows)
+
+CREATE TABLE upstream_inline_tx_type (i integer, v integer) USING ducklake;
+BEGIN;
+INSERT INTO upstream_inline_tx_type VALUES (1, 100), (2, 200);
+ALTER TABLE upstream_inline_tx_type ALTER COLUMN v TYPE bigint;
+SELECT * FROM upstream_inline_tx_type ORDER BY i;
+ i |  v  
+---+-----
+ 1 | 100
+ 2 | 200
+(2 rows)
+
+COMMIT;
+SELECT * FROM upstream_inline_tx_type ORDER BY i;
+ i |  v  
+---+-----
+ 1 | 100
+ 2 | 200
+(2 rows)
+
+SELECT format_type(atttypid, atttypmod)
+FROM pg_attribute WHERE attrelid = 'upstream_inline_tx_type'::regclass AND attname = 'v';
+ format_type 
+-------------
+ bigint
+(1 row)
+
+CREATE TABLE upstream_inline_tx_double (i integer, v real) USING ducklake;
+BEGIN;
+INSERT INTO upstream_inline_tx_double VALUES (1, 1.5);
+ALTER TABLE upstream_inline_tx_double ALTER COLUMN v TYPE double precision;
+SELECT i, v FROM upstream_inline_tx_double ORDER BY i;
+ i |  v  
+---+-----
+ 1 | 1.5
+(1 row)
+
+INSERT INTO upstream_inline_tx_double VALUES (2, 2.5);
+SELECT i, v FROM upstream_inline_tx_double ORDER BY i;
+ i |  v  
+---+-----
+ 1 | 1.5
+ 2 | 2.5
+(2 rows)
+
+COMMIT;
+SELECT i, v FROM upstream_inline_tx_double ORDER BY i;
+ i |  v  
+---+-----
+ 1 | 1.5
+ 2 | 2.5
+(2 rows)
+
+SELECT format_type(atttypid, atttypmod)
+FROM pg_attribute WHERE attrelid = 'upstream_inline_tx_double'::regclass AND attname = 'v';
+   format_type    
+------------------
+ double precision
+(1 row)
+
+DROP TABLE upstream_inline_tx_rename, upstream_inline_tx_type, upstream_inline_tx_double;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

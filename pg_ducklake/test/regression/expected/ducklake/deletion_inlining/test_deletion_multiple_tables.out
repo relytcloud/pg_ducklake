@@ -1,0 +1,49 @@
+NOTICE:  identifier "pg_regress/ducklake/deletion_inlining/test_deletion_multiple_tables" will be truncated to "pg_regress/ducklake/deletion_inlining/test_deletion_multiple_ta"
+-- Upstream: test/sql/deletion_inlining/test_deletion_multiple_tables.test
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+CREATE TABLE upstream_delete_multi_1 (a integer) USING ducklake;
+CREATE TABLE upstream_delete_multi_2 (a integer) USING ducklake;
+INSERT INTO upstream_delete_multi_1 VALUES (1),(2),(3),(1),(2),(3),(5),(6);
+INSERT INTO upstream_delete_multi_2 SELECT * FROM upstream_delete_multi_1;
+DELETE FROM upstream_delete_multi_1 WHERE a = 2;
+DELETE FROM upstream_delete_multi_1 WHERE a = 1;
+DELETE FROM upstream_delete_multi_1 WHERE a = 5;
+DELETE FROM upstream_delete_multi_2 WHERE a = 2;
+DELETE FROM upstream_delete_multi_2 WHERE a = 1;
+DELETE FROM upstream_delete_multi_2 WHERE a = 5;
+SELECT * FROM ducklake.flush_inlined_data();
+ schema_name |       table_name        | rows_flushed 
+-------------+-------------------------+--------------
+ public      | upstream_delete_multi_2 |            8
+ public      | upstream_delete_multi_1 |            8
+(2 rows)
+
+SELECT * FROM upstream_delete_multi_1 ORDER BY a;
+ a 
+---
+ 3
+ 3
+ 6
+(3 rows)
+
+SELECT * FROM upstream_delete_multi_2 ORDER BY a;
+ a 
+---
+ 3
+ 3
+ 6
+(3 rows)
+
+SELECT t.table_name, sum(f.delete_count)
+FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name IN ('upstream_delete_multi_1','upstream_delete_multi_2')
+  AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL
+GROUP BY t.table_name ORDER BY t.table_name;
+       table_name        | sum 
+-------------------------+-----
+ upstream_delete_multi_1 |   5
+ upstream_delete_multi_2 |   5
+(2 rows)
+
+DROP TABLE upstream_delete_multi_1, upstream_delete_multi_2;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

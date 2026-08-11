@@ -1,0 +1,48 @@
+-- Upstream: test/sql/catalog/schema.test
+-- Map DuckLake table behavior across PostgreSQL schemas.
+CREATE SCHEMA upstream_catalog_s1;
+CREATE SCHEMA upstream_catalog_s2;
+CREATE TABLE upstream_catalog_s1.tbl (i integer) USING ducklake;
+CREATE TABLE upstream_catalog_s2.tbl (a text, b text) USING ducklake;
+INSERT INTO upstream_catalog_s1.tbl VALUES (42);
+INSERT INTO upstream_catalog_s2.tbl VALUES ('hello', 'world');
+SELECT * FROM upstream_catalog_s1.tbl;
+ i  
+----
+ 42
+(1 row)
+
+SELECT * FROM upstream_catalog_s2.tbl;
+   a   |   b   
+-------+-------
+ hello | world
+(1 row)
+
+DROP SCHEMA upstream_catalog_s1;
+ERROR:  cannot drop schema upstream_catalog_s1 because other objects depend on it
+DETAIL:  table upstream_catalog_s1.tbl depends on schema upstream_catalog_s1
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+DROP TABLE upstream_catalog_s1.tbl;
+DROP SCHEMA upstream_catalog_s1;
+DROP SCHEMA upstream_catalog_s2 CASCADE;
+NOTICE:  drop cascades to table upstream_catalog_s2.tbl
+SELECT to_regnamespace('upstream_catalog_s1') IS NULL AS s1_dropped,
+       to_regnamespace('upstream_catalog_s2') IS NULL AS s2_dropped;
+ s1_dropped | s2_dropped 
+------------+------------
+ t          | t
+(1 row)
+
+BEGIN;
+CREATE SCHEMA upstream_catalog_s1;
+CREATE TABLE upstream_catalog_s1.tbl (i integer) USING ducklake;
+INSERT INTO upstream_catalog_s1.tbl VALUES (84);
+COMMIT;
+SELECT * FROM upstream_catalog_s1.tbl;
+ i  
+----
+ 84
+(1 row)
+
+DROP SCHEMA upstream_catalog_s1 CASCADE;
+NOTICE:  drop cascades to table upstream_catalog_s1.tbl

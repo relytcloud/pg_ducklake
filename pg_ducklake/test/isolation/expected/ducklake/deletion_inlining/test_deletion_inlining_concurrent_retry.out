@@ -1,0 +1,72 @@
+Parsed test spec with 2 sessions
+NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent_retry" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent_retry" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+r1: NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_con/r1" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent_retry" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+r2: NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_con/r2" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+
+starting permutation: r1_begin r1_pin r2_begin r2_pin r1_delete r2_delete r1_commit r2_commit r2_check
+step r1_begin: BEGIN;
+step r1_pin: SELECT count(*) FROM upstream_iso_delete_retry_1;
+count
+-----
+   50
+(1 row)
+
+step r2_begin: BEGIN;
+step r2_pin: SELECT count(*) FROM upstream_iso_delete_retry_2;
+count
+-----
+   50
+(1 row)
+
+step r1_delete: DELETE FROM upstream_iso_delete_retry_1 WHERE a < 5;
+step r2_delete: DELETE FROM upstream_iso_delete_retry_2 WHERE a < 5;
+step r1_commit: COMMIT;
+step r2_commit: COMMIT;
+step r2_check: 
+  SELECT (SELECT count(*) FROM upstream_iso_delete_retry_1) AS t1_rows,
+         (SELECT count(*) FROM upstream_iso_delete_retry_2) AS t2_rows,
+         (SELECT count(*) FROM upstream_iso_delete_retry_1 WHERE a < 5) AS t1_low,
+         (SELECT count(*) FROM upstream_iso_delete_retry_2 WHERE a < 5) AS t2_low,
+         (SELECT sum(a) FROM upstream_iso_delete_retry_1) AS t1_sum,
+         (SELECT sum(a) FROM upstream_iso_delete_retry_2) AS t2_sum;
+
+t1_rows|t2_rows|t1_low|t2_low|t1_sum|t2_sum
+-------+-------+------+------+------+------
+     45|     45|     0|     0|  1215|  1215
+(1 row)
+
+
+starting permutation: r1_begin r1_pin r2_begin r2_pin r1_delete r2_delete r2_commit r1_commit r2_check
+step r1_begin: BEGIN;
+step r1_pin: SELECT count(*) FROM upstream_iso_delete_retry_1;
+count
+-----
+   50
+(1 row)
+
+step r2_begin: BEGIN;
+step r2_pin: SELECT count(*) FROM upstream_iso_delete_retry_2;
+count
+-----
+   50
+(1 row)
+
+step r1_delete: DELETE FROM upstream_iso_delete_retry_1 WHERE a < 5;
+step r2_delete: DELETE FROM upstream_iso_delete_retry_2 WHERE a < 5;
+step r2_commit: COMMIT;
+step r1_commit: COMMIT;
+step r2_check: 
+  SELECT (SELECT count(*) FROM upstream_iso_delete_retry_1) AS t1_rows,
+         (SELECT count(*) FROM upstream_iso_delete_retry_2) AS t2_rows,
+         (SELECT count(*) FROM upstream_iso_delete_retry_1 WHERE a < 5) AS t1_low,
+         (SELECT count(*) FROM upstream_iso_delete_retry_2 WHERE a < 5) AS t2_low,
+         (SELECT sum(a) FROM upstream_iso_delete_retry_1) AS t1_sum,
+         (SELECT sum(a) FROM upstream_iso_delete_retry_2) AS t2_sum;
+
+t1_rows|t2_rows|t1_low|t2_low|t1_sum|t2_sum
+-------+-------+------+------+------+------
+     45|     45|     0|     0|  1215|  1215
+(1 row)
+
