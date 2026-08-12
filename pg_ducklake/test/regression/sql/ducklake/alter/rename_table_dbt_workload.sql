@@ -15,11 +15,6 @@ COMMIT;
 SELECT count(*) FROM upstream_dbt_table;
 SELECT count(*) FROM upstream_dbt_table_backup;
 SELECT to_regclass('upstream_dbt_table_tmp') IS NULL AS temporary_name_gone;
-BEGIN;
-SAVEPOINT expected_old_temporary_name;
-SELECT * FROM upstream_dbt_table_tmp;
-ROLLBACK TO SAVEPOINT expected_old_temporary_name;
-COMMIT;
 SELECT relname FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relname IN ('upstream_dbt_table', 'upstream_dbt_table_backup', 'upstream_dbt_table_tmp')

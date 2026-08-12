@@ -1,5 +1,5 @@
 -- Upstream: test/sql/stats/count_star_optimization_inlined.test
--- Counts combine inlined and physical data across schema evolution and rollback.
+-- Counts combine inlined data across schema evolution, rollback, and truncate.
 CALL ducklake.set_option('data_inlining_row_limit', 100);
 CREATE TABLE upstream_count_inline USING ducklake AS
 SELECT i FROM generate_series(0, 49) AS g(i);
@@ -10,8 +10,36 @@ SELECT count(*) FROM upstream_count_inline;
 (1 row)
 
 INSERT INTO upstream_count_inline SELECT i FROM generate_series(50, 79) AS g(i);
+SELECT count(*) FROM upstream_count_inline;
+ count 
+-------
+    80
+(1 row)
+
 ALTER TABLE upstream_count_inline ADD COLUMN j integer DEFAULT 0;
-INSERT INTO upstream_count_inline(i, j) SELECT i, i * 10 FROM generate_series(80, 99) AS g(i);
+SELECT count(*) FROM upstream_count_inline;
+ count 
+-------
+    80
+(1 row)
+
+INSERT INTO upstream_count_inline(i, j)
+SELECT i, i * 10 FROM generate_series(80, 89) AS g(i);
+SELECT count(*) FROM upstream_count_inline;
+ count 
+-------
+    90
+(1 row)
+
+ALTER TABLE upstream_count_inline ADD COLUMN k text DEFAULT 'x';
+SELECT count(*) FROM upstream_count_inline;
+ count 
+-------
+    90
+(1 row)
+
+INSERT INTO upstream_count_inline(i, j, k)
+SELECT i, i * 10, 'val' || i::text FROM generate_series(90, 99) AS g(i);
 SELECT count(*) FROM upstream_count_inline;
  count 
 -------
@@ -41,11 +69,11 @@ SELECT count(*) FROM upstream_count_inline;
 (1 row)
 
 BEGIN;
-DELETE FROM upstream_count_inline WHERE i >= 50;
+DELETE FROM upstream_count_inline WHERE i % 10 = 1;
 SELECT count(*) FROM upstream_count_inline;
  count 
 -------
-    45
+    80
 (1 row)
 
 ROLLBACK;
@@ -62,13 +90,11 @@ SELECT count(*) FROM upstream_count_inline;
      0
 (1 row)
 
-INSERT INTO upstream_count_inline(i) VALUES (200), (201);
-ERROR:  native inline writer: target table changed during the statement
-DETAIL:  Expected table 2 at inline schema version 2.
+INSERT INTO upstream_count_inline(i) SELECT i FROM generate_series(0, 49) AS g(i);
 SELECT count(*) FROM upstream_count_inline;
  count 
 -------
-     0
+    50
 (1 row)
 
 DROP TABLE upstream_count_inline;

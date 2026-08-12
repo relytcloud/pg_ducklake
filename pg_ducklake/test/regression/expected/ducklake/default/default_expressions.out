@@ -1,16 +1,17 @@
 -- Upstream: test/sql/default/default_expressions.test
+-- Skip: SET DEFAULT of a PostgreSQL string literal is recorded as a DuckLake expression instead of literal metadata.
 CREATE TABLE upstream_default_expr_time (
   id integer,
   created_at timestamp DEFAULT now()
 ) USING ducklake;
 INSERT INTO upstream_default_expr_time (id) VALUES (1);
-SELECT id, created_at < clock_timestamp() AS default_precedes_read
+SELECT id, created_at < now() AS default_precedes_read
 FROM upstream_default_expr_time ORDER BY id;
-ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Catalog Error: Scalar Function with name clock_timestamp does not exist!
-Did you mean "to_timestamp"?
+ id | default_precedes_read 
+----+-----------------------
+  1 | t
+(1 row)
 
-LINE 1: SELECT id, (created_at < clock_timestamp()) AS default_precedes_read FROM pgducklake...
-                                 ^
 CREATE TABLE upstream_default_expr_num (id integer, id_plus integer DEFAULT 1) USING ducklake;
 INSERT INTO upstream_default_expr_num (id) VALUES (0);
 ALTER TABLE upstream_default_expr_num ALTER id_plus SET DEFAULT round(pi());
@@ -52,12 +53,17 @@ ORDER BY t.table_name, c.column_order, c.begin_snapshot;
  upstream_default_expr_time    | created_at  | now()                       | expression         | duckdb                | t
 (8 rows)
 
-BEGIN;
-SAVEPOINT expected_nonliteral_add_default;
 ALTER TABLE upstream_default_expr_literal ADD COLUMN j double precision DEFAULT random();
-ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
-ROLLBACK TO SAVEPOINT expected_nonliteral_add_default;
-COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
+ERROR:  (PGDuckDB/ducklake_alter_table_trigger_cpp) Not implemented Error: We cannot add a column with a non-literal default value. Add the column and then explicitly set the default for new values using "ALTER ... SET DEFAULT"
+SELECT NOT EXISTS (
+  SELECT 1 FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'upstream_default_expr_literal'
+    AND column_name = 'j'
+) AS nonliteral_column_rejected;
+ nonliteral_column_rejected 
+----------------------------
+ t
+(1 row)
+
 DROP TABLE upstream_default_expr_time, upstream_default_expr_num, upstream_default_expr_literal;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block

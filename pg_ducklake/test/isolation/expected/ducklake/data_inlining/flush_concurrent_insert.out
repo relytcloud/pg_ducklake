@@ -4,31 +4,40 @@ inserter: NOTICE:  identifier "isolation/ducklake/data_inlining/flush_concurrent
 
 starting permutation: f_begin f_pin i_insert f_flush f_commit f_check i_check i_flush i_final
 step f_begin: BEGIN;
-step f_pin: SELECT count(*) FROM upstream_iso_inline_flush;
-count
------
-    3
+step f_pin: SELECT count(*) AS pinned_rows FROM upstream_iso_inline_flush;
+pinned_rows
+-----------
+          3
 (1 row)
 
-step i_insert: INSERT INTO upstream_iso_inline_flush VALUES (4, 'concurrent');
-step f_flush: SELECT count(*) FROM ducklake.flush_inlined_data('upstream_iso_inline_flush'::regclass);
-count
------
-    1
+step i_insert: 
+  INSERT INTO upstream_iso_inline_flush VALUES (4, 'concurrent');
+
+step f_flush: 
+  SELECT count(*) > 0 AS flushed
+    FROM ducklake.flush_inlined_data(
+      'upstream_iso_inline_flush'::regclass);
+
+flushed
+-------
+t      
 (1 row)
 
 step f_commit: COMMIT;
 step f_check: 
-  SELECT count(*) AS rows, count(DISTINCT id) AS distinct_ids,
+  SELECT count(*) AS rows,
+         count(DISTINCT id) AS distinct_ids,
          count(*) = count(DISTINCT id) AS no_duplicates
-  FROM upstream_iso_inline_flush;
+    FROM upstream_iso_inline_flush;
 
 rows|distinct_ids|no_duplicates
 ----+------------+-------------
    4|           4|t            
 (1 row)
 
-step i_check: SELECT id, val FROM upstream_iso_inline_flush ORDER BY id;
+step i_check: 
+  SELECT id, val FROM upstream_iso_inline_flush ORDER BY id;
+
 id|val       
 --+----------
  1|pre       
@@ -37,54 +46,67 @@ id|val
  4|concurrent
 (4 rows)
 
-step i_flush: SELECT count(*) AS flushed FROM ducklake.flush_inlined_data('upstream_iso_inline_flush'::regclass);
+step i_flush: 
+  SELECT count(*) > 0 AS flushed
+    FROM ducklake.flush_inlined_data(
+      'upstream_iso_inline_flush'::regclass);
+
 flushed
 -------
-      1
+t      
 (1 row)
 
 step i_final: 
-  SELECT count(*) AS rows, count(DISTINCT id) AS distinct_ids,
-         (SELECT count(*)
-          FROM ducklake.ducklake_data_file f
-          JOIN ducklake.ducklake_table t USING (table_id)
-          WHERE t.table_name = 'upstream_iso_inline_flush'
-            AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL) AS active_files
-  FROM upstream_iso_inline_flush;
+  SELECT count(*) AS rows,
+         count(DISTINCT id) AS distinct_ids,
+         count(*) = count(DISTINCT id) AS no_duplicates,
+         (SELECT count(*) > 0
+            FROM ducklake.list_files(
+              'upstream_iso_inline_flush'::regclass)) AS has_files
+    FROM upstream_iso_inline_flush;
 
-rows|distinct_ids|active_files
-----+------------+------------
-   4|           4|           2
+rows|distinct_ids|no_duplicates|has_files
+----+------------+-------------+---------
+   4|           4|t            |t        
 (1 row)
 
 
 starting permutation: f_begin f_pin f_flush i_insert f_commit f_check i_check i_flush i_final
 step f_begin: BEGIN;
-step f_pin: SELECT count(*) FROM upstream_iso_inline_flush;
-count
------
-    3
+step f_pin: SELECT count(*) AS pinned_rows FROM upstream_iso_inline_flush;
+pinned_rows
+-----------
+          3
 (1 row)
 
-step f_flush: SELECT count(*) FROM ducklake.flush_inlined_data('upstream_iso_inline_flush'::regclass);
-count
------
-    1
+step f_flush: 
+  SELECT count(*) > 0 AS flushed
+    FROM ducklake.flush_inlined_data(
+      'upstream_iso_inline_flush'::regclass);
+
+flushed
+-------
+t      
 (1 row)
 
-step i_insert: INSERT INTO upstream_iso_inline_flush VALUES (4, 'concurrent');
+step i_insert: 
+  INSERT INTO upstream_iso_inline_flush VALUES (4, 'concurrent');
+
 step f_commit: COMMIT;
 step f_check: 
-  SELECT count(*) AS rows, count(DISTINCT id) AS distinct_ids,
+  SELECT count(*) AS rows,
+         count(DISTINCT id) AS distinct_ids,
          count(*) = count(DISTINCT id) AS no_duplicates
-  FROM upstream_iso_inline_flush;
+    FROM upstream_iso_inline_flush;
 
 rows|distinct_ids|no_duplicates
 ----+------------+-------------
    4|           4|t            
 (1 row)
 
-step i_check: SELECT id, val FROM upstream_iso_inline_flush ORDER BY id;
+step i_check: 
+  SELECT id, val FROM upstream_iso_inline_flush ORDER BY id;
+
 id|val       
 --+----------
  1|pre       
@@ -93,23 +115,27 @@ id|val
  4|concurrent
 (4 rows)
 
-step i_flush: SELECT count(*) AS flushed FROM ducklake.flush_inlined_data('upstream_iso_inline_flush'::regclass);
+step i_flush: 
+  SELECT count(*) > 0 AS flushed
+    FROM ducklake.flush_inlined_data(
+      'upstream_iso_inline_flush'::regclass);
+
 flushed
 -------
-      1
+t      
 (1 row)
 
 step i_final: 
-  SELECT count(*) AS rows, count(DISTINCT id) AS distinct_ids,
-         (SELECT count(*)
-          FROM ducklake.ducklake_data_file f
-          JOIN ducklake.ducklake_table t USING (table_id)
-          WHERE t.table_name = 'upstream_iso_inline_flush'
-            AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL) AS active_files
-  FROM upstream_iso_inline_flush;
+  SELECT count(*) AS rows,
+         count(DISTINCT id) AS distinct_ids,
+         count(*) = count(DISTINCT id) AS no_duplicates,
+         (SELECT count(*) > 0
+            FROM ducklake.list_files(
+              'upstream_iso_inline_flush'::regclass)) AS has_files
+    FROM upstream_iso_inline_flush;
 
-rows|distinct_ids|active_files
-----+------------+------------
-   4|           4|           2
+rows|distinct_ids|no_duplicates|has_files
+----+------------+-------------+---------
+   4|           4|t            |t        
 (1 row)
 

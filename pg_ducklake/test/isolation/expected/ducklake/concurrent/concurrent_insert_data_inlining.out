@@ -1,78 +1,88 @@
 Parsed test spec with 3 sessions
 s1: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_data_inlining/s1" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_data_inlining/s"
 s2: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_data_inlining/s2" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_data_inlining/s"
-check_session: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_data_inlining/check_session" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_data_inlining/c"
+checker: NOTICE:  identifier "isolation/ducklake/concurrent/concurrent_insert_data_inlining/checker" will be truncated to "isolation/ducklake/concurrent/concurrent_insert_data_inlining/c"
 
 starting permutation: s1_begin s2_begin s1_insert s2_insert s1_commit s2_commit check_rows check_stats
 step s1_begin: BEGIN;
 step s2_begin: BEGIN;
-step s1_insert: INSERT INTO upstream_iso_inline_insert VALUES (1);
-step s2_insert: INSERT INTO upstream_iso_inline_insert VALUES (2);
+step s1_insert: INSERT INTO upstream_iso_inline_insert VALUES (0);
+step s2_insert: INSERT INTO upstream_iso_inline_insert VALUES (1);
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step check_rows: 
- SELECT count(*) AS rows, sum(key) AS key_sum,
-        min(key) AS min_key, max(key) AS max_key,
-        count(*) FILTER (WHERE key IS NULL) AS null_keys,
-        (SELECT count(*)
-         FROM ducklake.ducklake_data_file f
-         JOIN ducklake.ducklake_table t USING (table_id)
-         WHERE t.table_name = 'upstream_iso_inline_insert'
-           AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL) AS active_files
- FROM upstream_iso_inline_insert;
+  SELECT count(*) AS rows, sum(key) AS key_sum,
+         min(key) AS min_key, max(key) AS max_key,
+         count(*) FILTER (WHERE key IS NULL) AS null_keys,
+         (SELECT count(*)
+            FROM ducklake.list_files(
+              'upstream_iso_inline_insert'::regclass)) AS files
+    FROM upstream_iso_inline_insert;
 
-rows|key_sum|min_key|max_key|null_keys|active_files
-----+-------+-------+-------+---------+------------
-   2|      3|      1|      2|        0|           0
+rows|key_sum|min_key|max_key|null_keys|files
+----+-------+-------+-------+---------+-----
+   2|      1|      0|      1|        0|    0
 (1 row)
 
 step check_stats: 
- SELECT s.min_value, s.max_value, s.contains_null
- FROM ducklake.ducklake_table_column_stats s
- JOIN ducklake.ducklake_table t USING (table_id)
- JOIN ducklake.ducklake_column c USING (table_id, column_id)
- WHERE t.table_name = 'upstream_iso_inline_insert' AND t.end_snapshot IS NULL
-   AND c.column_name = 'key' AND c.end_snapshot IS NULL;
+  SELECT count(*) AS stat_rows,
+         min(s.min_value) AS min_value,
+         max(s.max_value) AS max_value,
+         bool_or(s.contains_null) AS contains_null
+    FROM ducklake.ducklake_table_column_stats s
+    JOIN ducklake.ducklake_table t USING (table_id)
+    JOIN ducklake.ducklake_schema sch USING (schema_id)
+    JOIN ducklake.ducklake_column c USING (table_id, column_id)
+   WHERE sch.schema_name = 'public'
+     AND t.table_name = 'upstream_iso_inline_insert'
+     AND t.end_snapshot IS NULL
+     AND c.column_name = 'key'
+     AND c.end_snapshot IS NULL;
 
-min_value|max_value|contains_null
----------+---------+-------------
-        1|        2|f            
+stat_rows|min_value|max_value|contains_null
+---------+---------+---------+-------------
+        1|        0|        1|f            
 (1 row)
 
 
 starting permutation: s1_begin s2_begin s1_insert s2_insert s2_commit s1_commit check_rows check_stats
 step s1_begin: BEGIN;
 step s2_begin: BEGIN;
-step s1_insert: INSERT INTO upstream_iso_inline_insert VALUES (1);
-step s2_insert: INSERT INTO upstream_iso_inline_insert VALUES (2);
+step s1_insert: INSERT INTO upstream_iso_inline_insert VALUES (0);
+step s2_insert: INSERT INTO upstream_iso_inline_insert VALUES (1);
 step s2_commit: COMMIT;
 step s1_commit: COMMIT;
 step check_rows: 
- SELECT count(*) AS rows, sum(key) AS key_sum,
-        min(key) AS min_key, max(key) AS max_key,
-        count(*) FILTER (WHERE key IS NULL) AS null_keys,
-        (SELECT count(*)
-         FROM ducklake.ducklake_data_file f
-         JOIN ducklake.ducklake_table t USING (table_id)
-         WHERE t.table_name = 'upstream_iso_inline_insert'
-           AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL) AS active_files
- FROM upstream_iso_inline_insert;
+  SELECT count(*) AS rows, sum(key) AS key_sum,
+         min(key) AS min_key, max(key) AS max_key,
+         count(*) FILTER (WHERE key IS NULL) AS null_keys,
+         (SELECT count(*)
+            FROM ducklake.list_files(
+              'upstream_iso_inline_insert'::regclass)) AS files
+    FROM upstream_iso_inline_insert;
 
-rows|key_sum|min_key|max_key|null_keys|active_files
-----+-------+-------+-------+---------+------------
-   2|      3|      1|      2|        0|           0
+rows|key_sum|min_key|max_key|null_keys|files
+----+-------+-------+-------+---------+-----
+   2|      1|      0|      1|        0|    0
 (1 row)
 
 step check_stats: 
- SELECT s.min_value, s.max_value, s.contains_null
- FROM ducklake.ducklake_table_column_stats s
- JOIN ducklake.ducklake_table t USING (table_id)
- JOIN ducklake.ducklake_column c USING (table_id, column_id)
- WHERE t.table_name = 'upstream_iso_inline_insert' AND t.end_snapshot IS NULL
-   AND c.column_name = 'key' AND c.end_snapshot IS NULL;
+  SELECT count(*) AS stat_rows,
+         min(s.min_value) AS min_value,
+         max(s.max_value) AS max_value,
+         bool_or(s.contains_null) AS contains_null
+    FROM ducklake.ducklake_table_column_stats s
+    JOIN ducklake.ducklake_table t USING (table_id)
+    JOIN ducklake.ducklake_schema sch USING (schema_id)
+    JOIN ducklake.ducklake_column c USING (table_id, column_id)
+   WHERE sch.schema_name = 'public'
+     AND t.table_name = 'upstream_iso_inline_insert'
+     AND t.end_snapshot IS NULL
+     AND c.column_name = 'key'
+     AND c.end_snapshot IS NULL;
 
-min_value|max_value|contains_null
----------+---------+-------------
-        1|        2|f            
+stat_rows|min_value|max_value|contains_null
+---------+---------+---------+-------------
+        1|        0|        1|f            
 (1 row)
 

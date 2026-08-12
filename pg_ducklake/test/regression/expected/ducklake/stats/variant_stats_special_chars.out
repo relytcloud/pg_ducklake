@@ -12,12 +12,18 @@ SELECT count(*) FROM upstream_variant_stats_chars;
 
 SELECT fs.variant_path, fs.shredded_type, fs.min_value, fs.max_value
 FROM ducklake.ducklake_file_variant_stats fs
-JOIN ducklake.ducklake_data_file df USING (data_file_id)
-JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_data_file df
+  ON df.data_file_id = fs.data_file_id AND df.table_id = fs.table_id
+JOIN ducklake.ducklake_table t ON t.table_id = fs.table_id
 WHERE t.table_name = 'upstream_variant_stats_chars' AND t.end_snapshot IS NULL
   AND df.end_snapshot IS NULL
 ORDER BY df.file_order;
-ERROR:  common column name "table_id" appears more than once in left table
+ variant_path | shredded_type |      min_value       |      max_value       
+--------------+---------------+----------------------+----------------------
+ root         | varchar       | {"text":"hello"}     | {"text":"hello"}
+ root         | varchar       | {"text":"it's fine"} | {"text":"it's fine"}
+(2 rows)
+
 SELECT count(*) = 1 AS one_column_stat,
        bool_and(cs.extra_stats IS NOT NULL) AS serialized_extra_stats
 FROM ducklake.ducklake_table_column_stats cs

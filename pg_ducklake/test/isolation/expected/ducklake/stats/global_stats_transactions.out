@@ -1,56 +1,87 @@
-Parsed test spec with 3 sessions
-check_session: NOTICE:  identifier "isolation/ducklake/stats/global_stats_transactions/check_session" will be truncated to "isolation/ducklake/stats/global_stats_transactions/check_sessio"
+Parsed test spec with 4 sessions
 
-starting permutation: s1_begin s2_begin s1_insert s2_insert s1_commit s2_commit check_rows check_stats
+starting permutation: s1_begin s2_begin s3_begin s1_insert s2_insert s3_insert s1_commit s2_commit s3_commit check_rows check_stats
 step s1_begin: BEGIN;
 step s2_begin: BEGIN;
+step s3_begin: BEGIN;
 step s1_insert: INSERT INTO upstream_iso_global_stats VALUES (42);
-step s2_insert: INSERT INTO upstream_iso_global_stats VALUES (84), (NULL);
+step s2_insert: INSERT INTO upstream_iso_global_stats VALUES (84);
+step s3_insert: INSERT INTO upstream_iso_global_stats VALUES (NULL);
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
-step check_rows: SELECT count(*), min(i), max(i), count(*) FILTER (WHERE i IS NULL) FROM upstream_iso_global_stats;
-count|min|max|count
------+---+---+-----
-    3| 42| 84|    1
+step s3_commit: COMMIT;
+step check_rows: 
+  SELECT count(*) AS rows,
+         min(i) AS min_value,
+         max(i) AS max_value,
+         count(*) FILTER (WHERE i IS NULL) AS null_rows
+    FROM upstream_iso_global_stats;
+
+rows|min_value|max_value|null_rows
+----+---------+---------+---------
+   3|       42|       84|        1
 (1 row)
 
 step check_stats: 
- SELECT s.min_value, s.max_value, s.contains_null
- FROM ducklake.ducklake_table_column_stats s
- JOIN ducklake.ducklake_table t USING (table_id)
- JOIN ducklake.ducklake_column c USING (table_id, column_id)
- WHERE t.table_name = 'upstream_iso_global_stats' AND t.end_snapshot IS NULL
-   AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+  SELECT count(*) AS stat_rows,
+         min(s.min_value) AS min_value,
+         max(s.max_value) AS max_value,
+         bool_or(s.contains_null) AS contains_null
+    FROM ducklake.ducklake_table_column_stats s
+    JOIN ducklake.ducklake_table t USING (table_id)
+    JOIN ducklake.ducklake_schema sch USING (schema_id)
+    JOIN ducklake.ducklake_column c USING (table_id, column_id)
+   WHERE sch.schema_name = 'public'
+     AND t.table_name = 'upstream_iso_global_stats'
+     AND t.end_snapshot IS NULL
+     AND c.column_name = 'i'
+     AND c.end_snapshot IS NULL;
 
-min_value|max_value|contains_null
----------+---------+-------------
-       42|       84|t            
+stat_rows|min_value|max_value|contains_null
+---------+---------+---------+-------------
+        1|       42|       84|t            
 (1 row)
 
 
-starting permutation: s1_begin s2_begin s1_insert s2_insert s2_commit s1_commit check_rows check_stats
+starting permutation: s1_begin s2_begin s3_begin s1_insert s2_insert s3_insert s3_commit s2_commit s1_commit check_rows check_stats
 step s1_begin: BEGIN;
 step s2_begin: BEGIN;
+step s3_begin: BEGIN;
 step s1_insert: INSERT INTO upstream_iso_global_stats VALUES (42);
-step s2_insert: INSERT INTO upstream_iso_global_stats VALUES (84), (NULL);
+step s2_insert: INSERT INTO upstream_iso_global_stats VALUES (84);
+step s3_insert: INSERT INTO upstream_iso_global_stats VALUES (NULL);
+step s3_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_commit: COMMIT;
-step check_rows: SELECT count(*), min(i), max(i), count(*) FILTER (WHERE i IS NULL) FROM upstream_iso_global_stats;
-count|min|max|count
------+---+---+-----
-    3| 42| 84|    1
+step check_rows: 
+  SELECT count(*) AS rows,
+         min(i) AS min_value,
+         max(i) AS max_value,
+         count(*) FILTER (WHERE i IS NULL) AS null_rows
+    FROM upstream_iso_global_stats;
+
+rows|min_value|max_value|null_rows
+----+---------+---------+---------
+   3|       42|       84|        1
 (1 row)
 
 step check_stats: 
- SELECT s.min_value, s.max_value, s.contains_null
- FROM ducklake.ducklake_table_column_stats s
- JOIN ducklake.ducklake_table t USING (table_id)
- JOIN ducklake.ducklake_column c USING (table_id, column_id)
- WHERE t.table_name = 'upstream_iso_global_stats' AND t.end_snapshot IS NULL
-   AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+  SELECT count(*) AS stat_rows,
+         min(s.min_value) AS min_value,
+         max(s.max_value) AS max_value,
+         bool_or(s.contains_null) AS contains_null
+    FROM ducklake.ducklake_table_column_stats s
+    JOIN ducklake.ducklake_table t USING (table_id)
+    JOIN ducklake.ducklake_schema sch USING (schema_id)
+    JOIN ducklake.ducklake_column c USING (table_id, column_id)
+   WHERE sch.schema_name = 'public'
+     AND t.table_name = 'upstream_iso_global_stats'
+     AND t.end_snapshot IS NULL
+     AND c.column_name = 'i'
+     AND c.end_snapshot IS NULL;
 
-min_value|max_value|contains_null
----------+---------+-------------
-       42|       84|t            
+stat_rows|min_value|max_value|contains_null
+---------+---------+---------+-------------
+        1|       42|       84|t            
 (1 row)
 

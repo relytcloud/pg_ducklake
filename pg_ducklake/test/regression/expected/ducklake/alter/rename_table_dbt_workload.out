@@ -51,19 +51,14 @@ SELECT to_regclass('upstream_dbt_table_tmp') IS NULL AS temporary_name_gone;
  t
 (1 row)
 
-BEGIN;
-SAVEPOINT expected_old_temporary_name;
-SELECT * FROM upstream_dbt_table_tmp;
-ERROR:  relation "upstream_dbt_table_tmp" does not exist
-LINE 1: SELECT * FROM upstream_dbt_table_tmp;
-                      ^
-ROLLBACK TO SAVEPOINT expected_old_temporary_name;
-COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
 SELECT relname FROM pg_class
 WHERE relnamespace = 'public'::regnamespace
   AND relname IN ('upstream_dbt_table', 'upstream_dbt_table_backup', 'upstream_dbt_table_tmp')
 ORDER BY relname;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
+          relname          
+---------------------------
+ upstream_dbt_table
+ upstream_dbt_table_backup
+(2 rows)
+
 DROP TABLE upstream_dbt_table, upstream_dbt_table_backup;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block

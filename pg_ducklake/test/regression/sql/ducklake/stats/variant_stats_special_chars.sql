@@ -7,8 +7,9 @@ INSERT INTO upstream_variant_stats_chars VALUES ('{"text":"it''s fine"}');
 SELECT count(*) FROM upstream_variant_stats_chars;
 SELECT fs.variant_path, fs.shredded_type, fs.min_value, fs.max_value
 FROM ducklake.ducklake_file_variant_stats fs
-JOIN ducklake.ducklake_data_file df USING (data_file_id)
-JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_data_file df
+  ON df.data_file_id = fs.data_file_id AND df.table_id = fs.table_id
+JOIN ducklake.ducklake_table t ON t.table_id = fs.table_id
 WHERE t.table_name = 'upstream_variant_stats_chars' AND t.end_snapshot IS NULL
   AND df.end_snapshot IS NULL
 ORDER BY df.file_order;

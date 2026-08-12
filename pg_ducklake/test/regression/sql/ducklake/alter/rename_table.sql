@@ -27,13 +27,8 @@ SELECT to_regclass('upstream_rename_table2'), to_regclass('upstream_rename_table
 BEGIN;
 ALTER TABLE upstream_rename_table5 RENAME TO upstream_rename_table6;
 DROP TABLE upstream_rename_table6;
-SAVEPOINT expected_dropped_name;
-SELECT * FROM upstream_rename_table6;
-ROLLBACK TO SAVEPOINT expected_dropped_name;
+SELECT to_regclass('upstream_rename_table6') IS NULL AS renamed_table_dropped;
 COMMIT;
-BEGIN;
-SAVEPOINT expected_missing_rename_source;
 ALTER TABLE upstream_nonexistent_table RENAME TO upstream_target;
-ROLLBACK TO SAVEPOINT expected_missing_rename_source;
-COMMIT;
+SELECT to_regclass('upstream_target') IS NULL AS missing_source_not_renamed;
 DROP TABLE upstream_rename_local3;

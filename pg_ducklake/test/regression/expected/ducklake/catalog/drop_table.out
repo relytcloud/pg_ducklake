@@ -21,42 +21,41 @@ SELECT to_regclass('upstream_catalog_drop') IS NULL AS dropped;
  t
 (1 row)
 
-BEGIN;
-SAVEPOINT expected_missing_drop;
 DROP TABLE upstream_catalog_drop;
 ERROR:  table "upstream_catalog_drop" does not exist
-ROLLBACK TO SAVEPOINT expected_missing_drop;
-COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
 DROP TABLE IF EXISTS upstream_catalog_drop;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
+NOTICE:  table "upstream_catalog_drop" does not exist, skipping
 BEGIN;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TABLE upstream_catalog_drop_local (i integer) USING ducklake;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT * FROM upstream_catalog_drop_local;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ i 
+---
+(0 rows)
+
 DROP TABLE upstream_catalog_drop_local;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT to_regclass('upstream_catalog_drop_local') IS NULL AS local_dropped;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ local_dropped 
+---------------
+ t
+(1 row)
+
 COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
 CREATE TABLE upstream_catalog_drop (i integer) USING ducklake;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 BEGIN;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE upstream_catalog_drop;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TABLE upstream_catalog_drop (i text, j text) USING ducklake;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO upstream_catalog_drop VALUES ('hello', 'world');
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT * FROM upstream_catalog_drop;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
+   i   |   j   
+-------+-------
+ hello | world
+(1 row)
+
 COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
 SELECT * FROM upstream_catalog_drop;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block
+   i   |   j   
+-------+-------
+ hello | world
+(1 row)
+
 DROP TABLE upstream_catalog_drop;
-ERROR:  current transaction is aborted, commands ignored until end of transaction block

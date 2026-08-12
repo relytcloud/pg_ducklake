@@ -32,7 +32,7 @@ SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
 (5 rows)
 
 CREATE TEMP TABLE upstream_rewrite_saved_rowids AS
-SELECT a, ducklake.rowid() AS rowid FROM upstream_rewrite_rowid;
+SELECT a, ducklake.rowid() AS saved_rowid FROM upstream_rewrite_rowid;
 SELECT count(*) = 1 AS delete_file_present
 FROM ducklake.ducklake_delete_file df
 JOIN ducklake.ducklake_table t USING (table_id)
@@ -43,10 +43,13 @@ WHERE t.table_name = 'upstream_rewrite_rowid' AND t.end_snapshot IS NULL
  t
 (1 row)
 
-SELECT * FROM ducklake.rewrite_data_files('upstream_rewrite_rowid'::regclass);
- schema_name |       table_name       | files_processed | files_created 
--------------+------------------------+-----------------+---------------
- public      | upstream_rewrite_rowid |               1 |             1
+SELECT r['table_name']::text AS table_name,
+       r['files_processed']::bigint AS files_processed,
+       r['files_created']::bigint AS files_created
+FROM ducklake.rewrite_data_files('upstream_rewrite_rowid'::regclass) AS r;
+       table_name       | files_processed | files_created 
+------------------------+-----------------+---------------
+ upstream_rewrite_rowid |               1 |             1
 (1 row)
 
 SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
@@ -62,17 +65,185 @@ SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
 SELECT count(*) = 0 AS no_rowids_changed
 FROM upstream_rewrite_rowid r
 JOIN upstream_rewrite_saved_rowids s USING (a)
-WHERE ducklake.rowid() <> s.rowid;
-ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Binder Error: Ambiguous reference to column name "rowid" (use: "r.rowid" or "s.rowid")
+WHERE ducklake.rowid() <> s.saved_rowid;
+ no_rowids_changed 
+-------------------
+ t
+(1 row)
 
-LINE 1: SELECT (count(*) = 0) AS no_rowids_changed FROM (pgducklake.public...
-               ^
+SELECT count(*) = 0 AS delete_file_removed
+FROM ducklake.ducklake_delete_file df
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'upstream_rewrite_rowid' AND t.end_snapshot IS NULL
+  AND df.end_snapshot IS NULL;
+ delete_file_removed 
+---------------------
+ t
+(1 row)
+
+CREATE TABLE upstream_rewrite_rowid_large (a integer, b integer) USING ducklake;
+INSERT INTO upstream_rewrite_rowid_large
+SELECT i, i * 10 FROM generate_series(1, 200) AS g(i);
+SELECT count(*), min(ducklake.rowid()), max(ducklake.rowid())
+FROM upstream_rewrite_rowid_large;
+ count | min | max 
+-------+-----+-----
+   200 |   0 | 199
+(1 row)
+
+DELETE FROM upstream_rewrite_rowid_large WHERE a % 2 = 0;
+SELECT count(*), min(ducklake.rowid()), max(ducklake.rowid())
+FROM upstream_rewrite_rowid_large;
+ count | min | max 
+-------+-----+-----
+   100 |   0 | 198
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid_large WHERE a <= 5 ORDER BY a;
+ rowid | a | b  
+-------+---+----
+     0 | 1 | 10
+     2 | 3 | 30
+     4 | 5 | 50
+(3 rows)
+
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid_large WHERE a >= 195 ORDER BY a;
+ rowid |  a  |  b   
+-------+-----+------
+   194 | 195 | 1950
+   196 | 197 | 1970
+   198 | 199 | 1990
+(3 rows)
+
+SELECT r['table_name']::text AS table_name,
+       r['files_processed']::bigint AS files_processed,
+       r['files_created']::bigint AS files_created
+FROM ducklake.rewrite_data_files('upstream_rewrite_rowid_large'::regclass) AS r;
+          table_name          | files_processed | files_created 
+------------------------------+-----------------+---------------
+ upstream_rewrite_rowid_large |               1 |             1
+(1 row)
+
+SELECT count(*), min(ducklake.rowid()), max(ducklake.rowid())
+FROM upstream_rewrite_rowid_large;
+ count | min | max 
+-------+-----+-----
+   100 |   0 | 198
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid_large WHERE a <= 5 ORDER BY a;
+ rowid | a | b  
+-------+---+----
+     0 | 1 | 10
+     2 | 3 | 30
+     4 | 5 | 50
+(3 rows)
+
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid_large WHERE a >= 195 ORDER BY a;
+ rowid |  a  |  b   
+-------+-----+------
+   194 | 195 | 1950
+   196 | 197 | 1970
+   198 | 199 | 1990
+(3 rows)
+
+SELECT count(*) FROM upstream_rewrite_rowid_large WHERE ducklake.rowid() % 2 <> 0;
+ count 
+-------
+     0
+(1 row)
+
+DELETE FROM upstream_rewrite_rowid_large WHERE a % 4 = 1;
+SELECT count(*) FROM upstream_rewrite_rowid_large;
+ count 
+-------
+    50
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid_large WHERE a <= 15 ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+     2 |  3 |  30
+     6 |  7 |  70
+    10 | 11 | 110
+    14 | 15 | 150
+(4 rows)
+
+SELECT r['table_name']::text AS table_name,
+       r['files_processed']::bigint AS files_processed,
+       r['files_created']::bigint AS files_created
+FROM ducklake.rewrite_data_files('upstream_rewrite_rowid_large'::regclass) AS r;
+          table_name          | files_processed | files_created 
+------------------------------+-----------------+---------------
+ upstream_rewrite_rowid_large |               1 |             1
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid_large WHERE a <= 15 ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+     2 |  3 |  30
+     6 |  7 |  70
+    10 | 11 | 110
+    14 | 15 | 150
+(4 rows)
+
+SELECT count(*) FROM upstream_rewrite_rowid_large;
+ count 
+-------
+    50
+(1 row)
+
 INSERT INTO upstream_rewrite_rowid VALUES (11, 110), (12, 120);
+SELECT ducklake.rowid() AS rowid, a, b
+FROM upstream_rewrite_rowid WHERE a > 10 ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+    10 | 11 | 110
+    11 | 12 | 120
+(2 rows)
+
 DELETE FROM upstream_rewrite_rowid WHERE a = 3;
-SELECT * FROM ducklake.rewrite_data_files('upstream_rewrite_rowid'::regclass);
- schema_name |       table_name       | files_processed | files_created 
--------------+------------------------+-----------------+---------------
- public      | upstream_rewrite_rowid |               1 |             1
+SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+     0 |  1 |  10
+     4 |  5 |  50
+     6 |  7 |  70
+     8 |  9 |  90
+    10 | 11 | 110
+    11 | 12 | 120
+(6 rows)
+
+SELECT r['table_name']::text AS table_name,
+       r['files_processed']::bigint AS files_processed,
+       r['files_created']::bigint AS files_created
+FROM ducklake.rewrite_data_files('upstream_rewrite_rowid'::regclass) AS r;
+       table_name       | files_processed | files_created 
+------------------------+-----------------+---------------
+ upstream_rewrite_rowid |               1 |             1
+(1 row)
+
+SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
+ rowid | a  |  b  
+-------+----+-----
+     0 |  1 |  10
+     4 |  5 |  50
+     6 |  7 |  70
+     8 |  9 |  90
+    10 | 11 | 110
+    11 | 12 | 120
+(6 rows)
+
+SELECT count(*) >= 0 AS cleanup_completed FROM ducklake.cleanup_old_files();
+ cleanup_completed 
+-------------------
+ t
 (1 row)
 
 SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
@@ -87,4 +258,5 @@ SELECT ducklake.rowid() AS rowid, a, b FROM upstream_rewrite_rowid ORDER BY a;
 (6 rows)
 
 DROP TABLE upstream_rewrite_saved_rowids;
+DROP TABLE upstream_rewrite_rowid_large;
 DROP TABLE upstream_rewrite_rowid;

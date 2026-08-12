@@ -8,11 +8,7 @@ ROLLBACK;
 SELECT * FROM upstream_catalog_drop;
 DROP TABLE upstream_catalog_drop;
 SELECT to_regclass('upstream_catalog_drop') IS NULL AS dropped;
-BEGIN;
-SAVEPOINT expected_missing_drop;
 DROP TABLE upstream_catalog_drop;
-ROLLBACK TO SAVEPOINT expected_missing_drop;
-COMMIT;
 DROP TABLE IF EXISTS upstream_catalog_drop;
 
 BEGIN;
