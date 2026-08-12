@@ -315,10 +315,12 @@ DuckLakeXactCallback_Cpp(XactEvent event) {
 	case XACT_EVENT_PRE_COMMIT:
 	case XACT_EVENT_PARALLEL_PRE_COMMIT:
 		context.transaction.Commit();
+		ResetDirectInsertCaches();
 		break;
 	case XACT_EVENT_ABORT:
 	case XACT_EVENT_PARALLEL_ABORT:
 		context.transaction.Rollback(nullptr);
+		ResetDirectInsertCaches();
 		break;
 	case XACT_EVENT_PREPARE:
 	case XACT_EVENT_PRE_PREPARE:

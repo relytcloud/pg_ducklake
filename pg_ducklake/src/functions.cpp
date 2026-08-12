@@ -120,15 +120,7 @@ static const DefaultTableMacro pgducklake_wrapper_macros[] = {
    "FROM ducklake_ensure_inlined_table('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name)"},
   {DEFAULT_SCHEMA, "list_files", {"schema_name", "table_name", nullptr}, {{nullptr, nullptr}},
    "FROM ducklake_list_files('" PGDUCKLAKE_DUCKDB_CATALOG "', table_name, schema => schema_name)"},
-  // data change feed functions (schema + table + start + end)
-  {DEFAULT_SCHEMA, "table_insertions",
-   {"schema_name", "table_name", "start_snapshot", "end_snapshot", nullptr},
-   {{nullptr, nullptr}},
-   "FROM ducklake_table_insertions('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name, start_snapshot, end_snapshot)"},
-  {DEFAULT_SCHEMA, "table_deletions",
-   {"schema_name", "table_name", "start_snapshot", "end_snapshot", nullptr},
-   {{nullptr, nullptr}},
-   "FROM ducklake_table_deletions('" PGDUCKLAKE_DUCKDB_CATALOG "', schema_name, table_name, start_snapshot, end_snapshot)"},
+  // data change feed function with concrete rowid/snapshot_id output columns
   {DEFAULT_SCHEMA, "table_changes",
    {"schema_name", "table_name", "start_snapshot", "end_snapshot", nullptr},
    {{nullptr, nullptr}},
@@ -243,6 +235,55 @@ OrphanedNoArgsBind(ClientContext &context, TableFunctionBindInput &input, vector
 }
 
 /*
+ * Delegate insertion/deletion feeds directly instead of wrapping them in table
+ * macros. Their rowid and snapshot_id fields are virtual columns installed by
+ * the replacement DuckLake scan function, and a table macro would hide them.
+ */
+static unique_ptr<FunctionData>
+DataChangeFeedBind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+                   vector<string> &names, const string &ducklake_name) {
+	auto schema_name = input.inputs[0];
+	auto table_name = input.inputs[1];
+	auto start_snapshot = input.inputs[2];
+	auto end_snapshot = input.inputs[3];
+	auto snapshot_type = start_snapshot.type();
+
+	ResetToCatalogOnly(input);
+	input.inputs.push_back(std::move(schema_name));
+	input.inputs.push_back(std::move(table_name));
+	input.inputs.push_back(std::move(start_snapshot));
+	input.inputs.push_back(std::move(end_snapshot));
+
+	auto func = LookupUpstreamFunction(
+	    context, ducklake_name,
+	    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, snapshot_type, snapshot_type});
+	input.table_function = func;
+	return func.bind(context, input, return_types, names);
+}
+
+static unique_ptr<FunctionData>
+TableInsertionsBind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+                    vector<string> &names) {
+	return DataChangeFeedBind(context, input, return_types, names, "ducklake_table_insertions");
+}
+
+static unique_ptr<FunctionData>
+TableDeletionsBind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+                   vector<string> &names) {
+	return DataChangeFeedBind(context, input, return_types, names, "ducklake_table_deletions");
+}
+
+static void
+RegisterDataChangeFeedSet(DatabaseInstance &db, const string &name, table_function_bind_t bind) {
+	TableFunctionSet set(name);
+	for (const auto &snapshot_type : {LogicalType::BIGINT, LogicalType::TIMESTAMP_TZ}) {
+		set.AddFunction(TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, snapshot_type, snapshot_type},
+		                              UnreachableExecute, bind, UnreachableInit));
+	}
+	RegisterTableFunctionSet(db, set);
+}
+
+/*
  * flush_inlined_data, merge_adjacent_files, rewrite_data_files use upstream
  * bind_operator (replaces the whole logical plan). The no-args overload is
  * identical across all three; the (text, text) overload differs in how
@@ -351,6 +392,10 @@ RegisterDucklakeFunctions(DatabaseInstance &db) {
 	// time_travel(...): built in time_travel.cpp.
 	auto time_travel = GetTimeTravelFunctions();
 	RegisterTableFunctionSet(db, time_travel);
+
+	// table_insertions/deletions: preserve the replacement scan's virtual columns.
+	RegisterDataChangeFeedSet(db, "table_insertions", TableInsertionsBind);
+	RegisterDataChangeFeedSet(db, "table_deletions", TableDeletionsBind);
 
 	// cleanup_old_files(): no-args + interval overloads (.bind pattern).
 	{
