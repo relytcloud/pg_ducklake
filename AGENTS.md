@@ -62,6 +62,15 @@ integration). Prefer regression and isolation tests to verify functionality.
 - Use ASCII only in source files, SQL tests, and expected output. Use `-`, `--`,
   `'`, and `"` instead of Unicode dashes or smart quotes.
 
+## Comment Conventions
+
+- Try to keep comments short. In general, comments should be one short line. Only in exceptional situations should
+  comments be more than one short line. Code should be mostly self-descriptive and too many large comments make code
+  harder to read and understand.
+- Avoid adding comments specific to how a change was made to the code that relates to a specific issue. For example, a
+  comment like "add +1 to fix an off-by-one error" is not relevant to understanding the code. Such comments related to
+  specific issues that were addressed belong in a PR description or commit message, not in the code itself.
+
 ### C/C++
 
 - Avoid `extern "C"` for symbols from the same library; put the linkage in the
