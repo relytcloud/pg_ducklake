@@ -14,7 +14,7 @@ step s2_delete: DELETE FROM upstream_iso_compact_delete WHERE i < 50;
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
-Transaction conflict - attempting to delete from table with index "2" - but another transaction has compacted it
+Transaction conflict - attempting to delete from table - but another transaction has compacted it
 step check_rows: SELECT count(*), min(i), max(i) FROM upstream_iso_compact_delete;
 count|min|max
 -----+---+---

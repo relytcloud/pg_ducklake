@@ -5,3 +5,20 @@ test: native_inline_retry
 test: native_inline_failures
 test: concurrent_inline_flush
 test: optimizer_lock_error
+
+test: ducklake/compaction/compaction_delete_conflict
+test: ducklake/concurrent/concurrent_catalog_id_false_conflict
+test: ducklake/concurrent/concurrent_insert_conflict
+test: ducklake/concurrent/concurrent_insert_data_inlining
+test: ducklake/concurrent/concurrent_insert_delete_conflict
+test: ducklake/concurrent/concurrent_table_creation
+test: ducklake/concurrent/file_level_conflict
+test: ducklake/data_inlining/flush_concurrent_insert
+test: ducklake/deletion_inlining/test_deletion_inlining_concurrent
+test: ducklake/deletion_inlining/test_deletion_inlining_concurrent_retry
+test: ducklake/rewrite_data_files/test_rewrite_concurrency
+test: ducklake/rewrite_data_files/test_rewrite_transaction_conflict
+test: ducklake/stats/global_stats_transactions
+test: ducklake/transaction/concurrent_table_creation
+test: ducklake/transaction/transaction_conflicts
+test: ducklake/transaction/transaction_conflicts_delete

@@ -494,8 +494,16 @@ ForceDuckDBCommitOnExplicitCommit() {
 	try {
 		pgducklake::DuckDBQueryOrThrow("COMMIT");
 	} catch (const std::exception &e) {
-		ereport(ERROR, (errmsg("pg_ducklake commit hook failed to commit DuckDB: %s",
-		                       pgducklake::DuckDBErrorMessage(e).c_str())));
+		auto error = pgducklake::DuckDBErrorMessage(e);
+		const std::string index_prefix = " from table with index \"";
+		auto index_start = error.find(index_prefix);
+		if (index_start != std::string::npos) {
+			auto index_end = error.find("\" - but", index_start + index_prefix.size());
+			if (index_end != std::string::npos)
+				error.erase(index_start + std::string(" from table").size(),
+				            index_end + 1 - index_start - std::string(" from table").size());
+		}
+		ereport(ERROR, (errmsg("pg_ducklake commit hook failed to commit DuckDB: %s", error.c_str())));
 	}
 }
 
