@@ -342,7 +342,9 @@ InferForeignTableColumns(CreateForeignTableStmt *stmt) {
 
 	auto attach_result = conn->Query(attach_query);
 	if (attach_result->HasError()) {
-		elog(ERROR, "ducklake_fdw: column inference ATTACH failed: %s", attach_result->GetError().c_str());
+		auto error = attach_result->GetError();
+		attach_result.reset();
+		elog(ERROR, "ducklake_fdw: column inference ATTACH failed: %s", error.c_str());
 	}
 
 	duckdb::string select_query =
@@ -352,8 +354,10 @@ InferForeignTableColumns(CreateForeignTableStmt *stmt) {
 
 	auto prepared = conn->Prepare(select_query);
 	if (prepared->HasError()) {
-		elog(ERROR, "ducklake_fdw: cannot read table \"%s\".\"%s\": %s", schema_name, table_name,
-		     prepared->error.Message().c_str());
+		auto error = prepared->error.Message();
+		prepared.reset();
+		attach_result.reset();
+		elog(ERROR, "ducklake_fdw: cannot read table \"%s\".\"%s\": %s", schema_name, table_name, error.c_str());
 	}
 
 	List *columns = NIL;
