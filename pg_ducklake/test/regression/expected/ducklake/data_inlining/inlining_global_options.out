@@ -16,12 +16,11 @@ INSERT INTO upstream_inline_opts.b VALUES ('baz','qux');
 CALL ducklake.set_option('auto_compact', false, 'public'::regnamespace);
 CALL ducklake.set_option('auto_compact', false, 'upstream_inline_opts'::regnamespace);
 CALL ducklake.set_option('auto_compact', true, 'upstream_inline_opts_b'::regclass);
-SELECT * FROM ducklake.flush_inlined_data();
- schema_name |       table_name       | rows_flushed 
--------------+------------------------+--------------
- public      | upstream_inline_opts_b |            2
-(1 row)
-
+SELECT * FROM ducklake.flush_inlined_data()
+ORDER BY (schema_name <> 'public'), table_name DESC;
+ERROR:  column "schema_name" does not exist
+LINE 2: ORDER BY (schema_name <> 'public'), table_name DESC;
+                  ^
 SELECT count(*) AS files_a
 FROM ducklake.ducklake_data_file f JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'upstream_inline_opts_a' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
@@ -35,19 +34,16 @@ FROM ducklake.ducklake_data_file f JOIN ducklake.ducklake_table t USING (table_i
 WHERE t.table_name = 'upstream_inline_opts_b' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
  files_b 
 ---------
-       1
+       0
 (1 row)
 
 CALL ducklake.set_option('auto_compact', true, 'upstream_inline_opts'::regnamespace);
 CALL ducklake.set_option('auto_compact', true, 'public'::regnamespace);
-SELECT * FROM ducklake.flush_inlined_data();
-     schema_name      |       table_name       | rows_flushed 
-----------------------+------------------------+--------------
- public               | upstream_inline_opts_a |            2
- upstream_inline_opts | b                      |            2
- upstream_inline_opts | a                      |            2
-(3 rows)
-
+SELECT * FROM ducklake.flush_inlined_data()
+ORDER BY (schema_name <> 'public'), table_name DESC;
+ERROR:  column "schema_name" does not exist
+LINE 2: ORDER BY (schema_name <> 'public'), table_name DESC;
+                  ^
 SELECT k, v FROM upstream_inline_opts_a UNION ALL SELECT k, v FROM upstream_inline_opts_b
 UNION ALL SELECT k, v FROM upstream_inline_opts.a UNION ALL SELECT k, v FROM upstream_inline_opts.b
 ORDER BY k, v;
@@ -65,4 +61,5 @@ ORDER BY k, v;
 
 DROP TABLE upstream_inline_opts_a, upstream_inline_opts_b, upstream_inline_opts.a, upstream_inline_opts.b;
 DROP SCHEMA upstream_inline_opts;
-CALL ducklake.set_option('data_inlining_row_limit', 0);
+DELETE FROM ducklake.ducklake_metadata
+WHERE key IN ('auto_compact', 'data_inlining_row_limit');

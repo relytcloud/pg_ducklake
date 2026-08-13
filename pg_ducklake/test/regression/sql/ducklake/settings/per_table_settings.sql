@@ -26,4 +26,5 @@ SELECT count(*) FROM upstream_setting_schema.t1;
 SELECT count(*) FROM upstream_setting_schema.t2;
 DROP SCHEMA upstream_setting_schema CASCADE;
 DROP TABLE upstream_setting_t1, upstream_setting_t2;
-CALL ducklake.set_option('parquet_compression', 'snappy');
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'parquet_compression';

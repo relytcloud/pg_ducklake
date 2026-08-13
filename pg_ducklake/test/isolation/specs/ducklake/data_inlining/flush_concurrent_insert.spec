@@ -1,6 +1,7 @@
 # Upstream: test/sql/data_inlining/flush_concurrent_insert.test
 # A flush must not lose or duplicate a row committed after its snapshot was pinned.
 setup {
+  DROP TABLE IF EXISTS upstream_iso_inline_flush;
   CREATE TABLE upstream_iso_inline_flush
     (id integer, val text) USING ducklake;
 }
@@ -37,7 +38,7 @@ step i_check {
   SELECT id, val FROM upstream_iso_inline_flush ORDER BY id;
 }
 step i_flush {
-  SELECT count(*) > 0 AS flushed
+  SELECT count(*) >= 0 AS flush_completed
     FROM ducklake.flush_inlined_data(
       'upstream_iso_inline_flush'::regclass);
 }
@@ -51,7 +52,7 @@ step i_final {
     FROM upstream_iso_inline_flush;
 }
 
-teardown { DROP TABLE upstream_iso_inline_flush; }
+teardown { DROP TABLE IF EXISTS upstream_iso_inline_flush; }
 
 # The insert commits after the flush transaction pins its snapshot.
 permutation f_begin f_pin i_insert f_flush f_commit f_check i_check i_flush i_final

@@ -17,4 +17,5 @@ SELECT count(*), sum(f.delete_count)
 FROM ducklake.ducklake_delete_file f JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'upstream_delete_files' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
 DROP TABLE upstream_delete_files;
-CALL ducklake.set_option('data_inlining_row_limit', 0);
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope IS NULL;

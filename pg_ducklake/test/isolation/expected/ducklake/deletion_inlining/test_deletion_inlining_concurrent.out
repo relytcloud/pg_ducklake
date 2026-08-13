@@ -1,11 +1,13 @@
-Parsed test spec with 2 sessions
+Parsed test spec with 3 sessions
 NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
 NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
 d1: NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_con/d1" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
 NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
 d2: NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_con/d2" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_concurrent" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
+checker: NOTICE:  identifier "isolation/ducklake/deletion_inlining/test_deletion_inlining_con/checker" will be truncated to "isolation/ducklake/deletion_inlining/test_deletion_inlining_con"
 
-starting permutation: d1_begin d1_pin d2_begin d2_pin d1_delete d2_delete d1_commit d2_commit d1_reset d2_reset d2_check
+starting permutation: d1_begin d1_pin d1_delete d1_commit d2_begin d2_pin d2_delete d2_commit check_rows
 step d1_begin: BEGIN;
 step d1_pin: SELECT count(*) FROM upstream_iso_delete_same;
 count
@@ -13,6 +15,29 @@ count
    50
 (1 row)
 
+step d1_delete: DELETE FROM upstream_iso_delete_same WHERE a < 5;
+step d1_commit: COMMIT;
+step d2_begin: BEGIN;
+step d2_pin: SELECT count(*) FROM upstream_iso_delete_same;
+count
+-----
+   45
+(1 row)
+
+step d2_delete: DELETE FROM upstream_iso_delete_same WHERE a >= 5 AND a < 10;
+step d2_commit: COMMIT;
+step check_rows: 
+  SELECT count(*) > 0 AS rows_remain,
+         count(*) FILTER (WHERE a < 10) AS low_rows
+  FROM upstream_iso_delete_same;
+
+rows_remain|low_rows
+-----------+--------
+t          |       0
+(1 row)
+
+
+starting permutation: d2_begin d2_pin d2_delete d2_commit d1_begin d1_pin d1_delete d1_commit check_rows
 step d2_begin: BEGIN;
 step d2_pin: SELECT count(*) FROM upstream_iso_delete_same;
 count
@@ -20,22 +45,24 @@ count
    50
 (1 row)
 
-step d1_delete: DELETE FROM upstream_iso_delete_same WHERE a < 5;
 step d2_delete: DELETE FROM upstream_iso_delete_same WHERE a >= 5 AND a < 10;
-step d1_commit: COMMIT;
 step d2_commit: COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
-Transaction conflict - attempting to delete from table with index "2" - but another transaction has deleted from it
-d1: WARNING:  there is no transaction in progress
-step d1_reset: ROLLBACK;
-step d2_reset: ROLLBACK;
-step d2_check: 
+step d1_begin: BEGIN;
+step d1_pin: SELECT count(*) FROM upstream_iso_delete_same;
+count
+-----
+   45
+(1 row)
+
+step d1_delete: DELETE FROM upstream_iso_delete_same WHERE a < 5;
+step d1_commit: COMMIT;
+step check_rows: 
   SELECT count(*) > 0 AS rows_remain,
          count(*) FILTER (WHERE a < 10) AS low_rows
   FROM upstream_iso_delete_same;
 
-ERROR:  (PGDuckDB/CreatePlan) Prepared query returned an error: Binder Error: Catalog "pgducklake" does not exist!
-teardown of session d2 failed: ERROR:  (PGDuckDB/ducklake_drop_table_trigger_cpp) Binder Error: Catalog "pgducklake" does not exist!
+rows_remain|low_rows
+-----------+--------
+t          |       0
+(1 row)
 
-starting permutation: d1_begin d1_pin d2_begin d2_pin d1_delete d2_delete d2_commit d1_commit d1_reset d2_reset d2_check
-setup failed: ERROR:  relation "upstream_iso_delete_same" already exists

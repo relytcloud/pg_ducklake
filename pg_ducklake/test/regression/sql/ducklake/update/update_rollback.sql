@@ -14,3 +14,5 @@ ROLLBACK;
 SELECT count(*), sum(id), sum(val) FROM upstream_update_rollback;
 
 DROP TABLE upstream_update_rollback;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope IS NULL;

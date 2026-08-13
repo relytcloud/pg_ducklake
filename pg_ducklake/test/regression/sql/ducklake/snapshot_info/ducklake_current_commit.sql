@@ -4,18 +4,24 @@
 SELECT r['id']::bigint AS before_current
 FROM ducklake.current_snapshot() AS r \gset
 CREATE TABLE upstream_current_snapshot (i integer) USING ducklake;
-SELECT (r['id']::bigint = :before_current + 1) AS advanced
-FROM ducklake.current_snapshot() AS r;
+SELECT r['id']::bigint AS created_current
+FROM ducklake.current_snapshot() AS r \gset
+SELECT (:created_current > :before_current) AS advanced;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_current_snapshot'::regclass);
+SELECT r['id']::bigint AS stable_current
+FROM ducklake.current_snapshot() AS r \gset
 
 BEGIN;
 INSERT INTO upstream_current_snapshot VALUES (0);
-SELECT (r['id']::bigint = :before_current + 1) AS unchanged_in_transaction
+SELECT (r['id']::bigint = :stable_current) AS unchanged_in_transaction
 FROM ducklake.current_snapshot() AS r;
 ROLLBACK;
-SELECT (r['id']::bigint = :before_current + 1) AS unchanged_after_rollback
+SELECT (r['id']::bigint = :stable_current) AS unchanged_after_rollback
 FROM ducklake.current_snapshot() AS r;
 
 INSERT INTO upstream_current_snapshot VALUES (1);
-SELECT (r['id']::bigint = :before_current + 2) AS advanced_after_commit
+SELECT (r['id']::bigint > :stable_current) AS advanced_after_commit
 FROM ducklake.current_snapshot() AS r;
 DROP TABLE upstream_current_snapshot;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope = 'table';

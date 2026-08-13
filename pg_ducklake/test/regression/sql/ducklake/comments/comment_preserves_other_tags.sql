@@ -31,4 +31,16 @@ FROM ducklake.ducklake_column_tag tag
 JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'upstream_comment_tags'
 ORDER BY tag.key, active;
+-- Remove injected unsupported tags so this skipped mapping cannot contaminate
+-- later tests sharing the regression database.
+DELETE FROM ducklake.ducklake_column_tag tag
+USING ducklake.ducklake_table t
+WHERE tag.table_id = t.table_id
+  AND t.table_name = 'upstream_comment_tags'
+  AND tag.key = 'pii';
+DELETE FROM ducklake.ducklake_tag tag
+USING ducklake.ducklake_table t
+WHERE tag.object_id = t.table_id
+  AND t.table_name = 'upstream_comment_tags'
+  AND tag.key = 'owner';
 DROP TABLE upstream_comment_tags;

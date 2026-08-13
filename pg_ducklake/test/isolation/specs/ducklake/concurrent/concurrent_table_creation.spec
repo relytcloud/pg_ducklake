@@ -1,6 +1,12 @@
 # Upstream: test/sql/concurrent/concurrent_table_creation.test_slow
 # Skip: concurrent public-schema DDL currently has a pg_ducklake false conflict; retain clean serialized coverage without cascading teardown errors.
 # Independent table and view creation remains covered through the public API.
+setup {
+ DROP VIEW IF EXISTS upstream_iso_view_a;
+ DROP VIEW IF EXISTS upstream_iso_view_b;
+ DROP TABLE IF EXISTS upstream_iso_create_a;
+ DROP TABLE IF EXISTS upstream_iso_create_b;
+}
 session s1
 step s1_begin { BEGIN; }
 step s1_table { CREATE TABLE upstream_iso_create_a (i integer) USING ducklake; }

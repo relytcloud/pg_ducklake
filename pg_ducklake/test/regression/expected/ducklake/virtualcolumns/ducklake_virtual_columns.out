@@ -1,5 +1,6 @@
 -- Upstream: test/sql/virtualcolumns/ducklake_virtual_columns.test
 CREATE TABLE upstream_virtual_columns (i integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_virtual_columns'::regclass);
 INSERT INTO upstream_virtual_columns VALUES (1), (2), (3);
 SELECT * FROM ducklake.flush_inlined_data('upstream_virtual_columns'::regclass);
  schema_name |        table_name        | rows_flushed 
@@ -34,3 +35,5 @@ SELECT count(DISTINCT ducklake.file_index()) FROM upstream_virtual_columns;
 (1 row)
 
 DROP TABLE upstream_virtual_columns;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope = 'table';

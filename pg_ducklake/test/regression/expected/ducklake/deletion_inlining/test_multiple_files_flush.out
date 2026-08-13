@@ -41,4 +41,5 @@ WHERE t.table_name = 'upstream_delete_files' AND t.end_snapshot IS NULL AND f.en
 (1 row)
 
 DROP TABLE upstream_delete_files;
-CALL ducklake.set_option('data_inlining_row_limit', 0);
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope IS NULL;

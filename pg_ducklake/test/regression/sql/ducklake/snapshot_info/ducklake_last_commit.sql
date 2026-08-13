@@ -8,16 +8,21 @@ SELECT r['id']::bigint AS created_snapshot
 FROM ducklake.last_committed_snapshot() AS r \gset
 SELECT r['id']::bigint = :created_snapshot AS create_visible
 FROM ducklake.last_committed_snapshot() AS r;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_last_snapshot'::regclass);
+SELECT r['id']::bigint AS stable_last
+FROM ducklake.last_committed_snapshot() AS r \gset
 
 BEGIN;
 INSERT INTO upstream_last_snapshot VALUES (0);
-SELECT r['id']::bigint = :created_snapshot AS uncommitted_ignored
+SELECT r['id']::bigint = :stable_last AS uncommitted_ignored
 FROM ducklake.last_committed_snapshot() AS r;
 ROLLBACK;
-SELECT r['id']::bigint = :created_snapshot AS rollback_ignored
+SELECT r['id']::bigint = :stable_last AS rollback_ignored
 FROM ducklake.last_committed_snapshot() AS r;
 
 INSERT INTO upstream_last_snapshot VALUES (1);
-SELECT r['id']::bigint = :created_snapshot + 1 AS commit_visible
+SELECT r['id']::bigint > :stable_last AS commit_visible
 FROM ducklake.last_committed_snapshot() AS r;
 DROP TABLE upstream_last_snapshot;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope = 'table';

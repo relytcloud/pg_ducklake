@@ -1,6 +1,7 @@
 -- Upstream: test/sql/table_changes/window_partition_row_loss.test
 -- Non-filtering windows over change functions must not drop rows.
 CREATE TABLE upstream_change_window (id integer, val integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_change_window'::regclass);
 SELECT max(snapshot_id) AS v0 FROM ducklake.ducklake_snapshot \gset
 INSERT INTO upstream_change_window VALUES (1, 100), (2, 200);
 UPDATE upstream_change_window SET val = 150 WHERE id = 1;
@@ -58,3 +59,5 @@ FROM (
 (1 row)
 
 DROP TABLE upstream_change_window;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope = 'table';

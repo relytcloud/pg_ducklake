@@ -4,6 +4,7 @@
 
 SELECT max(r['snapshot_id']::bigint) AS base_snap FROM ducklake.snapshots() AS r \gset
 CREATE TABLE upstream_snapshots (i integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_snapshots'::regclass);
 SELECT max(r['snapshot_id']::bigint) AS create_snap FROM ducklake.snapshots() AS r \gset
 INSERT INTO upstream_snapshots VALUES (42);
 SELECT max(r['snapshot_id']::bigint) AS insert_snap FROM ducklake.snapshots() AS r \gset
@@ -16,3 +17,5 @@ FROM ducklake.snapshots() AS r
 WHERE r['snapshot_id']::bigint = :create_snap;
 
 DROP TABLE upstream_snapshots;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope = 'table';

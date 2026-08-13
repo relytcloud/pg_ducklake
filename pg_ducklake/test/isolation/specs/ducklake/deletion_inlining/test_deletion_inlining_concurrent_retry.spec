@@ -1,6 +1,11 @@
 # Upstream: test/sql/deletion_inlining/test_deletion_inlining_concurrent_retry.test
 # Concurrent small deletes on separate file-backed tables must all survive the
 # shared snapshot-claim retry path.
+setup {
+  DROP TABLE IF EXISTS upstream_iso_delete_retry_0;
+  DROP TABLE IF EXISTS upstream_iso_delete_retry_1;
+  DROP TABLE IF EXISTS upstream_iso_delete_retry_2;
+}
 setup { CREATE TABLE upstream_iso_delete_retry_0 (a bigint) USING ducklake; }
 setup { CREATE TABLE upstream_iso_delete_retry_1 (a bigint) USING ducklake; }
 setup { CREATE TABLE upstream_iso_delete_retry_2 (a bigint) USING ducklake; }
@@ -65,9 +70,9 @@ step check_rows {
 }
 
 teardown {
-  DROP TABLE upstream_iso_delete_retry_0,
-             upstream_iso_delete_retry_1,
-             upstream_iso_delete_retry_2;
+  DROP TABLE IF EXISTS upstream_iso_delete_retry_0,
+                       upstream_iso_delete_retry_1,
+                       upstream_iso_delete_retry_2;
 }
 
 permutation r0_begin r0_pin r1_begin r1_pin r2_begin r2_pin r0_delete r1_delete r2_delete r0_commit r1_commit r2_commit check_rows

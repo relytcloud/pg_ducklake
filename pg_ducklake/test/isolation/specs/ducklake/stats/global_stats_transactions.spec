@@ -1,6 +1,9 @@
 # Upstream: test/sql/stats/global_stats_transactions.test
 # Global min/max/null stats merge three concurrent inserts regardless of commit order.
-setup { CREATE TABLE upstream_iso_global_stats (i integer) USING ducklake; }
+setup {
+  DROP TABLE IF EXISTS upstream_iso_global_stats;
+  CREATE TABLE upstream_iso_global_stats (i integer) USING ducklake;
+}
 setup {
   CALL ducklake.set_option(
     'data_inlining_row_limit', 0, 'upstream_iso_global_stats'::regclass);
@@ -47,7 +50,7 @@ step check_stats {
      AND c.end_snapshot IS NULL;
 }
 
-teardown { DROP TABLE upstream_iso_global_stats; }
+teardown { DROP TABLE IF EXISTS upstream_iso_global_stats; }
 
 permutation s1_begin s2_begin s3_begin s1_insert s2_insert s3_insert s1_commit s2_commit s3_commit check_rows check_stats
 permutation s1_begin s2_begin s3_begin s1_insert s2_insert s3_insert s3_commit s2_commit s1_commit check_rows check_stats

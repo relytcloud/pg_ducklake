@@ -29,3 +29,5 @@ JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'upstream_rewrite_large' AND t.end_snapshot IS NULL
   AND df.end_snapshot IS NULL;
 DROP TABLE upstream_rewrite_large;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key IN ('target_file_size', 'rewrite_delete_threshold') AND scope IS NULL;

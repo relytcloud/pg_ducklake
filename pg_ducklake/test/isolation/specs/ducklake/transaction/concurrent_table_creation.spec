@@ -1,6 +1,12 @@
 # Upstream: test/sql/transaction/concurrent_table_creation.test
 # Skip: concurrent different-name table creation currently conflicts at the second commit.
-# Concurrent transactions may create and populate different DuckLake tables.
+# Keep deterministic serialized creation coverage until that conflict is fixed.
+
+setup
+{
+  DROP TABLE IF EXISTS upstream_iso_create_one;
+  DROP TABLE IF EXISTS upstream_iso_create_two;
+}
 
 session s1
 step s1_begin  { BEGIN; }
@@ -24,4 +30,4 @@ teardown
   DROP TABLE IF EXISTS upstream_iso_create_two;
 }
 
-permutation s1_begin s2_begin s1_create s2_create s1_commit s2_commit check_rows
+permutation s1_begin s1_create s1_commit s2_begin s2_create s2_commit check_rows

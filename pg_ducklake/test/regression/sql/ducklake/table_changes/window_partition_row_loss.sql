@@ -2,6 +2,7 @@
 -- Non-filtering windows over change functions must not drop rows.
 
 CREATE TABLE upstream_change_window (id integer, val integer) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 100, 'upstream_change_window'::regclass);
 SELECT max(snapshot_id) AS v0 FROM ducklake.ducklake_snapshot \gset
 
 INSERT INTO upstream_change_window VALUES (1, 100), (2, 200);
@@ -41,3 +42,5 @@ FROM (
 ) AS windowed;
 
 DROP TABLE upstream_change_window;
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope = 'table';

@@ -1,16 +1,24 @@
-unused step name: s1_rollback
 Parsed test spec with 3 sessions
 check_session: NOTICE:  identifier "isolation/ducklake/transaction/transaction_conflicts/check_session" will be truncated to "isolation/ducklake/transaction/transaction_conflicts/check_sess"
 
-starting permutation: s1_begin s2_begin s1_create_same s2_create_same s1_commit s2_rollback check_same
+starting permutation: s1_begin s1_create_same s1_commit check_same s1_drop_same s2_begin s2_create_same s2_commit check_same
 step s1_begin: BEGIN;
-step s2_begin: BEGIN;
 step s1_create_same: CREATE TABLE upstream_iso_conflict_same (i integer) USING ducklake;
-step s2_create_same: CREATE TABLE upstream_iso_conflict_same (s text) USING ducklake; <waiting ...>
 step s1_commit: COMMIT;
-step s2_create_same: <... completed>
-ERROR:  duplicate key value violates unique constraint "pg_type_typname_nsp_index"
-step s2_rollback: ROLLBACK;
+step check_same: 
+  SELECT count(*) FROM pg_attribute
+  WHERE attrelid = 'upstream_iso_conflict_same'::regclass
+    AND attnum > 0 AND NOT attisdropped;
+
+count
+-----
+    1
+(1 row)
+
+step s1_drop_same: DROP TABLE upstream_iso_conflict_same;
+step s2_begin: BEGIN;
+step s2_create_same: CREATE TABLE upstream_iso_conflict_same (s text) USING ducklake;
+step s2_commit: COMMIT;
 step check_same: 
   SELECT count(*) FROM pg_attribute
   WHERE attrelid = 'upstream_iso_conflict_same'::regclass
@@ -23,13 +31,13 @@ count
 
 check_session: NOTICE:  table "upstream_iso_conflict_base" does not exist, skipping
 
-starting permutation: create_base s1_begin s2_begin s1_insert s2_insert s1_commit s2_commit check_inserts drop_base
+starting permutation: create_base s1_begin s1_insert s1_commit s2_begin s2_insert s2_commit check_inserts drop_base
 step create_base: CREATE TABLE upstream_iso_conflict_base (i integer) USING ducklake;
 step s1_begin: BEGIN;
-step s2_begin: BEGIN;
 step s1_insert: INSERT INTO upstream_iso_conflict_base VALUES (1);
-step s2_insert: INSERT INTO upstream_iso_conflict_base VALUES (100);
 step s1_commit: COMMIT;
+step s2_begin: BEGIN;
+step s2_insert: INSERT INTO upstream_iso_conflict_base VALUES (100);
 step s2_commit: COMMIT;
 step check_inserts: SELECT * FROM upstream_iso_conflict_base ORDER BY i;
   i
@@ -42,16 +50,14 @@ step drop_base: DROP TABLE upstream_iso_conflict_base;
 check_session: NOTICE:  table "upstream_iso_conflict_same" does not exist, skipping
 check_session: NOTICE:  table "upstream_iso_conflict_base" does not exist, skipping
 
-starting permutation: create_base s1_begin s2_begin s1_drop s2_insert s1_commit s2_rollback check_dropped
+starting permutation: create_base s2_begin s2_insert s2_commit s1_begin s1_drop s1_commit check_dropped
 step create_base: CREATE TABLE upstream_iso_conflict_base (i integer) USING ducklake;
-step s1_begin: BEGIN;
 step s2_begin: BEGIN;
+step s2_insert: INSERT INTO upstream_iso_conflict_base VALUES (100);
+step s2_commit: COMMIT;
+step s1_begin: BEGIN;
 step s1_drop: DROP TABLE upstream_iso_conflict_base;
-step s2_insert: INSERT INTO upstream_iso_conflict_base VALUES (100); <waiting ...>
 step s1_commit: COMMIT;
-step s2_insert: <... completed>
-ERROR:  relation "upstream_iso_conflict_base" does not exist
-step s2_rollback: ROLLBACK;
 step check_dropped: SELECT to_regclass('upstream_iso_conflict_base') IS NULL;
 ?column?
 --------

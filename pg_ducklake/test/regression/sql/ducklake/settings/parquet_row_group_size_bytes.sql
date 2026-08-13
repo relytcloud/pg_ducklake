@@ -5,5 +5,7 @@ CALL ducklake.set_option('parquet_row_group_size_bytes', '10KB');
 SELECT option_name, value, scope
 FROM ducklake.options()
 WHERE option_name = 'parquet_row_group_size_bytes';
--- Leave a valid, non-disruptive value instead of passing unsupported unitless bytes.
-CALL ducklake.set_option('parquet_row_group_size_bytes', '128MB');
+-- Remove the injected override: even a large ROW_GROUP_SIZE_BYTES conflicts with
+-- DuckDB's default preserve_insertion_order setting in later tests.
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'parquet_row_group_size_bytes' AND scope IS NULL;

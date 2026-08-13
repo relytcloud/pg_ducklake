@@ -57,4 +57,5 @@ SELECT ducklake.rowid() AS rowid, r['i']::integer AS i
 FROM ducklake.table_insertions('upstream_table_insertions'::regclass, :s1, :supdate) AS r
 ORDER BY rowid, i NULLS FIRST;
 DROP TABLE upstream_table_insertions;
-CALL ducklake.set_option('data_inlining_row_limit', 0);
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'data_inlining_row_limit' AND scope IS NULL;

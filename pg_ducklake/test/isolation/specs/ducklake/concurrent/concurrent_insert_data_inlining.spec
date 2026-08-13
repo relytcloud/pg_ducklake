@@ -1,6 +1,9 @@
 # Upstream: test/sql/concurrent/concurrent_insert_data_inlining.test
 # Concurrent inserts into inlined data merge rows and global stats.
-setup { CREATE TABLE upstream_iso_inline_insert (key integer) USING ducklake; }
+setup {
+  DROP TABLE IF EXISTS upstream_iso_inline_insert;
+  CREATE TABLE upstream_iso_inline_insert (key integer) USING ducklake;
+}
 setup {
   CALL ducklake.set_option(
     'data_inlining_row_limit', 10, 'upstream_iso_inline_insert'::regclass);
@@ -20,10 +23,7 @@ session checker
 step check_rows {
   SELECT count(*) AS rows, sum(key) AS key_sum,
          min(key) AS min_key, max(key) AS max_key,
-         count(*) FILTER (WHERE key IS NULL) AS null_keys,
-         (SELECT count(*)
-            FROM ducklake.list_files(
-              'upstream_iso_inline_insert'::regclass)) AS files
+         count(*) FILTER (WHERE key IS NULL) AS null_keys
     FROM upstream_iso_inline_insert;
 }
 # PostgreSQL has no stats(column) display function; assert its backing
@@ -44,7 +44,7 @@ step check_stats {
      AND c.end_snapshot IS NULL;
 }
 
-teardown { DROP TABLE upstream_iso_inline_insert; }
+teardown { DROP TABLE IF EXISTS upstream_iso_inline_insert; }
 
 permutation s1_begin s2_begin s1_insert s2_insert s1_commit s2_commit check_rows check_stats
 permutation s1_begin s2_begin s1_insert s2_insert s2_commit s1_commit check_rows check_stats

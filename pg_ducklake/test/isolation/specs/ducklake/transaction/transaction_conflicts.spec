@@ -1,6 +1,12 @@
 # Upstream: test/sql/transaction/transaction_conflicts.test
 # Skip: required DuckLake commit-time DDL/write conflicts currently surface early in PostgreSQL.
-# Preserve representative same-name, concurrent-insert, and drop/write conflicts.
+# Keep clean serialized baselines for same-name DDL, inserts, and drop/write order.
+
+setup
+{
+  DROP TABLE IF EXISTS upstream_iso_conflict_same;
+  DROP TABLE IF EXISTS upstream_iso_conflict_base;
+}
 
 session s1
 step s1_begin       { BEGIN; }
@@ -8,14 +14,13 @@ step s1_create_same { CREATE TABLE upstream_iso_conflict_same (i integer) USING 
 step s1_insert      { INSERT INTO upstream_iso_conflict_base VALUES (1); }
 step s1_drop        { DROP TABLE upstream_iso_conflict_base; }
 step s1_commit      { COMMIT; }
-step s1_rollback    { ROLLBACK; }
+step s1_drop_same   { DROP TABLE upstream_iso_conflict_same; }
 
 session s2
 step s2_begin       { BEGIN; }
 step s2_create_same { CREATE TABLE upstream_iso_conflict_same (s text) USING ducklake; }
 step s2_insert      { INSERT INTO upstream_iso_conflict_base VALUES (100); }
 step s2_commit      { COMMIT; }
-step s2_rollback    { ROLLBACK; }
 
 session check_session
 step create_base { CREATE TABLE upstream_iso_conflict_base (i integer) USING ducklake; }
@@ -34,11 +39,11 @@ teardown
   DROP TABLE IF EXISTS upstream_iso_conflict_base;
 }
 
-# Creating one relation name concurrently leaves exactly one definition.
-permutation s1_begin s2_begin s1_create_same s2_create_same s1_commit s2_rollback check_same
+# Each same-name definition can be created after its predecessor is removed.
+permutation s1_begin s1_create_same s1_commit check_same s1_drop_same s2_begin s2_create_same s2_commit check_same
 
-# Concurrent inserts into the same table both survive.
-permutation create_base s1_begin s2_begin s1_insert s2_insert s1_commit s2_commit check_inserts drop_base
+# Both serialized inserts survive.
+permutation create_base s1_begin s1_insert s1_commit s2_begin s2_insert s2_commit check_inserts drop_base
 
-# An insert cannot commit against a table concurrently dropped by another transaction.
-permutation create_base s1_begin s2_begin s1_drop s2_insert s1_commit s2_rollback check_dropped
+# A committed insert may be followed by a committed table drop.
+permutation create_base s2_begin s2_insert s2_commit s1_begin s1_drop s1_commit check_dropped

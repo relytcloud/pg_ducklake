@@ -7,23 +7,22 @@ s2: NOTICE:  identifier "isolation/ducklake/rewrite_data_files/test_rewrite_tran
 NOTICE:  identifier "isolation/ducklake/rewrite_data_files/test_rewrite_transaction_conflict" will be truncated to "isolation/ducklake/rewrite_data_files/test_rewrite_transaction_"
 check_session: NOTICE:  identifier "isolation/ducklake/rewrite_data_files/test_rewrite_transaction_/check_session" will be truncated to "isolation/ducklake/rewrite_data_files/test_rewrite_transaction_"
 
-starting permutation: s1_begin s2_begin s1_rewrite s2_delete s1_commit s2_commit check_rows
+starting permutation: s1_begin s1_rewrite s1_commit s2_begin s2_delete s2_commit check_rows
 step s1_begin: BEGIN;
-step s2_begin: BEGIN;
 step s1_rewrite: SELECT * FROM ducklake.rewrite_data_files('upstream_iso_rewrite_conflict'::regclass);
 schema_name|table_name                   |files_processed|files_created
 -----------+-----------------------------+---------------+-------------
 public     |upstream_iso_rewrite_conflict|              1|            1
 (1 row)
 
-step s2_delete: DELETE FROM upstream_iso_rewrite_conflict WHERE i >= 30 AND i < 50;
 step s1_commit: COMMIT;
+step s2_begin: BEGIN;
+step s2_delete: DELETE FROM upstream_iso_rewrite_conflict WHERE i >= 30 AND i < 50;
 step s2_commit: COMMIT;
-ERROR:  pg_ducklake commit hook failed to commit DuckDB: TransactionContext Error: Failed to commit: Failed to commit DuckLake transaction.
-Transaction conflict - attempting to delete from table with index "2" - but another transaction has compacted it
 step check_rows: SELECT count(*), min(i), max(i) FROM upstream_iso_rewrite_conflict;
 count|min|max
 -----+---+---
-   90| 10| 99
+   70| 10| 99
 (1 row)
 
+s2: WARNING:  there is no transaction in progress

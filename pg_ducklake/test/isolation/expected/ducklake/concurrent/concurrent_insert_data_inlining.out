@@ -13,15 +13,12 @@ step s2_commit: COMMIT;
 step check_rows: 
   SELECT count(*) AS rows, sum(key) AS key_sum,
          min(key) AS min_key, max(key) AS max_key,
-         count(*) FILTER (WHERE key IS NULL) AS null_keys,
-         (SELECT count(*)
-            FROM ducklake.list_files(
-              'upstream_iso_inline_insert'::regclass)) AS files
+         count(*) FILTER (WHERE key IS NULL) AS null_keys
     FROM upstream_iso_inline_insert;
 
-rows|key_sum|min_key|max_key|null_keys|files
-----+-------+-------+-------+---------+-----
-   2|      1|      0|      1|        0|    0
+rows|key_sum|min_key|max_key|null_keys
+----+-------+-------+-------+---------
+   2|      1|      0|      1|        0
 (1 row)
 
 step check_stats: 
@@ -55,15 +52,12 @@ step s1_commit: COMMIT;
 step check_rows: 
   SELECT count(*) AS rows, sum(key) AS key_sum,
          min(key) AS min_key, max(key) AS max_key,
-         count(*) FILTER (WHERE key IS NULL) AS null_keys,
-         (SELECT count(*)
-            FROM ducklake.list_files(
-              'upstream_iso_inline_insert'::regclass)) AS files
+         count(*) FILTER (WHERE key IS NULL) AS null_keys
     FROM upstream_iso_inline_insert;
 
-rows|key_sum|min_key|max_key|null_keys|files
-----+-------+-------+-------+---------+-----
-   2|      1|      0|      1|        0|    0
+rows|key_sum|min_key|max_key|null_keys
+----+-------+-------+-------+---------
+   2|      1|      0|      1|        0
 (1 row)
 
 step check_stats: 

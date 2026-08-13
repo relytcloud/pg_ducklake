@@ -56,4 +56,5 @@ NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to table upstream_setting_schema.t1
 drop cascades to table upstream_setting_schema.t2
 DROP TABLE upstream_setting_t1, upstream_setting_t2;
-CALL ducklake.set_option('parquet_compression', 'snappy');
+DELETE FROM ducklake.ducklake_metadata
+WHERE key = 'parquet_compression';

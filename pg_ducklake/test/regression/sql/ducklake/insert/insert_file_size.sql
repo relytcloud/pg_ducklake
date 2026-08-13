@@ -17,4 +17,5 @@ WHERE t.table_name = 'upstream_insert_file_size'
   AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
 
 DROP TABLE upstream_insert_file_size;
-CALL ducklake.set_option('target_file_size', '512MB');
+DELETE FROM ducklake.ducklake_metadata
+WHERE key IN ('data_inlining_row_limit', 'target_file_size') AND scope IS NULL;

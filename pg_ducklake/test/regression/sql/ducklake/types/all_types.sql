@@ -1,6 +1,8 @@
 -- Upstream: test/sql/types/all_types.test
 -- Skip: several upstream DuckDB logical types have no PostgreSQL type mapping.
-SET TIME ZONE 'UTC';
+SET TIME ZONE 'Etc/GMT-2';
+SET datestyle TO ISO;
+CALL ducklake.recycle_ddb();
 CREATE TABLE upstream_all_types (
   id integer,
   b boolean,
@@ -22,7 +24,7 @@ CREATE TABLE upstream_all_types (
 BEGIN;
 INSERT INTO upstream_all_types VALUES
 (1, true, -12, 3456, 9876543210, 1.5, 2.25, 123456.789012,
- DATE '2024-01-02', TIME '03:04:05', TIMETZ '03:04:05+02',
+ DATE '2024-01-02', TIME '03:04:05', TIMETZ '03:04:05+00',
  TIMESTAMP '2024-01-02 03:04:05', TIMESTAMPTZ '2024-01-02 03:04:05+00',
  'ducklake', '\x0001ff', '12345678-1234-1234-1234-123456789012'),
 (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -33,3 +35,5 @@ CALL ducklake.recycle_ddb();
 SELECT * FROM upstream_all_types ORDER BY id;
 DROP TABLE upstream_all_types;
 SET TIME ZONE DEFAULT;
+SET datestyle TO ISO;
+CALL ducklake.recycle_ddb();

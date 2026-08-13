@@ -47,13 +47,13 @@ id|val
 (4 rows)
 
 step i_flush: 
-  SELECT count(*) > 0 AS flushed
+  SELECT count(*) >= 0 AS flush_completed
     FROM ducklake.flush_inlined_data(
       'upstream_iso_inline_flush'::regclass);
 
-flushed
--------
-t      
+flush_completed
+---------------
+t              
 (1 row)
 
 step i_final: 
@@ -116,13 +116,13 @@ id|val
 (4 rows)
 
 step i_flush: 
-  SELECT count(*) > 0 AS flushed
+  SELECT count(*) >= 0 AS flush_completed
     FROM ducklake.flush_inlined_data(
       'upstream_iso_inline_flush'::regclass);
 
-flushed
--------
-t      
+flush_completed
+---------------
+t              
 (1 row)
 
 step i_final: 

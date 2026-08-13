@@ -2,6 +2,7 @@
 # Skip: pg_ducklake currently conflicts on concurrent deletes from disjoint
 # partition files; keep a serialized baseline until file-level conflicts work.
 setup {
+  DROP TABLE IF EXISTS upstream_iso_file_conflict;
   CREATE TABLE upstream_iso_file_conflict
     (key integer, grouping integer) USING ducklake;
 }
@@ -36,6 +37,6 @@ step check_rows {
     FROM upstream_iso_file_conflict;
 }
 
-teardown { DROP TABLE upstream_iso_file_conflict; }
+teardown { DROP TABLE IF EXISTS upstream_iso_file_conflict; }
 
 permutation s1_begin s1_delete s1_commit s2_begin s2_delete s2_commit check_rows
