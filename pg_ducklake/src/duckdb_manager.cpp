@@ -55,15 +55,17 @@ ducklake_attach_catalog() {
 	duckdb::string query =
 	    "ATTACH 'ducklake:" PGDUCKLAKE_DUCKDB_CATALOG ":' AS " PGDUCKLAKE_DUCKDB_CATALOG
 	    "(METADATA_SCHEMA " PGDUCKLAKE_PG_SCHEMA_QUOTED ", METADATA_CATALOG " PGDUCKLAKE_DUCKDB_CATALOG;
-	/* First-time init: pass DATA_PATH so DuckLake stores it in catalog metadata. */
-	auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
-	try {
-		std::filesystem::create_directory(data_path);
-	} catch (const std::filesystem::filesystem_error &e) {
-		ereport(ERROR, (errcode(ERRCODE_IO_ERROR),
-		                errmsg("failed to create DuckLake data directory \"%s\": %s", data_path.c_str(), e.what())));
+	if (creating_extension) {
+		/* First-time init: pass DATA_PATH so DuckLake stores it in catalog metadata. */
+		auto data_path = duckdb::StringUtil::Format("%s/pg_ducklake", DataDir);
+		try {
+			std::filesystem::create_directory(data_path);
+		} catch (const std::filesystem::filesystem_error &e) {
+			ereport(ERROR, (errcode(ERRCODE_IO_ERROR), errmsg("failed to create DuckLake data directory \"%s\": %s",
+			                                                  data_path.c_str(), e.what())));
+		}
+		query += ", DATA_PATH '" + data_path + "'";
 	}
-	query += ", DATA_PATH '" + data_path + "'";
 	/* Subsequent ATTACHes omit DATA_PATH so DuckLake reads it from stored
 	 * metadata, avoiding mismatch if the path was changed (e.g. to an S3 bucket). */
 	query += ")";
