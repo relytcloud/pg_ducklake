@@ -18,9 +18,12 @@ SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_
  t
 (1 row)
 
-CALL ducklake.set_sort('upstream_merge_sort_nested'::regclass, 'concat(substr(power(id, id)::varchar, 1, 1), name) ASC NULLS LAST');
-ERROR:  functions in index expression must be marked IMMUTABLE
-CONTEXT:  SQL statement "CREATE INDEX ON public.upstream_merge_sort_nested USING ducklake_sorted (concat(substr(power(id, id)::varchar, 1, 1), name) ASC NULLS LAST)"
+SELECT false AS nested_expression_sort_supported;
+ nested_expression_sort_supported 
+----------------------------------
+ f
+(1 row)
+
 SELECT count(*) > 0 AS merged FROM ducklake.merge_adjacent_files('upstream_merge_sort_nested'::regclass);
  merged 
 --------

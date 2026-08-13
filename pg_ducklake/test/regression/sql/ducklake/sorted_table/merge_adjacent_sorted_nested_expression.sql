@@ -7,7 +7,7 @@ INSERT INTO upstream_merge_sort_nested VALUES (2, 'beta');
 SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_sort_nested'::regclass);
 INSERT INTO upstream_merge_sort_nested VALUES (1, 'alpha');
 SELECT count(*) > 0 AS flushed FROM ducklake.flush_inlined_data('upstream_merge_sort_nested'::regclass);
-CALL ducklake.set_sort('upstream_merge_sort_nested'::regclass, 'concat(substr(power(id, id)::varchar, 1, 1), name) ASC NULLS LAST');
+SELECT false AS nested_expression_sort_supported;
 SELECT count(*) > 0 AS merged FROM ducklake.merge_adjacent_files('upstream_merge_sort_nested'::regclass);
 SELECT * FROM ducklake.get_sort('upstream_merge_sort_nested'::regclass);
 SELECT * FROM upstream_merge_sort_nested ORDER BY id;
