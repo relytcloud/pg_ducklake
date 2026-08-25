@@ -1,4 +1,5 @@
 -- Test DuckLake GUCs
+SHOW ducklake.azure_transport_option_type;
 SHOW ducklake.default_table_path;
 SHOW ducklake.vacuum_delete_threshold;
 SHOW ducklake.enable_direct_insert;
@@ -11,6 +12,11 @@ SHOW ducklake.native_writer_retry_backoff;
 SHOW ducklake.threads;
 
 -- Test setting GUCs
+SET ducklake.azure_transport_option_type = 'curl';
+SHOW ducklake.azure_transport_option_type;
+RESET ducklake.azure_transport_option_type;
+SHOW ducklake.azure_transport_option_type;
+
 SET ducklake.default_table_path = '/tmp/test_path';
 SHOW ducklake.default_table_path;
 RESET ducklake.default_table_path;

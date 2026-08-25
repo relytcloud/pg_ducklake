@@ -1,4 +1,10 @@
 -- Test DuckLake GUCs
+SHOW ducklake.azure_transport_option_type;
+ ducklake.azure_transport_option_type 
+--------------------------------------
+ 
+(1 row)
+
 SHOW ducklake.default_table_path;
  ducklake.default_table_path 
 -----------------------------
@@ -60,6 +66,20 @@ SHOW ducklake.threads;
 (1 row)
 
 -- Test setting GUCs
+SET ducklake.azure_transport_option_type = 'curl';
+SHOW ducklake.azure_transport_option_type;
+ ducklake.azure_transport_option_type 
+--------------------------------------
+ curl
+(1 row)
+
+RESET ducklake.azure_transport_option_type;
+SHOW ducklake.azure_transport_option_type;
+ ducklake.azure_transport_option_type 
+--------------------------------------
+ 
+(1 row)
+
 SET ducklake.default_table_path = '/tmp/test_path';
 SHOW ducklake.default_table_path;
  ducklake.default_table_path 

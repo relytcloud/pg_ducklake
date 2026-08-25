@@ -3,6 +3,7 @@
 namespace pgducklake {
 
 extern char *default_table_path;
+extern char *azure_transport_option_type;
 extern double vacuum_delete_threshold;
 extern bool enable_direct_insert;
 extern bool ctas_skip_data;

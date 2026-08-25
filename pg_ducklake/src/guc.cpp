@@ -10,6 +10,7 @@ extern "C" {
 namespace pgducklake {
 
 char *default_table_path = strdup("");
+char *azure_transport_option_type = strdup("");
 double vacuum_delete_threshold = 0.1;
 bool enable_direct_insert = true;
 bool ctas_skip_data = false;
@@ -55,6 +56,11 @@ InitGUCs() {
 	                           "Default directory path for DuckLake tables. If set, tables will be "
 	                           "created under this path.",
 	                           NULL, &default_table_path, "", PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomStringVariable("ducklake.azure_transport_option_type",
+	                           "Set the azure_transport_option_type for DuckDB Azure extension. Can be used to "
+	                           "work around issue #882: https://github.com/duckdb/pg_duckdb/issues/882",
+	                           NULL, &azure_transport_option_type, "", PGC_SUSET, 0, NULL, NULL, NULL);
 
 	DefineCustomRealVariable("ducklake.vacuum_delete_threshold",
 	                         "Minimum fraction of deleted rows (0.0-1.0) before VACUUM rewrites a "

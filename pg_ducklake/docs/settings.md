@@ -11,6 +11,7 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 
 | Name | Default | Access |
 | :--- | :------ | :----- |
+| [`ducklake.azure_transport_option_type`](#ducklakeazure_transport_option_type) | `""` | Superuser-only |
 | [`ducklake.default_table_path`](#ducklakedefault_table_path) | `""` | Per-session |
 | [`ducklake.enable_direct_insert`](#ducklakeenable_direct_insert) | `true` | Per-session |
 | [`ducklake.enable_metadata_sync`](#ducklakeenable_metadata_sync) | `true` | Per-session |
@@ -61,6 +62,13 @@ Every option can be scoped global, schema, or table (most specific wins).
 ## Detailed Descriptions
 
 ### PostgreSQL GUCs
+
+### `ducklake.azure_transport_option_type`
+
+Sets the `azure_transport_option_type` setting for the DuckDB Azure extension. Set it to `'curl'` to work around [issue #882](https://github.com/duckdb/pg_duckdb/issues/882). The setting only affects connections when the Azure extension is loaded.
+
+- **Default**: `""` (empty string)
+- **Access**: Superuser-only
 
 ### `ducklake.default_table_path`
 

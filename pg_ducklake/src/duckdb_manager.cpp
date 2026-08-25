@@ -139,6 +139,11 @@ DuckDBManager::RefreshConnectionState(duckdb::ClientContext &context) {
 		}
 	}
 
+	if (azure_transport_option_type && azure_transport_option_type[0] != '\0' && database->ExtensionIsLoaded("azure")) {
+		DuckDBQueryOrThrow(context, "SET azure_transport_option_type = " +
+		                                duckdb::KeywordHelper::WriteQuoted(azure_transport_option_type));
+	}
+
 	// Re-emit S3/Azure secrets from the catalog when a SERVER/USER MAPPING changed.
 	if (!secrets_valid_) {
 		DropSecrets(context);
