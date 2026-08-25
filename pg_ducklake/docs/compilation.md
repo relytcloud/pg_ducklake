@@ -55,8 +55,22 @@ sudo apt install \
     build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev \
     libxslt-dev libssl-dev libxml2-utils xsltproc pkg-config libc++-dev \
     libc++abi-dev libglib2.0-dev libtinfo6 cmake libstdc++-12-dev \
-    liblz4-dev libcurl4-openssl-dev ninja-build
+    liblz4-dev libcurl4-openssl-dev ninja-build curl zip unzip
 ```
+
+DuckLake requires a newer CRoaring than Ubuntu 24.04 packages. As in CI, use
+vcpkg to install the compatible version declared by DuckLake's manifest:
+
+```sh
+git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+git -C "$HOME/vcpkg" checkout 84bab45d415d22042bd0b9081aea57f362da3f35
+"$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+export VCPKG_TOOLCHAIN_PATH="$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake"
+export VCPKG_TARGET_TRIPLET=x64-linux
+```
+
+Keep these environment variables set when running `make`. For Ubuntu on
+ARM64, use `arm64-linux` instead of `x64-linux`.
 
 ### (Optional) Build and Install pg_duckdb
 
