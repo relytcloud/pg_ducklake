@@ -371,6 +371,48 @@ FROM ducklake.ducklake_table_column_stats s
 JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'unchanged_stats' AND t.end_snapshot IS NULL;
 
+-- ============================================================
+-- 10. bounds must describe the stored value, not the supplied one
+-- ============================================================
+-- numeric is the only inlined type whose typmod coercion rewrites the datum,
+-- so it is the only type that can catch a bound observed before the coercion.
+-- Both values round outward: 9.8765 stores as 9.877, -9.8765 as -9.877.
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+CREATE TABLE scalestats (id int, n numeric(18,3)) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('scalestats'::regclass);
+
+SELECT ducklake.reset_direct_insert_stats();
+INSERT INTO scalestats VALUES (1, 1.2345), (2, 9.8765), (3, -9.8765);
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+
+SELECT id, n FROM scalestats ORDER BY id;
+SELECT s.min_value, s.max_value,
+       s.min_value::numeric <= (SELECT min(n) FROM scalestats) AS min_covers,
+       s.max_value::numeric >= (SELECT max(n) FROM scalestats) AS max_covers
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+WHERE t.table_name = 'scalestats' AND s.column_id = 2;
+
+-- UNNEST is absent: it cannot reach a column with a declared typmod.
+CREATE TABLE scalestats_copy (id int, n numeric(18,3)) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('scalestats_copy'::regclass);
+COPY scalestats_copy FROM STDIN;
+1	1.2345
+2	9.8765
+3	-9.8765
+\.
+SELECT id, n FROM scalestats_copy ORDER BY id;
+SELECT s.min_value, s.max_value,
+       s.min_value::numeric <= (SELECT min(n) FROM scalestats_copy) AS min_covers,
+       s.max_value::numeric >= (SELECT max(n) FROM scalestats_copy) AS max_covers
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+WHERE t.table_name = 'scalestats_copy' AND s.column_id = 2;
+
+-- A bound that excludes a stored value surfaces as a missing row, not an error.
+SELECT * FROM ducklake.flush_inlined_data('scalestats'::regclass);
+SELECT id, n FROM scalestats WHERE n IN (9.877, -9.877) ORDER BY id;
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
@@ -383,4 +425,6 @@ DROP TABLE floatstats_mixed;
 DROP TABLE one_sided_stats;
 DROP TABLE type_change_stats;
 DROP TABLE unchanged_stats;
+DROP TABLE scalestats;
+DROP TABLE scalestats_copy;
 CALL ducklake.set_option('data_inlining_row_limit', 0);

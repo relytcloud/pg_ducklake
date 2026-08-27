@@ -57,6 +57,29 @@ extern "C" {
 
 namespace pgducklake {
 
+char *
+OutputFunctionCallIso(FmgrInfo *flinfo, Datum value) {
+	char *result = NULL;
+	int saved_style = DateStyle;
+	int saved_order = DateOrder;
+	PG_TRY();
+	{
+		DateStyle = USE_ISO_DATES;
+		DateOrder = DATEORDER_YMD;
+		result = OutputFunctionCall(flinfo, value);
+		DateStyle = saved_style;
+		DateOrder = saved_order;
+	}
+	PG_CATCH();
+	{
+		DateStyle = saved_style;
+		DateOrder = saved_order;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	return result;
+}
+
 namespace {
 
 struct NativeWriterStatsShmemStruct {

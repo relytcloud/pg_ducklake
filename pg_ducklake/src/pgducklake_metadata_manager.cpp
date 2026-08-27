@@ -34,14 +34,19 @@ extern "C" {
 #include "access/skey.h"
 #include "access/table.h"
 #include "access/xact.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
+#include "fmgr.h"
+#include "parser/parse_coerce.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
+#include "utils/lsyscache.h"
 #include "utils/resowner.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -717,6 +722,72 @@ done:
 bool
 GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schema_version_out) {
 	return GetTableInliningState(table_oid, table_id_out, schema_version_out, NULL) == TI_OK;
+}
+
+struct InlinedTypmodCoercion {
+	FmgrInfo finfo;
+	int nargs;
+	int32 typmod;
+};
+
+/* Resolved through PG's own coercion lookup so the stored value matches a
+ * plain INSERT. */
+InlinedTypmodCoercion *
+MakeInlinedTypmodCoercion(Oid inlined_type, int32_t inlined_typmod) {
+	if (inlined_typmod < 0) {
+		return NULL;
+	}
+
+	Oid funcid = InvalidOid;
+	if (find_typmod_coercion_function(inlined_type, &funcid) != COERCION_PATH_FUNC || !OidIsValid(funcid)) {
+		return NULL;
+	}
+
+	HeapTuple proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+	if (!HeapTupleIsValid(proctup)) {
+		return NULL;
+	}
+	int nargs = ((Form_pg_proc)GETSTRUCT(proctup))->pronargs;
+	ReleaseSysCache(proctup);
+
+	if (nargs != 2 && nargs != 3) {
+		return NULL;
+	}
+
+	InlinedTypmodCoercion *coercion = (InlinedTypmodCoercion *)palloc0(sizeof(InlinedTypmodCoercion));
+	fmgr_info(funcid, &coercion->finfo);
+	coercion->nargs = nargs;
+	coercion->typmod = inlined_typmod;
+	return coercion;
+}
+
+Datum
+ApplyInlinedTypmodCoercion(const InlinedTypmodCoercion *coercion, Datum value) {
+	FmgrInfo *finfo = const_cast<FmgrInfo *>(&coercion->finfo);
+
+	if (coercion->nargs == 3) {
+		return FunctionCall3(finfo, value, Int32GetDatum(coercion->typmod), BoolGetDatum(false));
+	}
+	return FunctionCall2(finfo, value, Int32GetDatum(coercion->typmod));
+}
+
+Relation
+OpenInlinedDataTable(uint64_t table_id, uint64_t schema_version, int lockmode, bool missing_ok) {
+	char relname[NAMEDATALEN];
+	snprintf(relname, sizeof(relname), "ducklake_inlined_data_%llu_%llu", (unsigned long long)table_id,
+	         (unsigned long long)schema_version);
+
+	Oid ducklake_nsp = get_namespace_oid("ducklake", false);
+	Oid relid = get_relname_relid(relname, ducklake_nsp);
+	if (!OidIsValid(relid)) {
+		if (missing_ok) {
+			return NULL;
+		}
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("inlined data table \"%s\" does not exist", relname),
+		                errhint("Call ducklake.ensure_inlined_data_table() first.")));
+	}
+
+	return table_open(relid, lockmode);
 }
 
 } // namespace pgducklake

@@ -16,7 +16,6 @@ struct DirectInsertContext {
 	uint64_t schema_version;
 	List *param_infos;      // List of ParamInfo*
 	List *target_col_names; // List of char*
-	List *target_col_types; // List of Oid
 };
 
 // Returns true for an INSERT targeting a DuckLake table after recursively

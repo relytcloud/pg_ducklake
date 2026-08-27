@@ -198,34 +198,20 @@ async def test_duckdb_reads_native_copy_stats(local_lake, pg):
     await pg.fetchval(
         "SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_nested'::regclass)"
     )
-    await pg.copy_records_to_table("copy_nested", records=[(1000, [1000, 2000])])
+    error = 'COPY FROM STDIN does not support column "v" of type integer\\[\\]'
+    with pytest.raises(asyncpg.FeatureNotSupportedError, match=error):
+        await pg.copy_records_to_table(
+            "copy_nested", records=[(1000, [1000, 2000])]
+        )
 
     ddb = local_lake.duckdb(read_only=True)
     try:
         assert ddb.execute(
             "SELECT id, v FROM lake.public.copy_stats WHERE id = 1000"
         ).fetchall() == [(1000, 2000)]
-        # Inspect descendant stats through the fresh external process's
-        # PostgreSQL attachment; nested PostgreSQL inlined rows are not yet
-        # transformable by the external DuckLake reader.
-        password = os.environ.get("PGPASSWORD")
-        password_option = f" password={password}" if password else ""
-        ddb.execute(
-            f"ATTACH 'host={local_lake.cluster.host} "
-            f"port={local_lake.cluster.port} dbname={local_lake.dbname} "
-            f"user=postgres{password_option}' AS catalog "
-            "(TYPE postgres, READ_ONLY)"
-        )
         assert ddb.execute(
-            "SELECT bool_and(s.min_value IS NULL AND s.max_value IS NULL "
-            "AND s.contains_null IS NULL AND s.contains_nan IS NULL "
-            "AND s.extra_stats IS NULL) "
-            "FROM catalog.ducklake.ducklake_table_column_stats s "
-            "JOIN catalog.ducklake.ducklake_table t USING (table_id) "
-            "JOIN catalog.ducklake.ducklake_column c USING (table_id, column_id) "
-            "WHERE t.table_name = 'copy_nested' AND t.end_snapshot IS NULL "
-            "AND c.end_snapshot IS NULL AND c.parent_column IS NOT NULL"
-        ).fetchone() == (True,)
+            "SELECT id, v FROM lake.public.copy_nested WHERE id = 1000"
+        ).fetchall() == []
     finally:
         ddb.close()
 

@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <limits>
 
+struct FmgrInfo;
+
 namespace pgducklake {
 
 /*
@@ -42,6 +44,9 @@ void NativeWriterStatsAdd(NativeWriterCounter counter, uint64_t amount = 1);
 void NativeWriterStatsReset();
 void NativeWriterStatsReadAll(uint64_t out[NW_COUNTER_NUM]);
 const char *NativeWriterCounterName(NativeWriterCounter counter);
+
+/* Invoke a PostgreSQL output function with stable DuckDB-compatible temporal formatting. */
+char *OutputFunctionCallIso(FmgrInfo *flinfo, Datum value);
 
 /* Immutable per-column contribution computed during the one-time prewrite. */
 struct NativeInlineColumnStat {
