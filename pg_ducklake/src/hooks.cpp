@@ -32,6 +32,7 @@ extern "C" {
 #include "nodes/plannodes.h"
 #include "optimizer/planner.h"
 #include "parser/analyze.h"
+#include "parser/parsetree.h"
 #include "parser/parse_func.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
@@ -413,6 +414,9 @@ DucklakePlannerHook(Query *parse, const char *query_string, int cursor_options, 
 	pgducklake::SetForceScanTransaction(refs_ducklake_only_func);
 	if (QueryReferencesRegisteredTableAm((Node *)parse, NULL) || refs_ducklake_only_func ||
 	    pgducklake::QueryReferencesDucklakeForeignTable(parse)) {
+		if (parse->commandType != CMD_SELECT &&
+		    pgddb::IsPostgresTable(rt_fetch(parse->resultRelation, parse->rtable)->relid))
+			pgddb::IsAllowedPostgresInsert(parse, /*throw_error=*/true);
 		return pgddb::PlanNode(parse, cursor_options, /*throw_error=*/true);
 	}
 

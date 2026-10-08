@@ -18,11 +18,14 @@ extern "C" {
 #include "optimizer/optimizer.h"
 #include "optimizer/planner.h"
 #include "optimizer/planmain.h"
+#include "parser/parse_coerce.h"
+#include "rewrite/rewriteManip.h"
 #include "tcop/pquery.h"
 #include "utils/syscache.h"
 #include "utils/guc.h"
 #include "parser/parse_relation.h"
 #include "utils/acl.h"
+#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
@@ -83,9 +86,128 @@ ContainsPostgresTable(Node *node, void *context) {
 #endif
 }
 
+static bool
+ContainsValuesRTE(Query *query) {
+	foreach_node(RangeTblEntry, rte, query->rtable) {
+		if (rte->rtekind == RTE_VALUES) {
+			return true;
+		}
+		if (rte->rtekind == RTE_SUBQUERY && ContainsValuesRTE(rte->subquery)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* The parser wraps the source of INSERT ... SELECT in a single subquery RTE; returns its index or 0. */
+static int
+FindInsertSelectRTI(const Query *query) {
+	int rti = 1;
+	foreach_node(RangeTblEntry, rte, query->rtable) {
+		if (rte->rtekind == RTE_SUBQUERY) {
+			return rti;
+		}
+		rti++;
+	}
+	return 0;
+}
+
+/* A regular or partitioned table not managed by the consumer's table AM. */
+bool
+IsPostgresTable(Oid relid) {
+	char relkind = get_rel_relkind(relid);
+	return (relkind == RELKIND_RELATION || relkind == RELKIND_PARTITIONED_TABLE) &&
+	       pgddb::TableAmGetName(relid) == nullptr;
+}
+
+/* An INSERT into a Postgres table: only its SELECT source runs in DuckDB. */
+bool
+IsPostgresInsert(const Query *query) {
+	if (query->commandType != CMD_INSERT || query->resultRelation == 0) {
+		return false;
+	}
+	return IsPostgresTable(list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1)->relid);
+}
+
+bool
+IsAllowedPostgresInsert(Query *query, bool throw_error) {
+	int elevel = throw_error ? ERROR : DEBUG4;
+	if (query->commandType != CMD_INSERT) {
+		elog(elevel, "DuckDB only supports INSERT/SELECT on Postgres tables");
+		return false;
+	}
+
+	if (!IsPostgresInsert(query)) {
+		elog(elevel, "DuckDB does not support modifying this kind of Postgres relation");
+		return false;
+	}
+
+	/*
+	 * EXPLAIN ANALYZE would run the SELECT inside a DuckDB EXPLAIN ANALYZE and
+	 * silently insert nothing. explain_analyze is only valid while planning an
+	 * EXPLAIN, hence the ActivePortal check.
+	 */
+	if (explain_analyze && ActivePortal && ActivePortal->commandTag == CMDTAG_EXPLAIN) {
+		elog(elevel, "DuckDB does not support EXPLAIN ANALYZE on INSERTs into Postgres tables");
+		return false;
+	}
+
+	int select_rti = FindInsertSelectRTI(query);
+	if (select_rti == 0) {
+		elog(elevel, "DuckDB does not support INSERT without a subquery");
+		return false;
+	}
+
+	/*
+	 * Literal input may differ between Postgres and DuckDB (bytea, numeric
+	 * rounding), so prefer Postgres for VALUES unless DuckDB is required.
+	 */
+	RangeTblEntry *select_rte = list_nth_node(RangeTblEntry, query->rtable, select_rti - 1);
+	if (!throw_error && ContainsValuesRTE(select_rte->subquery)) {
+		elog(elevel, "DuckDB does not support INSERTs with value subqueries");
+		return false;
+	}
+
+	RangeTblEntry *target_rte = list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1);
+	Relation rel = RelationIdGetRelation(target_rte->relid);
+	TupleDesc target_desc = RelationGetDescr(rel);
+	for (int i = 0; i < target_desc->natts; i++) {
+		Form_pg_attribute attr = TupleDescAttr(target_desc, i);
+		if (attr->attisdropped) {
+			continue;
+		}
+		if (pgddb::ConvertPostgresToDuckColumnType(attr).id() == duckdb::LogicalTypeId::INVALID) {
+			elog(elevel, "DuckDB does not support INSERTs into tables with column `%s` of unsupported type (OID %u)",
+			     NameStr(attr->attname), attr->atttypid);
+			RelationClose(rel);
+			return false;
+		}
+	}
+	RelationClose(rel);
+
+	return true;
+}
+
 duckdb::unique_ptr<duckdb::PreparedStatement>
 Prepare(const Query *query, const char *explain_prefix) {
 	Query *copied_query = (Query *)copyObjectImpl(query);
+	if (IsPostgresInsert(copied_query)) {
+		int select_rti = FindInsertSelectRTI(copied_query);
+		Assert(select_rti != 0);
+		Query *select_query = list_nth_node(RangeTblEntry, copied_query->rtable, select_rti - 1)->subquery;
+
+		/*
+		 * Move the INSERT's CTEs into the SELECT. They move down one query
+		 * level, so fix up levelsup first (as pull_up_simple_subquery does).
+		 * CTE references resolve by name; DuckDB rejects duplicate names.
+		 */
+		if (copied_query->cteList != NIL) {
+			IncrementVarSublevelsUp((Node *)select_query, -1, 1);
+			select_query->cteList = list_concat(copied_query->cteList, select_query->cteList);
+			select_query->hasRecursive = select_query->hasRecursive || copied_query->hasRecursive;
+		}
+		copied_query = select_query;
+	}
 	const char *query_string = pgddb_get_querydef(copied_query);
 
 	if (explain_prefix) {
@@ -96,6 +218,81 @@ Prepare(const Query *query, const char *explain_prefix) {
 
 	auto con = pgddb::GetConnection();
 	return con->context->Prepare(query_string);
+}
+
+/*
+ * Builds the ModifyTable subplan targetlist: one entry per table column in
+ * table order, mapping each to the DuckDB output column its INSERT targetlist
+ * Var references, or keeping the rewriter's default/constant expression.
+ */
+static List *
+InsertTargetList(TupleDesc pg_tupdesc, Query *query, List *duckdb_targetlist) {
+	List *target_list = NIL;
+	int select_rti = FindInsertSelectRTI(query);
+
+	for (int i = 0; i < pg_tupdesc->natts; i++) {
+		Form_pg_attribute attr = TupleDescAttr(pg_tupdesc, i);
+
+		/* ExecCheckPlanOutput expects a NULL for dropped columns. */
+		if (attr->attisdropped) {
+			Expr *null_expr = (Expr *)makeNullConst(INT4OID, -1, InvalidOid);
+			target_list = lappend(target_list, makeTargetEntry(null_expr, attr->attnum, NULL, false));
+			continue;
+		}
+
+		TargetEntry *target_entry = NULL;
+		foreach_node(TargetEntry, query_target_entry, query->targetList) {
+			if (query_target_entry->resno != attr->attnum) {
+				continue;
+			}
+
+			AttrNumber select_attno = 0;
+			foreach_node(Var, var, pull_var_clause((Node *)query_target_entry->expr, 0)) {
+				if (var->varno == select_rti) {
+					select_attno = var->varattno;
+					break;
+				}
+			}
+
+			/* A default or inlined constant, already coerced to the column type. */
+			if (select_attno == 0) {
+				target_entry = query_target_entry;
+				break;
+			}
+
+			if (select_attno > list_length(duckdb_targetlist)) {
+				elog(ERROR, "SELECT column assigned to column \"%s\" is missing from the DuckDB result",
+				     NameStr(attr->attname));
+			}
+
+			target_entry = list_nth_node(TargetEntry, duckdb_targetlist, select_attno - 1);
+			target_entry->resno = attr->attnum;
+
+			/* Assignment coercion, so e.g. too-long varchar values error like Postgres INSERT. */
+			Oid source_type = exprType((Node *)target_entry->expr);
+			int32 source_typmod = exprTypmod((Node *)target_entry->expr);
+			if (source_type != attr->atttypid || source_typmod != attr->atttypmod) {
+				Expr *coerced_expr =
+				    (Expr *)coerce_to_target_type(NULL, (Node *)target_entry->expr, source_type, attr->atttypid,
+				                                  attr->atttypmod, COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+				if (coerced_expr == NULL) {
+					elog(ERROR, "cannot coerce column \"%s\" from type %s to type %s", NameStr(attr->attname),
+					     format_type_be(source_type), format_type_be(attr->atttypid));
+				}
+				target_entry->expr = coerced_expr;
+			}
+			break;
+		}
+
+		/* The rewriter already added defaults, so anything left is NULL. */
+		if (!target_entry) {
+			target_entry = makeTargetEntry((Expr *)makeNullConst(attr->atttypid, attr->atttypmod, attr->attcollation),
+			                               attr->attnum, pstrdup(NameStr(attr->attname)), false);
+		}
+		target_list = lappend(target_list, target_entry);
+	}
+
+	return target_list;
 }
 
 static Plan *
@@ -132,8 +329,8 @@ CreatePlan(Query *query, bool throw_error) {
 		typtup = (Form_pg_type)GETSTRUCT(tp);
 		typtup->typtypmod = pgddb::GetPostgresDuckDBTypemod(prepared_result_types[i]);
 
-		/* varno 1: the final plan has a single RTE (this custom scan). */
-		Var *var = makeVar(1, i + 1, postgresColumnOid, typtup->typtypmod, typtup->typcollation, 0);
+		/* varno is filled in by SetCustomScanVarno once the final rtable is known. */
+		Var *var = makeVar(0, i + 1, postgresColumnOid, typtup->typtypmod, typtup->typcollation, 0);
 
 		TargetEntry *target_entry =
 		    makeTargetEntry((Expr *)var, i + 1, (char *)pstrdup(prepared_query->GetNames()[i].c_str()), false);
@@ -149,16 +346,31 @@ CreatePlan(Query *query, bool throw_error) {
 		ReleaseSysCache(tp);
 	}
 
+	if (IsPostgresInsert(query)) {
+		RangeTblEntry *target_rte = list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1);
+		Relation rel = RelationIdGetRelation(target_rte->relid);
+		duckdb_node->scan.plan.targetlist =
+		    InsertTargetList(RelationGetDescr(rel), query, duckdb_node->scan.plan.targetlist);
+		RelationClose(rel);
+	}
+
 	duckdb_node->custom_private = list_make1(query);
 	duckdb_node->methods = &scan_methods;
 
 	return (Plan *)duckdb_node;
 }
 
+static void
+SetCustomScanVarno(CustomScan *custom_scan, int varno) {
+	foreach_node(TargetEntry, target_entry, custom_scan->custom_scan_tlist) {
+		castNode(Var, target_entry->expr)->varno = varno;
+	}
+}
+
 static RangeTblEntry *
 DuckdbRangeTableEntry(CustomScan *custom_scan) {
 	List *column_names = NIL;
-	foreach_node(TargetEntry, target_entry, custom_scan->scan.plan.targetlist) {
+	foreach_node(TargetEntry, target_entry, custom_scan->custom_scan_tlist) {
 		column_names = lappend(column_names, makeString(target_entry->resname));
 	}
 	RangeTblEntry *rte = makeNode(RangeTblEntry);
@@ -233,7 +445,24 @@ PlanNode(Query *parse, int cursor_options, bool throw_error) {
 		duckdb_plan = materialize_finished_plan(duckdb_plan);
 	}
 
+	/* Let Postgres plan the INSERT, then swap in our scan as the ModifyTable source. */
+	if (IsPostgresInsert(parse)) {
+		Query *copied_query = (Query *)copyObjectImpl(parse);
+#if PG_VERSION_NUM >= 190000
+		PlannedStmt *postgres_plan = standard_planner(copied_query, NULL, cursor_options, NULL, NULL);
+#else
+		PlannedStmt *postgres_plan = standard_planner(copied_query, NULL, cursor_options, NULL);
+#endif
+		Assert(IsA(postgres_plan->planTree, ModifyTable));
+		outerPlan(postgres_plan->planTree) = duckdb_plan;
+
+		postgres_plan->rtable = lappend(postgres_plan->rtable, DuckdbRangeTableEntry(custom_scan));
+		SetCustomScanVarno(custom_scan, list_length(postgres_plan->rtable));
+		return postgres_plan;
+	}
+
 	RangeTblEntry *rte = DuckdbRangeTableEntry(custom_scan);
+	SetCustomScanVarno(custom_scan, 1);
 
 	PlannedStmt *result = makeNode(PlannedStmt);
 	result->commandType = parse->commandType;

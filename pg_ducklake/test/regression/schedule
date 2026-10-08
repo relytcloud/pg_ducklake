@@ -15,6 +15,7 @@ test: insert_values_stable
 test: native_producer_semantics
 test: copy_from
 test: insert_cte
+test: insert_postgres_table
 test: ctas
 test: gucs
 test: default_table_path

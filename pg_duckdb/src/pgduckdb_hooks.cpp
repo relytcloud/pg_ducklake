@@ -196,12 +196,10 @@ IsAllowedStatement(Query *query, bool throw_error) {
 		return false;
 	}
 
-	/* We don't support modifying statements on Postgres tables yet */
 	if (query->commandType != CMD_SELECT) {
 		if (query->rtable != NULL) {
 			RangeTblEntry *resultRte = list_nth_node(RangeTblEntry, query->rtable, query->resultRelation - 1);
-			if (!::IsDuckdbTable(resultRte->relid)) {
-				elog(elevel, "DuckDB does not support modifying Postgres tables");
+			if (!::IsDuckdbTable(resultRte->relid) && !pgddb::IsAllowedPostgresInsert(query, throw_error)) {
 				return false;
 			}
 		}

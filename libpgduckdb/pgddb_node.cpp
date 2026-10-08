@@ -241,6 +241,8 @@ ExecuteQuery(DuckdbScanState *state) {
 static TupleTableSlot *
 Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 	DuckdbScanState *duckdb_scan_state = (DuckdbScanState *)node;
+	ProjectionInfo *proj_info = duckdb_scan_state->css.ss.ps.ps_ProjInfo;
+	ExprContext *econtext = duckdb_scan_state->css.ss.ps.ps_ExprContext;
 	try {
 		TupleTableSlot *slot = duckdb_scan_state->css.ss.ss_ScanTupleSlot;
 		MemoryContext old_context;
@@ -257,7 +259,7 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 			// PG only sets es_processed via ModifyTable, which our CustomScan replaced.
 			// DuckDB's DML result is (Count BIGINT): read it into es_processed and end the
 			// scan, so the empty tuple means "no RETURNING rows".
-			if (duckdb_scan_state->query->commandType != CMD_SELECT) {
+			if (duckdb_scan_state->query->commandType != CMD_SELECT && !IsPostgresInsert(duckdb_scan_state->query)) {
 				auto chunk = duckdb_scan_state->query_results->Fetch();
 				uint64_t processed = 0;
 				if (chunk && chunk->size() > 0 && chunk->ColumnCount() > 0) {
@@ -312,6 +314,10 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 		}
 
 		ExecStoreVirtualTuple(slot);
+		if (proj_info) {
+			econtext->ecxt_scantuple = slot;
+			return ExecProject(proj_info);
+		}
 		return slot;
 	} catch (std::exception &ex) {
 		// Clean up only on error; on success the DuckDB objects must survive for

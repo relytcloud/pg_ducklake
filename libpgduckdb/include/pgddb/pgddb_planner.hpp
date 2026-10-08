@@ -16,5 +16,9 @@ extern bool explain_ctas;
 PlannedStmt *PlanNode(Query *parse, int cursor_options, bool throw_error);
 duckdb::unique_ptr<duckdb::PreparedStatement> Prepare(const Query *query, const char *explain_prefix = nullptr);
 bool ContainsPostgresTable(Node *node, void *context);
+bool IsPostgresTable(Oid relid);
+bool IsPostgresInsert(const Query *query);
+// Caller must ensure `query` modifies a Postgres table.
+bool IsAllowedPostgresInsert(Query *query, bool throw_error = false);
 
 } // namespace pgddb

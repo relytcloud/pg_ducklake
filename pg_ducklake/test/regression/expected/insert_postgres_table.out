@@ -1,0 +1,70 @@
+-- INSERT INTO a heap table SELECT ... FROM a DuckLake table runs the SELECT in DuckDB
+CREATE TABLE ipt_src (id int, name text, amount numeric(12,2)) USING ducklake;
+INSERT INTO ipt_src VALUES (1, 'alice', 100.50), (2, 'bob', 200.75), (3, 'carol', 50.25);
+CREATE TABLE ipt_dst (id int PRIMARY KEY, name varchar(5), amount numeric(12,2), note text DEFAULT 'dflt');
+INSERT INTO ipt_dst (id, name, amount) SELECT id, name, amount FROM ipt_src WHERE id < 3;
+SELECT * FROM ipt_dst ORDER BY id;
+ id | name  | amount | note 
+----+-------+--------+------
+  1 | alice | 100.50 | dflt
+  2 | bob   | 200.75 | dflt
+(2 rows)
+
+-- Column order differs from the table definition; RETURNING
+INSERT INTO ipt_dst (amount, id, name) SELECT amount, id, name FROM ipt_src WHERE id = 3 RETURNING *;
+ id | name  | amount | note 
+----+-------+--------+------
+  3 | carol |  50.25 | dflt
+(1 row)
+
+-- ON CONFLICT
+INSERT INTO ipt_dst (id, name) SELECT id, 'upd' FROM ipt_src ON CONFLICT (id) DO UPDATE SET name = excluded.name;
+INSERT INTO ipt_dst (id, name) SELECT id, 'skip' FROM ipt_src ON CONFLICT DO NOTHING;
+SELECT * FROM ipt_dst ORDER BY id;
+ id | name | amount | note 
+----+------+--------+------
+  1 | upd  | 100.50 | dflt
+  2 | upd  | 200.75 | dflt
+  3 | upd  |  50.25 | dflt
+(3 rows)
+
+-- Assignment coercion errors like a Postgres INSERT
+INSERT INTO ipt_dst (id, name) SELECT id + 10, name || 'xxxxx' FROM ipt_src;
+ERROR:  value too long for type character varying(5)
+-- CTE on the INSERT, join with a heap table
+TRUNCATE ipt_dst;
+CREATE TABLE ipt_heap (id int, tag text);
+INSERT INTO ipt_heap VALUES (1, 'one'), (2, 'two');
+WITH s AS (SELECT * FROM ipt_src)
+INSERT INTO ipt_dst (id, name, note) SELECT s.id, s.name, h.tag FROM s JOIN ipt_heap h ON s.id = h.id;
+SELECT * FROM ipt_dst ORDER BY id;
+ id | name  | amount | note 
+----+-------+--------+------
+  1 | alice |        | one
+  2 | bob   |        | two
+(2 rows)
+
+-- Inside a transaction, visible to later Postgres reads
+BEGIN;
+INSERT INTO ipt_dst (id, name) SELECT id + 100, name FROM ipt_src;
+SELECT count(*) FROM ipt_dst;
+ count 
+-------
+     5
+(1 row)
+
+ROLLBACK;
+SELECT count(*) FROM ipt_dst;
+ count 
+-------
+     2
+(1 row)
+
+-- Other writes to heap tables that need DuckDB are rejected
+UPDATE ipt_dst SET name = s.name FROM ipt_src s WHERE ipt_dst.id = s.id;
+ERROR:  DuckDB only supports INSERT/SELECT on Postgres tables
+DELETE FROM ipt_dst USING ipt_src s WHERE ipt_dst.id = s.id;
+ERROR:  DuckDB only supports INSERT/SELECT on Postgres tables
+INSERT INTO ipt_dst (id) VALUES ((SELECT max(id) FROM ipt_src));
+ERROR:  DuckDB does not support INSERT without a subquery
+DROP TABLE ipt_src, ipt_dst, ipt_heap;
