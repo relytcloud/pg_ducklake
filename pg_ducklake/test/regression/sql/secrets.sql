@@ -2,7 +2,7 @@
 --
 -- The real S3 round-trip (create_s3_secret + reading/writing s3:// data) needs
 -- the httpfs extension, which pg_ducklake autoinstalls at runtime (network).
--- That is covered by the e2e MinIO suite. Here we cover only the hermetic
+-- That is covered by the e2e S3 suite. Here we cover only the hermetic
 -- surface: object existence, signatures, and validator paths that reject
 -- BEFORE any DuckDB CREATE SECRET runs (so no httpfs load is triggered).
 

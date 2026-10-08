@@ -120,7 +120,7 @@ clean-regression:
 check-isolation:
 	$(MAKE) -C test/isolation check-isolation
 
-# Needs `uv`; s3:// tests use dockerized MinIO and skip without docker
+# Needs `uv`; s3:// tests use dockerized RustFS and skip without docker
 # (E2E_REQUIRE_S3=1 turns skips into failures).
 # Usage: make check-e2e [TEST=<pytest -k expr>] [E2E_PYTEST_ARGS=...]
 check-e2e: all install

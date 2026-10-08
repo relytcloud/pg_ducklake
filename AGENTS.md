@@ -41,7 +41,7 @@ PG_CONFIG=<pg_config> make install          # install pg_ducklake
 PG_CONFIG=<pg_config> make installcheck     # pg_ducklake regression + isolation
 PG_CONFIG=<pg_config> make check-regression TEST=basic
 PG_CONFIG=<pg_config> make check-isolation TEST=concurrent_writes
-PG_CONFIG=<pg_config> make check-e2e        # needs uv; optional dockerized MinIO
+PG_CONFIG=<pg_config> make check-e2e        # needs uv; optional dockerized RustFS
 PG_CONFIG=<pg_config> make format           # clang-format pg_ducklake src/ include/
 PG_CONFIG=<pg_config> make check-format
 

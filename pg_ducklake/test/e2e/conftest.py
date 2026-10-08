@@ -1,5 +1,5 @@
 # E2E harness: throwaway PG cluster (via $PG_CONFIG), fresh db per test, and
-# optional MinIO via docker or MINIO_ENDPOINT (E2E_REQUIRE_S3=1: fail, not skip).
+# optional RustFS via docker or E2E_S3_ENDPOINT (E2E_REQUIRE_S3=1: fail, not skip).
 # httpfs is not bundled, so the first s3:// access INSTALLs it (needs network).
 
 import os
@@ -268,7 +268,7 @@ def db(cluster):
 
 
 # ---------------------------------------------------------------------------
-# MinIO (S3-compatible) infrastructure
+# RustFS (S3-compatible) infrastructure
 
 
 @dataclass
@@ -284,7 +284,7 @@ class S3:
     bucket: str
     client: object = field(repr=False)  # minio.Minio
 
-    def secret_sql(self, name="e2e_minio"):
+    def secret_sql(self, name="e2e_s3"):
         """DuckDB CREATE SECRET statement, usable both inside the
         pg_ducklake backend (via ducklake.duckdb_raw_query) and in an
         external duckdb client."""
@@ -313,9 +313,9 @@ def _docker_available():
         return False
 
 
-def _wait_for_minio(endpoint, timeout=60):
+def _wait_for_s3(endpoint, timeout=60):
     deadline = time.time() + timeout
-    url = f"http://{endpoint}/minio/health/live"
+    url = f"http://{endpoint}/health"
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
@@ -324,57 +324,45 @@ def _wait_for_minio(endpoint, timeout=60):
         except (urllib.error.URLError, ConnectionError, OSError):
             pass
         time.sleep(0.5)
-    raise TimeoutError(f"MinIO at {endpoint} did not become healthy")
+    raise TimeoutError(f"S3 server at {endpoint} did not become healthy")
 
 
 @pytest.fixture(scope="session")
-def minio_server(request):
-    """An S3Server, or None (with a reason in `minio_server_skip_reason`)
+def s3_server(request):
+    """An S3Server, or None (with a reason in `s3_skip_reason`)
     when no S3 endpoint can be provided."""
-    if os.environ.get("MINIO_ENDPOINT"):
+    if os.environ.get("E2E_S3_ENDPOINT"):
         server = S3Server(
-            endpoint=os.environ["MINIO_ENDPOINT"],
-            access_key=os.environ.get("MINIO_ACCESS_KEY", "minioadmin"),
-            secret_key=os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
+            endpoint=os.environ["E2E_S3_ENDPOINT"],
+            access_key=os.environ.get("E2E_S3_ACCESS_KEY", "rustfsadmin"),
+            secret_key=os.environ.get("E2E_S3_SECRET_KEY", "rustfsadmin"),
         )
-        _wait_for_minio(server.endpoint)
+        _wait_for_s3(server.endpoint)
         return server
 
     if not _docker_available():
-        request.session.minio_skip_reason = "docker is not available for MinIO"
+        request.session.s3_skip_reason = "docker is not available for RustFS"
         return None
 
-    if os.environ.get("E2E_MINIO_IMAGE"):
-        images = [os.environ["E2E_MINIO_IMAGE"]]
-    else:
-        # quay.io mirrors docker hub's minio/minio; try both since either
-        # registry may be unreachable from a given network
-        images = ["minio/minio:latest", "quay.io/minio/minio:latest"]
-    cid = None
-    errors = []
-    for image in images:
-        try:
-            cid = capture(
-                [
-                    "docker", "run", "-d", "--rm",
-                    "-e", "MINIO_ROOT_USER=minioadmin",
-                    "-e", "MINIO_ROOT_PASSWORD=minioadmin",
-                    # random host port, loopback only
-                    "-p", "127.0.0.1:0:9000",
-                    image, "server", "/data",
-                ],
-                timeout=300,  # may pull the image
-                stderr=subprocess.PIPE,
-            ).strip()
-            break
-        except subprocess.CalledProcessError as e:
-            errors.append(f"{image}: {e.stderr.strip()}")
-        except Exception as e:
-            errors.append(f"{image}: {e}")
-    if cid is None:
-        request.session.minio_skip_reason = (
-            "could not start MinIO container: " + "; ".join(errors)
-        )
+    image = os.environ.get("E2E_S3_IMAGE", "rustfs/rustfs:latest")
+    try:
+        cid = capture(
+            [
+                "docker", "run", "-d", "--rm",
+                "-e", "RUSTFS_ACCESS_KEY=rustfsadmin",
+                "-e", "RUSTFS_SECRET_KEY=rustfsadmin",
+                # random host port, loopback only
+                "-p", "127.0.0.1:0:9000",
+                image, "/data",
+            ],
+            timeout=300,  # may pull the image
+            stderr=subprocess.PIPE,
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        request.session.s3_skip_reason = f"could not start RustFS container {image}: {e.stderr.strip()}"
+        return None
+    except Exception as e:
+        request.session.s3_skip_reason = f"could not start RustFS container {image}: {e}"
         return None
 
     request.addfinalizer(
@@ -382,28 +370,28 @@ def minio_server(request):
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     )
     endpoint = capture(["docker", "port", cid, "9000/tcp"]).splitlines()[0].strip()
-    _wait_for_minio(endpoint)
-    return S3Server(endpoint=endpoint, access_key="minioadmin",
-                    secret_key="minioadmin")
+    _wait_for_s3(endpoint)
+    return S3Server(endpoint=endpoint, access_key="rustfsadmin",
+                    secret_key="rustfsadmin")
 
 
 @pytest.fixture
-def s3(minio_server, request):
-    """A per-test bucket on the session MinIO server."""
-    if minio_server is None:
-        skip_or_fail(getattr(request.session, "minio_skip_reason", "no S3 server"))
+def s3(s3_server, request):
+    """A per-test bucket on the session S3 server."""
+    if s3_server is None:
+        skip_or_fail(getattr(request.session, "s3_skip_reason", "no S3 server"))
 
     from minio import Minio
 
     client = Minio(
-        minio_server.endpoint,
-        access_key=minio_server.access_key,
-        secret_key=minio_server.secret_key,
+        s3_server.endpoint,
+        access_key=s3_server.access_key,
+        secret_key=s3_server.secret_key,
         secure=False,
     )
     bucket = f"e2e-{uuid.uuid4().hex[:12]}"
     client.make_bucket(bucket)
-    ctx = S3(server=minio_server, bucket=bucket, client=client)
+    ctx = S3(server=s3_server, bucket=bucket, client=client)
     yield ctx
     try:
         for name in ctx.object_names():
@@ -414,22 +402,22 @@ def s3(minio_server, request):
 
 
 @pytest.fixture
-def s3_second_bucket(minio_server, request):
-    """A second bucket on the same MinIO -- one endpoint secret covers both."""
-    if minio_server is None:
-        skip_or_fail(getattr(request.session, "minio_skip_reason", "no S3 server"))
+def s3_second_bucket(s3_server, request):
+    """A second bucket on the same S3 server -- one endpoint secret covers both."""
+    if s3_server is None:
+        skip_or_fail(getattr(request.session, "s3_skip_reason", "no S3 server"))
 
     from minio import Minio
 
     client = Minio(
-        minio_server.endpoint,
-        access_key=minio_server.access_key,
-        secret_key=minio_server.secret_key,
+        s3_server.endpoint,
+        access_key=s3_server.access_key,
+        secret_key=s3_server.secret_key,
         secure=False,
     )
     bucket = f"e2e-alt-{uuid.uuid4().hex[:12]}"
     client.make_bucket(bucket)
-    ctx = S3(server=minio_server, bucket=bucket, client=client)
+    ctx = S3(server=s3_server, bucket=bucket, client=client)
     yield ctx
     try:
         for name in ctx.object_names():
@@ -440,14 +428,14 @@ def s3_second_bucket(minio_server, request):
 
 
 @pytest.fixture
-def s3_wrong_creds(minio_server, request):
+def s3_wrong_creds(s3_server, request):
     """The right endpoint with a bad secret key: CREATE SECRET still succeeds
     (shape-only validation) but S3 access fails."""
-    if minio_server is None:
-        skip_or_fail(getattr(request.session, "minio_skip_reason", "no S3 server"))
+    if s3_server is None:
+        skip_or_fail(getattr(request.session, "s3_skip_reason", "no S3 server"))
     from dataclasses import replace
 
-    return replace(minio_server, secret_key="wrong-secret-key")
+    return replace(s3_server, secret_key="wrong-secret-key")
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +514,7 @@ class Lake:
         return conn
 
     async def configure_s3(self, conn):
-        """Configure this backend's DuckDB for the MinIO bucket. Secrets are
+        """Configure this backend's DuckDB for the S3 bucket. Secrets are
         per-DuckDB-instance and non-persistent: rerun on every new PG
         connection and again after ducklake.recycle_ddb()."""
         # httpfs is not bundled into pg_ducklake; INSTALL downloads it on
@@ -573,7 +561,7 @@ class Lake:
             con.close()
             skip_or_fail(f"duckdb client cannot install extensions (offline?): {e}")
         if self.s3:
-            con.execute(self.s3.secret_sql("e2e_minio_client"))
+            con.execute(self.s3.secret_sql("e2e_s3_client"))
         options = "METADATA_SCHEMA 'ducklake'"
         if read_only:
             options += ", READ_ONLY"

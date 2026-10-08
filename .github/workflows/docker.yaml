@@ -463,7 +463,7 @@ jobs:
           docker buildx imagetools inspect ${TARGET_REPO}:${{ matrix.postgres }}-${BRANCH}-slim
 
   # Run the e2e suite against the built image: the container runs on the host
-  # network (so the pg_ducklake backend reaches the conftest-started MinIO on
+  # network (so the pg_ducklake backend reaches the conftest-started RustFS on
   # host loopback), and the harness targets it via E2E_PG_* (external-cluster
   # mode) instead of building pg_ducklake from source.
   docker_e2e:
