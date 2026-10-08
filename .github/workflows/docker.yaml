@@ -465,7 +465,9 @@ jobs:
   # Run the e2e suite against the built image: the container runs on the host
   # network (so the pg_ducklake backend reaches the conftest-started RustFS on
   # host loopback), and the harness targets it via E2E_PG_* (external-cluster
-  # mode) instead of building pg_ducklake from source.
+  # mode) instead of building pg_ducklake from source. PGDATA is bind-mounted
+  # at the same path and owned by the runner user, so host-side DuckDB clients
+  # can open the local lake's data files.
   docker_e2e:
     name: e2e against docker image (PG 18)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -498,7 +500,12 @@ jobs:
 
       - name: Start pg_ducklake container (host network)
         run: |
+          mkdir -p /tmp/pgducklake_e2e/home
           docker run -d --name pgducklake_e2e --network host \
+            --user "$(id -u):$(id -g)" -v /etc/passwd:/etc/passwd:ro \
+            -v /tmp/pgducklake_e2e:/tmp/pgducklake_e2e \
+            -e PGDATA=/tmp/pgducklake_e2e/data \
+            -e HOME=/tmp/pgducklake_e2e/home \
             -e POSTGRES_PASSWORD=duckdb \
             ghcr.io/${{ github.repository }}/ci-builds:18-amd64-${{ github.sha }}
           for i in $(seq 60); do pg_isready -h 127.0.0.1 -p 5432 && break || sleep 1; done
