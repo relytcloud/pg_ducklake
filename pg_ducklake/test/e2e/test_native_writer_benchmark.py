@@ -1,11 +1,18 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 BENCHMARK = Path(__file__).parents[1] / "benchmark" / "native_writer_performance.py"
 
 
+@pytest.mark.skipif(
+    bool(os.environ.get("E2E_PG_HOST")),
+    reason="benchmark smoke starts its own local cluster from PG_CONFIG",
+)
 def test_native_writer_benchmark_smoke(tmp_path):
     subprocess.run([sys.executable, BENCHMARK, "--self-test"], check=True)
     subprocess.run(
