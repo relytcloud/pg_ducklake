@@ -5,6 +5,7 @@
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/guc.hpp"
 #include "pgducklake/direct_insert/inline_col_stats.hpp"
+#include "pgducklake/direct_insert/inline_type_map.hpp"
 #include "pgducklake/direct_insert/native_inline_writer.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
@@ -25,7 +26,6 @@ extern "C" {
 #include "catalog/pg_am.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #if PG_VERSION_NUM >= 180000
@@ -44,6 +44,7 @@ extern "C" {
 #include "nodes/value.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/planner.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
@@ -60,6 +61,10 @@ extern "C" {
 
 namespace pgducklake {
 
+/* System columns prepended to the inlined data table: row_id,
+ * begin_snapshot, end_snapshot. */
+#define INLINED_SYSTEM_COLS 3
+
 /* Session-level metadata caches, stable across EXECUTE calls; cleared on
  * DuckDB instance recycle via ResetDirectInsertCaches(). */
 struct InliningInfoCache {
@@ -68,8 +73,19 @@ struct InliningInfoCache {
 	int64_t row_limit;
 };
 
+/* Neither half identifies a column on its own: the heap type cannot tell a
+ * VARCHAR holding a date from one holding a list, and the DuckLake type does
+ * not say what DuckDB created for it in this catalog. */
+struct InlinedColumnInfo {
+	Oid inline_type;
+	int32 inline_typmod;
+	int type_id;
+	bool is_json;
+};
+
 struct InlinedColumnTypesCache {
-	List *col_types; // List of Oid, palloc'd in TopMemoryContext
+	InlinedColumnInfo *cols; // palloc'd in TopMemoryContext
+	int ncols;
 };
 
 static std::unordered_map<Oid, InliningInfoCache> inlining_info_cache;
@@ -94,7 +110,7 @@ void
 ResetDirectInsertCaches() {
 	inlining_info_cache.clear();
 	for (auto &entry : inlined_col_types_cache) {
-		list_free(entry.second.col_types);
+		pfree(entry.second.cols);
 	}
 	inlined_col_types_cache.clear();
 }
@@ -113,7 +129,6 @@ struct DirectInsertScanState {
 	uint64_t schema_version;
 	char *inlined_table_name;
 	List *column_names; // List of String nodes
-	List *column_types; // List of Oid (inlined table types)
 
 	/* UNNEST-specific */
 	List *param_ids;     // List of int
@@ -171,9 +186,8 @@ struct ValuesInsertContext {
 	uint64_t schema_version;
 	int num_rows;
 	int num_cols;
-	List *target_col_names;  // List of char*
-	List *inlined_col_types; // List of Oid
-	List *src_col_types;     // List of Oid (user-facing PG types)
+	List *target_col_names; // List of char*
+	List *src_col_types;    // List of Oid (user-facing PG types)
 	/* One expression per cell, always non-NULL: unspecified columns get a
 	 * typed NULL Const; const-foldable subexpressions are already collapsed
 	 * by eval_const_expressions. */
@@ -206,85 +220,34 @@ static NativeInlineColumnStat *DirectInsertValuesIntoInlinedTable(DirectInsertSc
                                                                   NativeInlineWriteBatch *batch, uint64_t *stats_count);
 static void CheckQueryPermissionsAndRls(Query *query, bool skip_result_relation);
 
-static char *
-OutputFunctionCallIso(FmgrInfo *flinfo, Datum value) {
-	char *result = NULL;
-	int saved_style = DateStyle;
-	int saved_order = DateOrder;
-	PG_TRY();
-	{
-		DateStyle = USE_ISO_DATES;
-		DateOrder = DATEORDER_YMD;
-		result = OutputFunctionCall(flinfo, value);
-		DateStyle = saved_style;
-		DateOrder = saved_order;
-	}
-	PG_CATCH();
-	{
-		DateStyle = saved_style;
-		DateOrder = saved_order;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-	return result;
-}
-
-/*
- * Map a DuckDB type string to the PG OID used in the inlined data table;
- * mirrors PostgresMetadataManager::GetColumnTypeInternal.  InvalidOid =
- * not handled by the direct insert path.
- */
-static Oid
-DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
-	// Nested types are stored as VARCHAR and cannot appear in UNNEST($param).
-	// DuckDB ToString() uses mixed case: "STRUCT(...)", "MAP(...)", "INTEGER[]".
-	if (pg_strncasecmp(duckdb_type, "STRUCT", 6) == 0 || pg_strncasecmp(duckdb_type, "MAP", 3) == 0 ||
-	    strchr(duckdb_type, '[') != NULL) {
-		return InvalidOid;
-	}
-
-	// VARIANT and GEOMETRY do not support inlining at all
-	if (pg_strcasecmp(duckdb_type, "VARIANT") == 0 || pg_strcasecmp(duckdb_type, "GEOMETRY") == 0) {
-		return InvalidOid;
-	}
-
-	// VARCHAR and BLOB are stored as BYTEA
-	if (pg_strcasecmp(duckdb_type, "VARCHAR") == 0 || pg_strcasecmp(duckdb_type, "BLOB") == 0) {
-		return BYTEAOID;
-	}
-
-	// Scalar types with wider DuckDB range are stored as VARCHAR.  TIMESTAMPTZ
-	// is excluded because timestamptz_out crashes in the VALUES path.
-	if (pg_strcasecmp(duckdb_type, "TIMESTAMP WITH TIME ZONE") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMPTZ") == 0) {
-		return InvalidOid;
-	}
-	if (pg_strcasecmp(duckdb_type, "UBIGINT") == 0 || pg_strcasecmp(duckdb_type, "HUGEINT") == 0 ||
-	    pg_strcasecmp(duckdb_type, "UHUGEINT") == 0 || pg_strcasecmp(duckdb_type, "DATE") == 0 ||
-	    pg_strcasecmp(duckdb_type, "TIMESTAMP") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP_S") == 0 ||
-	    pg_strcasecmp(duckdb_type, "TIMESTAMP_MS") == 0 || pg_strcasecmp(duckdb_type, "TIMESTAMP_NS") == 0) {
-		return VARCHAROID;
-	}
-
-	// Natively supported -- PG element type matches the inlined column type
-	return element_type;
-}
-
-/*
- * Determine the inlined-table PG type for each user column from
- * ducklake_column metadata.  element_types is the user-facing PG type per
- * column (List of Oid).  Returns false on bail-out.
- */
 static bool
-GetInlinedColumnTypes(uint64_t table_id, List *element_types, List **inlined_col_types_out) {
+GetInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, int num_cols, InlinedColumnInfo **cols_out) {
 	int ret;
-	int num_cols = list_length(element_types);
+
+	/* The inlined table is the authority on its own column types. */
+	Relation inlined_rel = OpenInlinedDataTable(table_id, schema_version, AccessShareLock, true);
+	if (inlined_rel == NULL) {
+		return false;
+	}
+	TupleDesc inlined_tupdesc = RelationGetDescr(inlined_rel);
+	if (inlined_tupdesc->natts != num_cols + INLINED_SYSTEM_COLS) {
+		table_close(inlined_rel, AccessShareLock);
+		return false;
+	}
 
 	// Allocate in the caller's memory context -- SPI_connect switches to a
-	// private context that is freed by SPI_finish, so List nodes built inside
+	// private context that is freed by SPI_finish, so anything built inside
 	// SPI would be freed too.
-	Oid *oids = (Oid *)palloc(sizeof(Oid) * num_cols);
+	InlinedColumnInfo *cols = (InlinedColumnInfo *)palloc0(sizeof(InlinedColumnInfo) * num_cols);
+	for (int i = 0; i < num_cols; i++) {
+		Form_pg_attribute attr = TupleDescAttr(inlined_tupdesc, i + INLINED_SYSTEM_COLS);
+		cols[i].inline_type = attr->atttypid;
+		cols[i].inline_typmod = attr->atttypmod;
+	}
+	table_close(inlined_rel, AccessShareLock);
 
 	if ((ret = SPI_connect()) < 0) {
+		pfree(cols);
 		return false;
 	}
 
@@ -300,47 +263,51 @@ ORDER BY column_order)",
 	                 (unsigned long long)table_id);
 
 	ret = SPI_execute(query.data, true, 0);
-	if (ret != SPI_OK_SELECT) {
+	if (ret != SPI_OK_SELECT || (int)SPI_processed != num_cols) {
 		SPI_finish();
+		pfree(cols);
 		return false;
 	}
 
-	if ((int)SPI_processed != num_cols) {
-		SPI_finish();
-		return false;
-	}
-
-	ListCell *lc = list_head(element_types);
 	for (int i = 0; i < num_cols; i++) {
 		bool isnull;
 		Datum type_datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
 		if (isnull) {
 			SPI_finish();
+			pfree(cols);
 			return false;
 		}
-		char *duckdb_type = TextDatumGetCString(type_datum);
-
-		Oid element_type = lfirst_oid(lc);
-		Oid inlined_oid = DuckDBTypeToInlinedOid(duckdb_type, element_type);
-		pfree(duckdb_type);
-
-		if (!OidIsValid(inlined_oid)) {
+		char *ducklake_type = TextDatumGetCString(type_datum);
+		bool identified = DuckLakeTypeIdentity(ducklake_type, &cols[i].type_id, &cols[i].is_json);
+		pfree(ducklake_type);
+		if (!identified) {
 			SPI_finish();
+			pfree(cols);
 			return false;
 		}
-		oids[i] = inlined_oid;
-		lc = lnext(element_types, lc);
 	}
 
 	SPI_finish();
 
-	List *result = NIL;
-	for (int i = 0; i < num_cols; i++) {
-		result = lappend_oid(result, oids[i]);
-	}
-	pfree(oids);
+	*cols_out = cols;
+	return true;
+}
 
-	*inlined_col_types_out = result;
+/*
+ * One unrecognized column declines the whole statement: falling back to DuckDB
+ * is cheaper than storing bytes the reader cannot decode.  Source types are per
+ * pattern -- the target column types for VALUES, the array element types for
+ * UNNEST.
+ */
+static bool
+InlineConversionsSupported(const InlinedColumnInfo *cols, const Oid *source_types, int num_cols) {
+	for (int i = 0; i < num_cols; i++) {
+		InlineConversion conversion;
+		if (DuckLakeTypeInlineConversion(INLINE_WRITER_FAST_PATH, cols[i].type_id, cols[i].is_json, source_types[i],
+		                                 cols[i].inline_type, cols[i].inline_typmod, &conversion) != INLINE_CONV_OK) {
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -592,33 +559,40 @@ CheckInsertPreconditions(Query *parse, InsertPreconditionResult *result_out, Dir
 }
 
 /*
- * Cached wrapper around GetInlinedColumnTypes; the cached list lives in
- * TopMemoryContext -- caller must not free it.
+ * Cached wrapper around GetInlinedColumnTypes; the cached array lives in
+ * TopMemoryContext -- caller must not free it.  Only the description is
+ * cached, never the allowlist verdict: that also depends on the statement's
+ * source types.
  */
 static bool
-GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, List *element_types,
-                            List **inlined_col_types_out) {
+GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, int num_cols,
+                            const InlinedColumnInfo **cols_out) {
 	TableSchemaKey col_key = {table_id, schema_version};
 	auto col_cache_it = inlined_col_types_cache.find(col_key);
-	if (col_cache_it != inlined_col_types_cache.end()) {
-		*inlined_col_types_out = col_cache_it->second.col_types;
+	if (col_cache_it != inlined_col_types_cache.end() && col_cache_it->second.ncols == num_cols) {
+		*cols_out = col_cache_it->second.cols;
 		return true;
 	}
 
-	List *inlined_col_types = NIL;
-	if (!GetInlinedColumnTypes(table_id, element_types, &inlined_col_types)) {
+	InlinedColumnInfo *cols = NULL;
+	if (!GetInlinedColumnTypes(table_id, schema_version, num_cols, &cols)) {
 		return false;
 	}
 
 	MemoryContext old_ctx = MemoryContextSwitchTo(TopMemoryContext);
-	List *persistent = NIL;
-	ListCell *lc_oid;
-	foreach (lc_oid, inlined_col_types) {
-		persistent = lappend_oid(persistent, lfirst_oid(lc_oid));
-	}
+	InlinedColumnInfo *persistent = (InlinedColumnInfo *)palloc0(sizeof(InlinedColumnInfo) * num_cols);
 	MemoryContextSwitchTo(old_ctx);
-	inlined_col_types_cache[col_key] = {persistent};
-	*inlined_col_types_out = persistent;
+	memcpy(persistent, cols, sizeof(InlinedColumnInfo) * num_cols);
+	pfree(cols);
+
+	/* Replacing an entry whose column count disagreed with the key would
+	 * otherwise leak its array. */
+	if (col_cache_it != inlined_col_types_cache.end()) {
+		pfree(col_cache_it->second.cols);
+	}
+
+	inlined_col_types_cache[col_key] = {persistent, num_cols};
+	*cols_out = persistent;
 	return true;
 }
 
@@ -812,14 +786,23 @@ TryMatchUnnest(Query *parse, const InsertPreconditionResult *precond, DirectInse
 	}
 	pfree(params_by_column);
 
-	List *element_types = NIL;
-	foreach (lc, param_infos) {
-		ParamInfo *pinfo = (ParamInfo *)lfirst(lc);
-		element_types = lappend_oid(element_types, pinfo->element_type);
+	int num_cols = list_length(param_infos);
+	const InlinedColumnInfo *cols = NULL;
+	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, num_cols, &cols)) {
+		*reason_out = DI_R_COL_TYPES_UNSUPPORTED;
+		return false;
 	}
 
-	List *inlined_col_types = NIL;
-	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, element_types, &inlined_col_types)) {
+	/* The element type is what the writer stores: the matcher above accepted
+	 * only bare Vars, so no coercion stands between UNNEST and the column. */
+	Oid *element_types = (Oid *)palloc(sizeof(Oid) * num_cols);
+	int element_idx = 0;
+	foreach (lc, param_infos) {
+		element_types[element_idx++] = ((ParamInfo *)lfirst(lc))->element_type;
+	}
+	bool supported = InlineConversionsSupported(cols, element_types, num_cols);
+	pfree(element_types);
+	if (!supported) {
 		*reason_out = DI_R_COL_TYPES_UNSUPPORTED;
 		return false;
 	}
@@ -829,7 +812,6 @@ TryMatchUnnest(Query *parse, const InsertPreconditionResult *precond, DirectInse
 	context_out->schema_version = precond->schema_version;
 	context_out->param_infos = param_infos;
 	context_out->target_col_names = target_col_names;
-	context_out->target_col_types = inlined_col_types;
 
 	*reason_out = DI_R_OK;
 	return true;
@@ -1178,18 +1160,23 @@ TryMatchValues(Query *parse, const InsertPreconditionResult *precond, ValuesInse
 
 	List *src_col_types = NIL;
 	List *target_col_names = NIL;
+	Oid *src_type_array = (Oid *)palloc(sizeof(Oid) * num_table_cols);
 	for (int i = 0; i < num_table_cols; i++) {
 		Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
 		src_col_types = lappend_oid(src_col_types, attr->atttypid);
+		src_type_array[i] = attr->atttypid;
 		target_col_names = lappend(target_col_names, pstrdup(NameStr(attr->attname)));
 	}
 
-	List *inlined_col_types = NIL;
-	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, src_col_types, &inlined_col_types)) {
+	const InlinedColumnInfo *cols = NULL;
+	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, num_table_cols, &cols) ||
+	    !InlineConversionsSupported(cols, src_type_array, num_table_cols)) {
+		pfree(src_type_array);
 		pfree(exprs);
 		*reason_out = DI_R_COL_TYPES_UNSUPPORTED;
 		return false;
 	}
+	pfree(src_type_array);
 
 	context_out->target_table_oid = precond->target_oid;
 	context_out->table_id = precond->table_id;
@@ -1197,7 +1184,6 @@ TryMatchValues(Query *parse, const InsertPreconditionResult *precond, ValuesInse
 	context_out->num_rows = num_rows;
 	context_out->num_cols = num_table_cols;
 	context_out->target_col_names = target_col_names;
-	context_out->inlined_col_types = inlined_col_types;
 	context_out->src_col_types = src_col_types;
 	context_out->exprs = exprs;
 
@@ -1263,12 +1249,6 @@ CreateDirectInsertPlan(Query *parse, DirectInsertContext *context) {
 		custom_private = lappend(custom_private, makeString(pstrdup(colname)));
 	}
 
-	custom_private = lappend(custom_private, makeInteger(list_length(context->target_col_types)));
-	foreach (lc, context->target_col_types) {
-		Oid coltype = lfirst_oid(lc);
-		custom_private = lappend(custom_private, makeInteger((int)coltype));
-	}
-
 	custom_private = lappend(custom_private, copyObjectImpl(parse));
 	return MakeDirectInsertPlannedStmt(parse, custom_private);
 }
@@ -1289,11 +1269,6 @@ CreateValuesInsertPlan(Query *parse, ValuesInsertContext *context) {
 	ListCell *lc;
 	foreach (lc, context->target_col_names) {
 		custom_private = lappend(custom_private, makeString(pstrdup((char *)lfirst(lc))));
-	}
-
-	custom_private = lappend(custom_private, makeInteger(list_length(context->inlined_col_types)));
-	foreach (lc, context->inlined_col_types) {
-		custom_private = lappend(custom_private, makeInteger((int)lfirst_oid(lc)));
 	}
 
 	custom_private = lappend(custom_private, makeInteger(list_length(context->src_col_types)));
@@ -1357,11 +1332,6 @@ DirectInsert_CreateCustomScanState(CustomScan *cscan) {
 			state->column_names = lappend(state->column_names, makeString(pstrdup(strVal(NextPrivate(priv, &lc)))));
 		}
 
-		int num_types = intVal(NextPrivate(priv, &lc));
-		state->column_types = NIL;
-		for (int i = 0; i < num_types; i++) {
-			state->column_types = lappend_oid(state->column_types, (Oid)intVal(NextPrivate(priv, &lc)));
-		}
 	} else {
 		state->values_num_rows = intVal(NextPrivate(priv, &lc));
 		state->values_num_cols = intVal(NextPrivate(priv, &lc));
@@ -1370,12 +1340,6 @@ DirectInsert_CreateCustomScanState(CustomScan *cscan) {
 		state->column_names = NIL;
 		for (int i = 0; i < num_names; i++) {
 			state->column_names = lappend(state->column_names, makeString(pstrdup(strVal(NextPrivate(priv, &lc)))));
-		}
-
-		int num_inl_types = intVal(NextPrivate(priv, &lc));
-		state->column_types = NIL;
-		for (int i = 0; i < num_inl_types; i++) {
-			state->column_types = lappend_oid(state->column_types, (Oid)intVal(NextPrivate(priv, &lc)));
 		}
 
 		int num_src_types = intVal(NextPrivate(priv, &lc));
@@ -1506,21 +1470,38 @@ DirectInsert_ExplainCustomScan(CustomScanState *node, List *ancestors, ExplainSt
 	}
 }
 
-/* System columns prepended to the inlined data table: row_id,
- * begin_snapshot, end_snapshot. */
-#define INLINED_SYSTEM_COLS 3
-
 #define MAX_BUFFERED_TUPLES 1000
+
+/*
+ * The planner declined every column MakeInlineColumnConv rejects, so a NULL
+ * here means the DuckLake catalog moved under an already-planned statement.
+ * Storing the Datum in a differently-typed column would corrupt it silently.
+ */
+static InlineColumnConv *
+ResolveInlineColumnConv(const InlineColStats *col_stats, int column, Oid source_type, Form_pg_attribute inl_att) {
+	InlineColumnConv *conv = NULL;
+	InlineConversionResult result = INLINE_CONV_UNSUPPORTED_TYPE;
+	int type_id;
+	bool is_json;
+	if (InlineColStatsColumnTypeIdentity(col_stats, column, &type_id, &is_json)) {
+		conv = MakeInlineColumnConv(INLINE_WRITER_FAST_PATH, type_id, is_json, source_type, inl_att, &result);
+	}
+	if (conv == NULL) {
+		ereport(ERROR,
+		        (errcode(result == INLINE_CONV_LAYOUT_MISMATCH ? ERRCODE_DATATYPE_MISMATCH : ERRCODE_INTERNAL_ERROR),
+		         errmsg("cannot store type %s in inlined column of type %s", format_type_be(source_type),
+		                format_type_be(inl_att->atttypid))));
+	}
+	return conv;
+}
 
 static NativeInlineColumnStat *
 DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatch *batch, uint64_t *stats_count) {
 	int num_params = list_length(state->param_ids);
 	ArrayType **arrays = state->unnest_arrays;
 	Oid *element_types = (Oid *)palloc(sizeof(Oid) * num_params);
-	Oid *inlined_types = (Oid *)palloc(sizeof(Oid) * num_params);
 	ArrayIterator *iterators = (ArrayIterator *)palloc0(sizeof(ArrayIterator) * num_params);
-	FmgrInfo *typoutput = (FmgrInfo *)palloc0(sizeof(FmgrInfo) * num_params);
-	bool *needs_text_conv = (bool *)palloc0(sizeof(bool) * num_params);
+	InlineColumnConv **conv = (InlineColumnConv **)palloc0(sizeof(InlineColumnConv *) * num_params);
 
 	ListCell *lc;
 	int param_idx = 0;
@@ -1529,23 +1510,12 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 	}
 	int arr_length = state->expected_row_count;
 
-	int idx = 0;
-	foreach (lc, state->column_types) {
-		inlined_types[idx++] = lfirst_oid(lc);
-	}
 	/* Iterators return pointers into the parameter arrays. Unlike
 	 * deconstruct_array(), they do not allocate a Datum/null pair per input
 	 * element, so only converted values in the current insert batch are kept. */
 	for (int i = 0; i < num_params; i++) {
 		if (arrays[i]) {
 			iterators[i] = array_create_iterator(arrays[i], 0, NULL);
-		}
-		if ((inlined_types[i] == TEXTOID || inlined_types[i] == VARCHAROID) && inlined_types[i] != element_types[i]) {
-			Oid output_oid;
-			bool typisvarlena;
-			getTypeOutputInfo(element_types[i], &output_oid, &typisvarlena);
-			fmgr_info(output_oid, &typoutput[i]);
-			needs_text_conv[i] = true;
 		}
 	}
 
@@ -1556,21 +1526,18 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 		SetupInlineColStatsColumn(col_stats, i, element_types[i]);
 	}
 
-	char relname[NAMEDATALEN];
-	snprintf(relname, sizeof(relname), "ducklake_inlined_data_%llu_%llu", (unsigned long long)state->table_id,
-	         (unsigned long long)state->schema_version);
-	Oid ducklake_nsp = get_namespace_oid("ducklake", false);
-	Oid relid = get_relname_relid(relname, ducklake_nsp);
-	if (!OidIsValid(relid)) {
-		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("inlined data table \"%s\" does not exist", relname)));
-	}
-	Relation inlined_rel = table_open(relid, RowExclusiveLock);
+	Relation inlined_rel = OpenInlinedDataTable(state->table_id, state->schema_version, RowExclusiveLock, false);
 	BindNativeInlineWriteRelation(batch, inlined_rel);
 	TupleDesc inlined_tupdesc = RelationGetDescr(inlined_rel);
 	if (inlined_tupdesc->natts != num_params + INLINED_SYSTEM_COLS) {
 		ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
 		                errmsg("inlined data table column count mismatch: expected %d, got %d",
 		                       num_params + INLINED_SYSTEM_COLS, inlined_tupdesc->natts)));
+	}
+
+	for (int i = 0; i < num_params; i++) {
+		conv[i] = ResolveInlineColumnConv(col_stats, i, element_types[i],
+		                                  TupleDescAttr(inlined_tupdesc, i + INLINED_SYSTEM_COLS));
 	}
 
 	int batch_size = Min(arr_length, MAX_BUFFERED_TUPLES);
@@ -1585,6 +1552,11 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 
 	int nslots = 0;
 	uint64_t current_row_id = state->next_row_id;
+	/* Every per-row allocation belongs to the batch, not just the converted
+	 * text: a typmod coercion palloc's a fresh Numeric even when it only
+	 * rewrites scale metadata.  The slots point into this context, so it can
+	 * only be reset once table_multi_insert has copied the batch out. */
+	MemoryContext old_context = MemoryContextSwitchTo(batch_context);
 	for (int row = 0; row < arr_length; row++) {
 		TupleTableSlot *slot = slots[nslots];
 		ExecClearTuple(slot);
@@ -1608,17 +1580,14 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 				ObserveInlineColStatsNull(col_stats, i);
 				values[dst] = (Datum)0;
 				nulls[dst] = true;
-			} else if (needs_text_conv[i]) {
-				ObserveInlineColStatsDatum(col_stats, i, element);
-				MemoryContext old_context = MemoryContextSwitchTo(batch_context);
-				char *str = OutputFunctionCallIso(&typoutput[i], element);
-				values[dst] = CStringGetTextDatum(str);
-				pfree(str);
-				MemoryContextSwitchTo(old_context);
-				nulls[dst] = false;
 			} else {
+				element = ApplyInlineColumnTypmod(conv[i], element);
+				/* Post-coercion: a bound taken from the source value can exclude
+				 * what is stored.  Pre-widening: a widened Datum no longer reads
+				 * as the source type the accumulator was bound to. */
 				ObserveInlineColStatsDatum(col_stats, i, element);
-				values[dst] = element;
+
+				values[dst] = ApplyInlineColumnConversion(conv[i], element);
 				nulls[dst] = false;
 			}
 		}
@@ -1643,6 +1612,7 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 		state->rows_inserted += nslots;
 		NativeWriterStatsAdd(NW_PAYLOAD_ROWS, nslots);
 	}
+	MemoryContextSwitchTo(old_context);
 
 	table_finish_bulk_insert(inlined_rel, 0);
 	FreeBulkInsertState(bistate);
@@ -1664,11 +1634,6 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatc
 	return result;
 }
 
-struct ValuesColumnConvInfo {
-	bool needs_text_conv;
-	FmgrInfo typoutput_finfo; /* cached output function */
-};
-
 static NativeInlineColumnStat *
 DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWriteBatch *batch, uint64_t *stats_count) {
 	int num_rows = state->values_num_rows;
@@ -1679,45 +1644,16 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWri
 	InlineColStats *col_stats = CreateInlineColStats(state->table_id, num_cols);
 	SPI_finish();
 
-	char relname[NAMEDATALEN];
-	snprintf(relname, sizeof(relname), "ducklake_inlined_data_%llu_%llu", (unsigned long long)state->table_id,
-	         (unsigned long long)state->schema_version);
-
-	Oid ducklake_nsp = get_namespace_oid("ducklake", false);
-	Oid relid = get_relname_relid(relname, ducklake_nsp);
-	if (!OidIsValid(relid)) {
-		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("inlined data table \"%s\" does not exist", relname)));
-	}
-
-	Relation inlined_rel = table_open(relid, RowExclusiveLock);
+	Relation inlined_rel = OpenInlinedDataTable(state->table_id, state->schema_version, RowExclusiveLock, false);
 	BindNativeInlineWriteRelation(batch, inlined_rel);
 	TupleDesc inlined_tupdesc = RelationGetDescr(inlined_rel);
 
-	ValuesColumnConvInfo *conv = (ValuesColumnConvInfo *)palloc0(sizeof(ValuesColumnConvInfo) * num_cols);
-	ListCell *inl_lc = list_head(state->column_types);
+	InlineColumnConv **conv = (InlineColumnConv **)palloc0(sizeof(InlineColumnConv *) * num_cols);
 
 	for (int i = 0; i < num_cols; i++) {
 		Oid src_type = state->values_src_types[i];
-		Oid inl_type = lfirst_oid(inl_lc);
-		inl_lc = lnext(state->column_types, inl_lc);
-
-		if (src_type == inl_type) {
-			conv[i].needs_text_conv = false;
-		} else if (inl_type == VARCHAROID || inl_type == TEXTOID) {
-			/* Scalar types (DATE, TIMESTAMP, etc.) stored as VARCHAR in
-			 * the inlined table: convert via PG output function. */
-			Oid typoutput;
-			bool typisvarlena;
-			getTypeOutputInfo(src_type, &typoutput, &typisvarlena);
-			fmgr_info(typoutput, &conv[i].typoutput_finfo);
-			conv[i].needs_text_conv = true;
-		} else if (inl_type == BYTEAOID) {
-			/* DuckDB VARCHAR/BLOB inline as BYTEA; text/varchar and bytea
-			 * share the same varlena layout, so store the Datum as-is. */
-			conv[i].needs_text_conv = false;
-		} else {
-			conv[i].needs_text_conv = false;
-		}
+		conv[i] =
+		    ResolveInlineColumnConv(col_stats, i, src_type, TupleDescAttr(inlined_tupdesc, i + INLINED_SYSTEM_COLS));
 		SetupInlineColStatsColumn(col_stats, i, src_type);
 	}
 
@@ -1732,6 +1668,13 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWri
 
 	int nslots = 0;
 	uint64_t current_row_id = state->next_row_id;
+
+	/* Coerced and converted Datums belong to the batch, like the expression
+	 * results: ResetExprContext below reclaims the whole per-tuple context, and
+	 * it runs only once table_multi_insert has copied the slots out.  In the
+	 * caller's statement-lifetime context they would be retained per input
+	 * row. */
+	MemoryContext old_context = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 	for (int row = 0; row < num_rows; row++) {
 		TupleTableSlot *slot = slots[nslots];
@@ -1760,15 +1703,14 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWri
 				ObserveInlineColStatsNull(col_stats, col);
 				sv[dst] = (Datum)0;
 				sn[dst] = true;
-			} else if (conv[col].needs_text_conv) {
-				ObserveInlineColStatsDatum(col_stats, col, d);
-				char *str = OutputFunctionCallIso(&conv[col].typoutput_finfo, d);
-				sv[dst] = CStringGetTextDatum(str);
-				sn[dst] = false;
-				pfree(str);
 			} else {
+				d = ApplyInlineColumnTypmod(conv[col], d);
+				/* Post-coercion: a bound taken from the source value can exclude
+				 * what is stored.  Pre-widening: a widened Datum no longer reads
+				 * as the source type the accumulator was bound to. */
 				ObserveInlineColStatsDatum(col_stats, col, d);
-				sv[dst] = d;
+
+				sv[dst] = ApplyInlineColumnConversion(conv[col], d);
 				sn[dst] = false;
 			}
 		}
@@ -1795,6 +1737,7 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWri
 		state->rows_inserted += nslots;
 		NativeWriterStatsAdd(NW_PAYLOAD_ROWS, nslots);
 	}
+	MemoryContextSwitchTo(old_context);
 
 	table_finish_bulk_insert(inlined_rel, 0);
 	FreeBulkInsertState(bistate);
@@ -1805,6 +1748,7 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state, NativeInlineWri
 	pfree(slots);
 	pfree(conv);
 
+	char *relname = pstrdup(RelationGetRelationName(inlined_rel));
 	/* Publication owns the retained RowExclusiveLock through any retag. */
 	table_close(inlined_rel, NoLock);
 

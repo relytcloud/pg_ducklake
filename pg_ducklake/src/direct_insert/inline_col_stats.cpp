@@ -30,6 +30,9 @@ namespace {
 struct InlineColStatsEntry {
 	uint64_t column_id;
 	char *column_type;
+	bool type_identified;
+	int type_id;
+	bool is_json;
 	bool bounds_safe;
 	bool value_cmp;
 	bool floating;
@@ -53,6 +56,13 @@ struct TypeProperties {
 	bool value_cmp;
 	bool floating;
 	bool out_of_memory;
+	/* False for a spelling this build cannot parse; the rest of the struct says
+	 * nothing then. */
+	bool identified;
+	/* duckdb::LogicalTypeId, widened so it can cross into callers that hold no
+	 * DuckDB header.  json and varchar share it, hence is_json. */
+	int type_id;
+	bool is_json;
 };
 
 TypeProperties
@@ -60,6 +70,8 @@ GetTypeProperties(const char *type_name) {
 	TypeProperties result = {};
 	try {
 		auto type = duckdb::DuckLakeTypes::FromString(type_name);
+		result.type_id = (int)type.id();
+		result.is_json = type.IsJSONType();
 		result.value_cmp = duckdb::RequiresValueComparison(type);
 		switch (type.id()) {
 		case duckdb::LogicalTypeId::BOOLEAN:
@@ -93,6 +105,7 @@ GetTypeProperties(const char *type_name) {
 		default:
 			break;
 		}
+		result.identified = true;
 	} catch (const duckdb::OutOfMemoryException &) {
 		result.out_of_memory = true;
 	} catch (const std::bad_alloc &) {
@@ -124,6 +137,29 @@ FreeDatumIfNeeded(Datum value, bool typbyval) {
 }
 
 } // namespace
+
+/* Shares GetTypeProperties so the planner, which never builds an accumulator,
+ * parses column_type through the same code as the writers: a spelling one side
+ * accepted and the other declined would strand a planned statement at
+ * execution time. */
+bool
+DuckLakeTypeIdentity(const char *ducklake_type, int *type_id_out, bool *is_json_out) {
+	if (!ducklake_type) {
+		return false;
+	}
+	auto properties = GetTypeProperties(ducklake_type);
+	/* Outside the catch: ereport longjmps, and the DuckDB frames it would jump
+	 * over have destructors to run. */
+	if (properties.out_of_memory) {
+		ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+	}
+	if (!properties.identified) {
+		return false;
+	}
+	*type_id_out = properties.type_id;
+	*is_json_out = properties.is_json;
+	return true;
+}
 
 struct InlineColStats {
 	MemoryContext context;
@@ -194,8 +230,25 @@ CreateInlineColStats(uint64_t table_id, int num_cols) {
 		stats->entries[i].bounds_safe = properties.bounds_safe;
 		stats->entries[i].value_cmp = properties.value_cmp;
 		stats->entries[i].floating = properties.floating;
+		stats->entries[i].type_identified = properties.identified;
+		stats->entries[i].type_id = properties.type_id;
+		stats->entries[i].is_json = properties.is_json;
 	}
 	return stats;
+}
+
+bool
+InlineColStatsColumnTypeIdentity(const InlineColStats *stats, int column, int *type_id_out, bool *is_json_out) {
+	if (!stats || column < 0 || column >= stats->source_count || column >= stats->count) {
+		return false;
+	}
+	const auto &entry = stats->entries[column];
+	if (!entry.type_identified) {
+		return false;
+	}
+	*type_id_out = entry.type_id;
+	*is_json_out = entry.is_json;
+	return true;
 }
 
 void

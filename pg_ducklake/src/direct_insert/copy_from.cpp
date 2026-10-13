@@ -4,6 +4,7 @@
 
 #include "pgducklake/direct_insert/copy_from.hpp"
 #include "pgducklake/direct_insert/inline_col_stats.hpp"
+#include "pgducklake/direct_insert/inline_type_map.hpp"
 #include "pgducklake/direct_insert/native_inline_writer.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
@@ -22,6 +23,7 @@ extern "C" {
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "parser/parse_node.h"
+#include "rewrite/rewriteHandler.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -36,65 +38,90 @@ namespace pgducklake {
 /* System columns prepended to the inlined data table: row_id, begin_snapshot, end_snapshot. */
 #define INLINED_SYSTEM_COLS 3
 
-struct ColumnConvInfo {
-	bool needs_text_conv;     /* true if user type -> VARCHAR via output func */
-	FmgrInfo typoutput_finfo; /* cached output function (avoids per-row syscache lookup) */
-};
-
-static char *
-OutputFunctionCallIso(FmgrInfo *flinfo, Datum value) {
-	char *result = NULL;
-	int saved_style = DateStyle;
-	int saved_order = DateOrder;
-	PG_TRY();
-	{
-		DateStyle = USE_ISO_DATES;
-		DateOrder = DATEORDER_YMD;
-		result = OutputFunctionCall(flinfo, value);
-		DateStyle = saved_style;
-		DateOrder = saved_order;
+/*
+ * COPY leaves an omitted column NULL unless its default yields a value, and a
+ * column that only ever receives NULL never reaches a conversion.  Refusing one
+ * would reject statements that serialize nothing unconvertible.
+ */
+static bool
+CopyCanStoreColumn(Relation rel, Form_pg_attribute user_att, const bool *supplied) {
+	if (supplied[user_att->attnum - 1]) {
+		return true;
 	}
-	PG_CATCH();
-	{
-		DateStyle = saved_style;
-		DateOrder = saved_order;
-		PG_RE_THROW();
+	Node *defexpr = build_column_default(rel, user_att->attnum);
+	if (defexpr == NULL) {
+		return false;
 	}
-	PG_END_TRY();
-	return result;
+	return !(IsA(defexpr, Const) && ((Const *)defexpr)->constisnull);
 }
 
-static ColumnConvInfo *
-BuildColumnConvInfo(TupleDesc user_tupdesc, TupleDesc inlined_tupdesc) {
+/*
+ * Keyed on the DuckLake type, like the other inline writers: the PostgreSQL
+ * facade type does not identify the column, since a DuckLake type without a
+ * PostgreSQL counterpart surfaces as text there.
+ */
+static InlineColumnConv **
+BuildColumnConvInfo(Relation user_rel, TupleDesc inlined_tupdesc, const InlineColStats *col_stats, List *attlist) {
+	TupleDesc user_tupdesc = RelationGetDescr(user_rel);
 	int natts = user_tupdesc->natts;
-	ColumnConvInfo *conv = (ColumnConvInfo *)palloc0(sizeof(ColumnConvInfo) * natts);
+	InlineColumnConv **conv = (InlineColumnConv **)palloc0(sizeof(InlineColumnConv *) * natts);
+
+	bool *supplied = (bool *)palloc0(sizeof(bool) * natts);
+	List *attnums = CopyGetAttnums(user_tupdesc, user_rel, attlist);
+	ListCell *lc;
+	foreach (lc, attnums) {
+		AttrNumber attnum = (AttrNumber)lfirst_int(lc);
+		supplied[attnum - 1] = true;
+	}
 
 	int inl_column = INLINED_SYSTEM_COLS;
 	for (int i = 0; i < natts; i++) {
 		Form_pg_attribute user_att = TupleDescAttr(user_tupdesc, i);
+		/* The inlined table is rebuilt per schema version and carries no column
+		 * for a dropped attribute, so the cursor must not advance for one. */
 		if (user_att->attisdropped) {
 			continue;
 		}
+		int stats_col = inl_column - INLINED_SYSTEM_COLS;
 		Form_pg_attribute inl_att = TupleDescAttr(inlined_tupdesc, inl_column++);
 
-		Oid user_type = user_att->atttypid;
-		Oid inl_type = inl_att->atttypid;
+		if (!CopyCanStoreColumn(user_rel, user_att, supplied)) {
+			continue;
+		}
 
-		if (user_type == inl_type) {
-			conv[i].needs_text_conv = false;
-		} else if (inl_type == VARCHAROID || inl_type == TEXTOID) {
-			/* Inlined stores as VARCHAR (date, timestamp, ubigint, etc.): use PG output function. */
-			Oid typoutput;
-			bool typisvarlena;
-			getTypeOutputInfo(user_type, &typoutput, &typisvarlena);
-			fmgr_info(typoutput, &conv[i].typoutput_finfo);
-			conv[i].needs_text_conv = true;
-		} else {
-			/* text and bytea are both varlena with identical in-memory format: pass through. */
-			conv[i].needs_text_conv = false;
+		Oid user_type = user_att->atttypid;
+		int type_id;
+		bool is_json;
+		if (!InlineColStatsColumnTypeIdentity(col_stats, stats_col, &type_id, &is_json)) {
+			/* Distinct from a rejected conversion: the catalog lookup came up
+			 * short, or named a type this build cannot parse. */
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("no DuckLake column type for column \"%s\"", NameStr(user_att->attname))));
+		}
+
+		InlineConversionResult result;
+		conv[i] = MakeInlineColumnConv(INLINE_WRITER_COPY, type_id, is_json, user_type, inl_att, &result);
+		if (result == INLINE_CONV_LAYOUT_MISMATCH) {
+			/* Both types are storable, so naming only the user's would blame a
+			 * column that is not the odd one. */
+			ereport(ERROR,
+			        (errcode(ERRCODE_DATATYPE_MISMATCH),
+			         errmsg("cannot store column \"%s\" of type %s in inlined column of type %s",
+			                NameStr(user_att->attname), format_type_be(user_type), format_type_be(inl_att->atttypid))));
+		}
+		if (conv[i] == NULL) {
+			/* COPY has no path to decline to, so an unsupported column is fatal
+			 * rather than a fallback.  Nested types are the common case: they
+			 * inline as VARCHAR holding DuckDB's text format, which no PG output
+			 * function produces. */
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			                errmsg("COPY FROM STDIN does not support column \"%s\" of type %s",
+			                       NameStr(user_att->attname), format_type_be(user_type)),
+			                errhint("Load this column with INSERT, which falls back to the standard path.")));
 		}
 	}
 
+	pfree(supplied);
 	return conv;
 }
 
@@ -170,22 +197,6 @@ CheckNativeCopySemantics(Relation rel, CopyStmt *stmt) {
 	}
 }
 
-static Relation
-OpenInlinedDataTable(uint64_t table_id, uint64_t schema_version, LOCKMODE lockmode) {
-	char relname[NAMEDATALEN];
-	snprintf(relname, sizeof(relname), "ducklake_inlined_data_%llu_%llu", (unsigned long long)table_id,
-	         (unsigned long long)schema_version);
-
-	Oid ducklake_nsp = get_namespace_oid("ducklake", false);
-	Oid relid = get_relname_relid(relname, ducklake_nsp);
-	if (!OidIsValid(relid)) {
-		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("inlined data table \"%s\" does not exist", relname),
-		                errhint("Call ducklake.ensure_inlined_data_table() first.")));
-	}
-
-	return table_open(relid, lockmode);
-}
-
 uint64_t
 DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 	Relation user_rel = table_openrv(stmt->relation, RowExclusiveLock);
@@ -205,7 +216,7 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 		                errhint("Call ducklake.ensure_inlined_data_table('%s'::regclass) first.", relname)));
 	}
 
-	Relation inlined_rel = OpenInlinedDataTable(table_id, schema_version, RowExclusiveLock);
+	Relation inlined_rel = OpenInlinedDataTable(table_id, schema_version, RowExclusiveLock, false);
 
 	TupleDesc user_tupdesc = RelationGetDescr(user_rel);
 	TupleDesc inlined_tupdesc = RelationGetDescr(inlined_rel);
@@ -225,8 +236,6 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 		                       live_natts + INLINED_SYSTEM_COLS, inlined_tupdesc->natts)));
 	}
 
-	ColumnConvInfo *conv = BuildColumnConvInfo(user_tupdesc, inlined_tupdesc);
-
 	SPI_connect();
 	InlineColStats *col_stats = CreateInlineColStats(table_id, live_natts);
 	SPI_finish();
@@ -237,6 +246,10 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 			SetupInlineColStatsColumn(col_stats, stats_col++, attr->atttypid);
 		}
 	}
+
+	/* After the stats accumulator: it retains the DuckLake type each conversion
+	 * is keyed on. */
+	InlineColumnConv **conv = BuildColumnConvInfo(user_rel, inlined_tupdesc, col_stats, stmt->attlist);
 
 	NativeInlineWriteBatch batch =
 	    PrepareNativeInlineWrite(user_relid, table_id, schema_version, NATIVE_WRITER_UNKNOWN_ROW_COUNT);
@@ -292,15 +305,22 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 				ObserveInlineColStatsNull(col_stats, stats_col);
 				slot_values[dst] = (Datum)0;
 				slot_isnull[dst] = true;
-			} else if (conv[i].needs_text_conv) {
-				ObserveInlineColStatsDatum(col_stats, stats_col, copy_values[i]);
-				char *str = OutputFunctionCallIso(&conv[i].typoutput_finfo, copy_values[i]);
-				slot_values[dst] = CStringGetTextDatum(str);
-				slot_isnull[dst] = false;
-				pfree(str);
 			} else {
-				ObserveInlineColStatsDatum(col_stats, stats_col, copy_values[i]);
-				slot_values[dst] = copy_values[i];
+				if (conv[i] == NULL) {
+					/* The plan left this column out because COPY could only ever
+					 * leave it NULL; storing the Datum unconverted would corrupt
+					 * it silently. */
+					ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+					                errmsg("COPY produced a value for column \"%s\", which has no conversion",
+					                       NameStr(TupleDescAttr(user_tupdesc, i)->attname))));
+				}
+				Datum d = ApplyInlineColumnTypmod(conv[i], copy_values[i]);
+				/* Post-coercion: a bound taken from the source value can exclude
+				 * what is stored.  Pre-widening: a widened Datum no longer reads
+				 * as the source type the accumulator was bound to. */
+				ObserveInlineColStatsDatum(col_stats, stats_col, d);
+
+				slot_values[dst] = ApplyInlineColumnConversion(conv[i], d);
 				slot_isnull[dst] = false;
 			}
 			stats_col++;

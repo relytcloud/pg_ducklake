@@ -15,9 +15,9 @@ in inlined data tables (the in-catalog row store controlled by
 | | `uint8` | UTINYINT | Native | INTEGER |
 | | `uint16` | USMALLINT | Native | INTEGER |
 | | `uint32` | UINTEGER | Native | BIGINT |
-| | `uint64` | UBIGINT | Not native | VARCHAR |
-| | `int128` | HUGEINT | Not native | VARCHAR |
-| | `uint128` | UHUGEINT | Not native | VARCHAR |
+| | `uint64` | UBIGINT | Standard path only | VARCHAR |
+| | `int128` | HUGEINT | Standard path only | VARCHAR |
+| | `uint128` | UHUGEINT | Standard path only | VARCHAR |
 | | `float32` | FLOAT | Native | REAL |
 | | `float64` | DOUBLE | Native | DOUBLE PRECISION |
 | | `decimal(P, S)` | DECIMAL | Native | DECIMAL(P, S) |
@@ -32,9 +32,9 @@ in inlined data tables (the in-catalog row store controlled by
 | | `interval` | INTERVAL | Native | INTERVAL |
 | | `varchar` | VARCHAR | Not native | BYTEA |
 | | `blob` | BLOB | Not native | BYTEA |
-| | `json` | JSON | Native | JSON |
+| | `json` | JSON | Not native | BYTEA |
 | | `uuid` | UUID | Native | UUID |
-| Nested | `list` | LIST | Not native | VARCHAR[] |
+| Nested | `list` | LIST | Not native | VARCHAR |
 | | `struct` | STRUCT | Not native | VARCHAR |
 | | `map` | MAP | Not native | VARCHAR |
 | Semi-structured | `variant` | VARIANT | No inline | -- |
@@ -54,6 +54,11 @@ in inlined data tables (the in-catalog row store controlled by
 - **Not native**: The PG column type differs from the source type.  DuckDB
   handles read/write conversion transparently; the native writer
   (`enable_direct_insert`) converts before inserting into the inlined table.
+- **Standard path only**: DuckDB inlines the type, but the native writer
+  declines it and the statement falls back to the standard path.  The PG facade
+  carries these as unconstrained `numeric`, which admits values the DuckLake
+  type cannot hold; no PG DDL can create such a column, so no test can hold a
+  native-writer conversion honest.
 - **No inline**: The type does not support data inlining.  Rows are always
   written to Parquet files.
 
@@ -77,6 +82,19 @@ in inlined data tables (the in-catalog row store controlled by
   (fixed in PG15+).  Workaround: keep the sub-day time component of interval
   values below ~35 minutes when using data inlining on PG14, or disable
   inlining (`data_inlining_row_limit = 0`) and use the Parquet path.
+
+- **Nested types with `COPY FROM STDIN`**: nested columns inline as VARCHAR
+  holding DuckDB's text format (`[1, 2]`), which PostgreSQL's output functions
+  do not produce (`array_out` writes `{1,2}`).  `INSERT` falls back to the
+  standard path, but `COPY FROM STDIN` has no fallback and rejects the
+  statement: `ERROR: COPY FROM STDIN does not support column "c" of type
+  integer[]`.  Only a column `COPY` can actually put a value in is rejected, so
+  `COPY t (id) FROM STDIN` still works when the nested column is omitted and
+  defaults to NULL.  Load nested columns with `INSERT`, which the fast path
+  declines so the standard path stores them.  Disabling inlining is not a
+  workaround: the utility hook routes every `COPY ... FROM STDIN` on a DuckLake
+  table to the native writer, which then fails with `COPY FROM STDIN requires an
+  inlined data table`.
 
 ## References
 
