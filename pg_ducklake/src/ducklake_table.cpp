@@ -1105,8 +1105,10 @@ SyncNewTables(const char *sid) {
 		ci.col_name = v ? v : "";
 		v = SPI_getvalue(tup, td, 4);
 		ci.col_type = v ? v : "";
-		v = SPI_getvalue(tup, td, 5);
-		ci.not_null = (v && strcmp(v, "f") == 0);
+
+		bool isnull;
+		Datum nulls_allowed_datum = SPI_getbinval(tup, td, 5, &isnull);
+		ci.not_null = !isnull && !DatumGetBool(nulls_allowed_datum);
 		cols.push_back(std::move(ci));
 	}
 
