@@ -102,6 +102,8 @@ Expire old snapshots during background maintenance. The retention window is cont
 ### `ducklake.maintenance_cleanup_old_files`
 
 Clean up unreferenced data files from storage during background maintenance.
+Only files unreferenced for longer than the [`delete_older_than`](#delete_older_than)
+option are removed.
 
 - **Default**: `false`
 - **Access**: Reload (`SIGHUP`)
@@ -258,7 +260,7 @@ Whether to require a commit message when creating snapshots.
 
 Required age of unused files before cleanup removes them (e.g., `'24 hours'`).
 
-- **Default**: unset
+- **Default**: `'2 days'`
 
 ### `expire_older_than`
 

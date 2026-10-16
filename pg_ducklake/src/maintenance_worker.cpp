@@ -214,14 +214,13 @@ CompactTable(const char *schema_name, const char *table_name) {
 	return true;
 }
 
-/* Remove unreferenced data files from storage. */
+/* Remove unreferenced data files older than the delete_older_than option. */
 bool
 CompactCatalog() {
 	if (!pgducklake::maintenance_cleanup_old_files)
 		return true;
 
-	std::string query =
-	    "SELECT * FROM ducklake_cleanup_old_files(" + Q(PGDUCKLAKE_DUCKDB_CATALOG) + ", cleanup_all => true)";
+	std::string query = "SELECT * FROM ducklake_cleanup_old_files(" + Q(PGDUCKLAKE_DUCKDB_CATALOG) + ")";
 	try {
 		pgducklake::DuckDBQueryOrThrow(query);
 	} catch (const std::exception &e) {

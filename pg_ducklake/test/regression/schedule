@@ -33,6 +33,7 @@ test: readme_examples
 test: ddl
 test: vacuum
 test: maintenance
+test: maintenance_cleanup_retention
 test: commit_message
 test: partition
 test: sorted_table
