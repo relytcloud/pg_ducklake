@@ -44,6 +44,7 @@ extern "C" {
 #include "nodes/value.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/planner.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
@@ -204,10 +205,9 @@ static void DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state);
  */
 static Oid
 DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
-	// Nested types are stored as VARCHAR and cannot appear in UNNEST($param).
-	// DuckDB ToString() uses mixed case: "STRUCT(...)", "MAP(...)", "INTEGER[]".
+	// Nested types are stored as VARCHAR in DuckDB syntax, which PG's array output does not match.
 	if (pg_strncasecmp(duckdb_type, "STRUCT", 6) == 0 || pg_strncasecmp(duckdb_type, "MAP", 3) == 0 ||
-	    strchr(duckdb_type, '[') != NULL) {
+	    pg_strcasecmp(duckdb_type, "LIST") == 0 || strchr(duckdb_type, '[') != NULL) {
 		return InvalidOid;
 	}
 
@@ -1420,9 +1420,21 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
 
 #define MAX_BUFFERED_TUPLES 1000
 
+Oid
+TypmodCoercionFunc(Oid typid, int32_t typmod) {
+	Oid funcid;
+	if (typmod < 0 || find_typmod_coercion_function(typid, &funcid) != COERCION_PATH_FUNC) {
+		return InvalidOid;
+	}
+	return funcid;
+}
+
 struct ValuesColumnConvInfo {
 	bool needs_text_conv;
 	FmgrInfo typoutput_finfo; /* cached output function */
+	bool needs_typmod_conv;
+	FmgrInfo typmod_finfo;
+	int32 typmod;
 };
 
 static void
@@ -1454,6 +1466,13 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
 
 		if (src_type == inl_type) {
 			conv[i].needs_text_conv = false;
+			/* e.g. unconstrained numeric inlined as numeric(18,3) */
+			conv[i].typmod = TupleDescAttr(inlined_tupdesc, i + INLINED_SYSTEM_COLS)->atttypmod;
+			Oid typmod_func = TypmodCoercionFunc(inl_type, conv[i].typmod);
+			if (OidIsValid(typmod_func)) {
+				fmgr_info(typmod_func, &conv[i].typmod_finfo);
+				conv[i].needs_typmod_conv = true;
+			}
 		} else if (inl_type == VARCHAROID || inl_type == TEXTOID) {
 			/* Scalar types (DATE, TIMESTAMP, etc.) stored as VARCHAR in
 			 * the inlined table: convert via PG output function. */
@@ -1531,6 +1550,10 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
 				sv[dst] = CStringGetTextDatum(str);
 				sn[dst] = false;
 				pfree(str);
+			} else if (conv[col].needs_typmod_conv) {
+				sv[dst] =
+				    FunctionCall3(&conv[col].typmod_finfo, d, Int32GetDatum(conv[col].typmod), BoolGetDatum(false));
+				sn[dst] = false;
 			} else {
 				sv[dst] = d;
 				sn[dst] = false;

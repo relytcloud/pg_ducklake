@@ -14,6 +14,7 @@ test: insert_unnest
 test: insert_values
 test: insert_values_stable
 test: copy_from
+test: inlined_type_coercion
 test: insert_cte
 test: ctas
 test: gucs

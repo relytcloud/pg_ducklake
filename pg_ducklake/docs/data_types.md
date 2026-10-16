@@ -32,9 +32,9 @@ in inlined data tables (the in-catalog row store controlled by
 | | `interval` | INTERVAL | Native | INTERVAL |
 | | `varchar` | VARCHAR | Not native | BYTEA |
 | | `blob` | BLOB | Not native | BYTEA |
-| | `json` | JSON | Native | JSON |
+| | `json` | JSON | Not native | BYTEA |
 | | `uuid` | UUID | Native | UUID |
-| Nested | `list` | LIST | Not native | VARCHAR[] |
+| Nested | `list` | LIST | Not native | VARCHAR |
 | | `struct` | STRUCT | Not native | VARCHAR |
 | | `map` | MAP | Not native | VARCHAR |
 | Semi-structured | `variant` | VARIANT | No inline | -- |

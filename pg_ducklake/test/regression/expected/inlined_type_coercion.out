@@ -1,0 +1,79 @@
+-- Direct insert (VALUES) and COPY FROM STDIN write the inlined table's own
+-- representation: typmods applied, nested types never stored as PG text.
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+SELECT ducklake.reset_direct_insert_stats();
+ reset_direct_insert_stats 
+---------------------------
+ 
+(1 row)
+
+-- Unconstrained numeric is inlined as numeric(18,3).
+CREATE TABLE itc_num (n numeric) USING ducklake;
+INSERT INTO itc_num VALUES (5), (1.2), (100), (0.5), (1.23456);
+COPY itc_num FROM STDIN;
+SELECT n FROM itc_num ORDER BY n;
+    n    
+---------
+   0.500
+   1.200
+   1.235
+   1.235
+   2.500
+   5.000
+   7.000
+ 100.000
+(8 rows)
+
+-- Arrays fall back to the DuckDB writer.
+CREATE TABLE itc_arr (id int, ints int[], texts text[]) USING ducklake;
+INSERT INTO itc_arr VALUES (1, ARRAY[1, 2], ARRAY['a', 'b']), (2, ARRAY[3], NULL);
+SELECT * FROM itc_arr ORDER BY id;
+ id | ints  | texts 
+----+-------+-------
+  1 | {1,2} | {a,b}
+  2 | {3}   | 
+(2 rows)
+
+-- COPY has no fallback writer, so it rejects non-NULL arrays.
+COPY itc_arr FROM STDIN;
+ERROR:  COPY FROM STDIN does not support non-NULL values of type integer[] in column "ints"
+HINT:  Use INSERT instead.
+COPY itc_arr FROM STDIN;
+SELECT * FROM itc_arr ORDER BY id;
+ id | ints  | texts 
+----+-------+-------
+  1 | {1,2} | {a,b}
+  2 | {3}   | 
+  5 |       | 
+(3 rows)
+
+-- Temporal values are written in ISO format whatever DateStyle is.
+CREATE TABLE itc_dt (d date, ts timestamp) USING ducklake;
+SET DateStyle = 'SQL, DMY';
+INSERT INTO itc_dt VALUES ('02/01/2024', '02/01/2024 10:30:00');
+COPY itc_dt FROM STDIN;
+SHOW DateStyle;
+ DateStyle 
+-----------
+ SQL, DMY
+(1 row)
+
+SET DateStyle = 'ISO, YMD';
+SELECT d, ts FROM itc_dt ORDER BY d;
+     d      |         ts          
+------------+---------------------
+ 2024-01-02 | 2024-01-02 10:30:00
+ 2024-01-03 | 2024-01-03 11:00:00
+(2 rows)
+
+RESET DateStyle;
+-- Only the numeric and date VALUES inserts took the direct-insert path.
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0 ORDER BY pattern, reason;
+    pattern     |        reason         | count 
+----------------+-----------------------+-------
+ matched_values | ok                    |     2
+ unmatched      | col_types_unsupported |     1
+(2 rows)
+
+DROP TABLE itc_num, itc_arr, itc_dt;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

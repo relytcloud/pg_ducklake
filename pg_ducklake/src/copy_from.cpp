@@ -4,6 +4,7 @@
 
 #include "pgducklake/catalog_sync.hpp"
 #include "pgducklake/copy_from.hpp"
+#include "pgducklake/direct_insert.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
 extern "C" {
@@ -17,6 +18,7 @@ extern "C" {
 #include "commands/copy.h"
 #include "executor/executor.h"
 #include "fmgr.h"
+#include "miscadmin.h"
 #include "parser/parse_node.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -34,6 +36,10 @@ namespace pgducklake {
 struct ColumnConvInfo {
 	bool needs_text_conv;     /* true if user type -> VARCHAR via output func */
 	FmgrInfo typoutput_finfo; /* cached output function (avoids per-row syscache lookup) */
+	bool unsupported;         /* nested value that cannot be stored as DuckDB text */
+	bool needs_typmod_conv;   /* true if the inlined column has a stricter typmod */
+	FmgrInfo typmod_finfo;
+	int32 typmod;
 };
 
 static ColumnConvInfo *
@@ -50,7 +56,20 @@ BuildColumnConvInfo(TupleDesc user_tupdesc, TupleDesc inlined_tupdesc) {
 
 		if (user_type == inl_type) {
 			conv[i].needs_text_conv = false;
+			conv[i].typmod = inl_att->atttypmod;
+			Oid typmod_func = user_att->atttypmod == inl_att->atttypmod
+			                      ? InvalidOid
+			                      : TypmodCoercionFunc(inl_type, inl_att->atttypmod);
+			if (OidIsValid(typmod_func)) {
+				fmgr_info(typmod_func, &conv[i].typmod_finfo);
+				conv[i].needs_typmod_conv = true;
+			}
 		} else if (inl_type == VARCHAROID || inl_type == TEXTOID) {
+			/* Nested values are stored in DuckDB syntax, which PG's output functions do not produce. */
+			if (type_is_array(user_type) || type_is_rowtype(user_type)) {
+				conv[i].unsupported = true;
+				continue;
+			}
 			/* Inlined stores as VARCHAR (date, timestamp, ubigint, etc.): use PG output function. */
 			Oid typoutput;
 			bool typisvarlena;
@@ -157,11 +176,28 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 			if (copy_nulls[i]) {
 				slot_values[dst] = (Datum)0;
 				slot_isnull[dst] = true;
+			} else if (conv[i].unsupported) {
+				Form_pg_attribute att = TupleDescAttr(user_tupdesc, i);
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				                errmsg("COPY FROM STDIN does not support non-NULL values of type %s in column \"%s\"",
+				                       format_type_be(att->atttypid), NameStr(att->attname)),
+				                errhint("Use INSERT instead.")));
 			} else if (conv[i].needs_text_conv) {
+				/* DuckDB parses temporal text in ISO format only. */
+				int saved_date_style = DateStyle;
+				int saved_date_order = DateOrder;
+				DateStyle = USE_ISO_DATES;
+				DateOrder = DATEORDER_YMD;
 				char *str = OutputFunctionCall(&conv[i].typoutput_finfo, copy_values[i]);
+				DateStyle = saved_date_style;
+				DateOrder = saved_date_order;
 				slot_values[dst] = CStringGetTextDatum(str);
 				slot_isnull[dst] = false;
 				pfree(str);
+			} else if (conv[i].needs_typmod_conv) {
+				slot_values[dst] = FunctionCall3(&conv[i].typmod_finfo, copy_values[i], Int32GetDatum(conv[i].typmod),
+				                                 BoolGetDatum(false));
+				slot_isnull[dst] = false;
 			} else {
 				slot_values[dst] = copy_values[i];
 				slot_isnull[dst] = false;

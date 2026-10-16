@@ -25,6 +25,9 @@ PlannedStmt *TryCreateDirectInsertPlan(Query *parse, ParamListInfo bound_params)
 // Must be called on DuckDB recycle: table_id/schema_version may change.
 void ResetDirectInsertCaches();
 
+// Function enforcing typmod on values of typid, or InvalidOid if none applies.
+Oid TypmodCoercionFunc(Oid typid, int32_t typmod);
+
 // Outcome counters (pattern x reason); gated queries are filtered earlier and never counted.
 enum DirectInsertPattern {
 	DI_PAT_MATCHED_UNNEST = 0,
