@@ -1,4 +1,4 @@
-# S3-specific e2e tests: pg_ducklake writing table data to a MinIO bucket via
+# S3-specific e2e tests: pg_ducklake writing table data to a RustFS bucket via
 # ducklake.default_table_path plus a DuckDB S3 secret. Skips without S3 infra
 # (unless E2E_REQUIRE_S3=1); storage-agnostic behavior lives in test_crud.py.
 
@@ -350,7 +350,7 @@ async def test_local_and_s3_tables_in_one_catalog(s3conn, s3, tmp_path):
 
 
 async def test_two_buckets_one_secret(s3conn, s3, s3_second_bucket):
-    # A single endpoint secret covers every bucket on that MinIO; a per-table
+    # A single endpoint secret covers every bucket on that S3 server; a per-table
     # path can route to a different bucket than default_table_path.
     await s3conn.execute("CREATE TABLE raw (id int) USING ducklake")  # default bucket
     await s3conn.execute("INSERT INTO raw VALUES (1), (2)")

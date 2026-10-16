@@ -265,7 +265,7 @@ jobs:
             pg_ducklake/test/regression/log/
             pg_ducklake/test/isolation/output_iso/
 
-      # e2e (uv + pytest + asyncpg + dockerized MinIO) runs against the
+      # e2e (uv + pytest + asyncpg + dockerized RustFS) runs against the
       # just-installed extension, so it shares this job.
       - name: Install uv (pg_ducklake e2e suite)
         uses: astral-sh/setup-uv@v5
@@ -276,7 +276,7 @@ jobs:
         timeout-minutes: 20
         env:
           # CI runners have docker and network access, so the S3 tests must
-          # actually run -- fail instead of skipping when MinIO/httpfs are
+          # actually run -- fail instead of skipping when RustFS/httpfs are
           # unavailable.
           E2E_REQUIRE_S3: "1"
         run: make pg_ducklake/check-e2e

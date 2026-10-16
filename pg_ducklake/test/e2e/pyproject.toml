@@ -25,7 +25,7 @@ package = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# Generous: the first s3 test may pull the MinIO image and the first s3
+# Generous: the first s3 test may pull the RustFS image and the first s3
 # backend connection may download the httpfs duckdb extension.
 timeout = 300
 addopts = "-ra --tb=short"
