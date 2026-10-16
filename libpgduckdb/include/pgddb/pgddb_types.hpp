@@ -54,34 +54,28 @@ PostgresToDuckValueFn GetPostgresToDuckValueFn(Oid attr_type, duckdb::Vector &re
 
 // Type extension hooks. The kernel handles built-in PG types first, then tries each
 // registered hook in registration order until one returns true; consumers register via
-// the Register_* functions in _PG_init. Register_* are exported (extern "C", default
-// visibility) so a future shared libpgddb can collect hooks from independently-linked
-// extensions instead of each bundling its own copy.
+// the Register_* functions in _PG_init.
 
 // PG Oid -> DuckDB base (non-array) type. Fill out and return true if handled.
 typedef bool (*ConvertPostgresToBaseDuckColumnType_hook_t)(Oid pg_oid, duckdb::LogicalType &out);
-extern "C" __attribute__((visibility("default"))) void
-Register_ConvertPostgresToBaseDuckColumnType(ConvertPostgresToBaseDuckColumnType_hook_t fn);
+extern "C" void Register_ConvertPostgresToBaseDuckColumnType(ConvertPostgresToBaseDuckColumnType_hook_t fn);
 
 // DuckDB LogicalType -> PG Oid (scalar form). Fill out and return true if handled.
 typedef bool (*GetPostgresDuckDBType_hook_t)(const duckdb::LogicalType &type, Oid &out);
-extern "C" __attribute__((visibility("default"))) void Register_GetPostgresDuckDBType(GetPostgresDuckDBType_hook_t fn);
+extern "C" void Register_GetPostgresDuckDBType(GetPostgresDuckDBType_hook_t fn);
 
 // DuckDB element LogicalType -> PG array Oid. Fill out and return true if handled.
 typedef bool (*GetPostgresArrayDuckDBType_hook_t)(const duckdb::LogicalType &type, Oid &out);
-extern "C" __attribute__((visibility("default"))) void
-Register_GetPostgresArrayDuckDBType(GetPostgresArrayDuckDBType_hook_t fn);
+extern "C" void Register_GetPostgresArrayDuckDBType(GetPostgresArrayDuckDBType_hook_t fn);
 
 // DuckDB Value -> PG Datum stored into slot->tts_values[col]. Return true if handled.
 typedef bool (*ConvertDuckToPostgresValue_hook_t)(Oid pg_oid, duckdb::Value &value, TupleTableSlot *slot, uint64_t col);
-extern "C" __attribute__((visibility("default"))) void
-Register_ConvertDuckToPostgresValue(ConvertDuckToPostgresValue_hook_t fn);
+extern "C" void Register_ConvertDuckToPostgresValue(ConvertDuckToPostgresValue_hook_t fn);
 
 // PG attr Oid + result vector -> the per-column converter for that column. Set out and
 // return true if handled (the kernel calls out() for every row of the column).
 typedef bool (*GetPostgresToDuckValueFn_hook_t)(Oid attr_type, duckdb::Vector &result, PostgresToDuckValueFn &out);
-extern "C" __attribute__((visibility("default"))) void
-Register_GetPostgresToDuckValueFn(GetPostgresToDuckValueFn_hook_t fn);
+extern "C" void Register_GetPostgresToDuckValueFn(GetPostgresToDuckValueFn_hook_t fn);
 
 // When true, an unsupported-precision NUMERIC maps to DOUBLE instead of being
 // rejected as an UnsupportedPostgresType. Default false; per-consumer copy.

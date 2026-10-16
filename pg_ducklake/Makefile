@@ -59,6 +59,8 @@ endif
 PG_DUCKLAKE_LINK_FLAGS += -lroaring
 ifneq ($(shell uname -s),Darwin)
 	PG_DUCKLAKE_LINK_FLAGS += -Wl,--exclude-libs,ALL
+# Bind the bundled kernel to this .so, not a copy in another loaded extension.
+	PG_DUCKLAKE_LINK_FLAGS += -Wl,-Bsymbolic
 endif
 
 SHLIB_LINK += $(PG_DUCKLAKE_LINK_FLAGS)

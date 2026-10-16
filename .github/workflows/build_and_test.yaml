@@ -237,6 +237,10 @@ jobs:
         run: make pg_ducklake/all -j$(nproc)
       - name: Install pg_ducklake
         run: make pg_ducklake/install
+      # Kernel calls must not resolve through the PLT, where a kernel copy in
+      # another loaded extension could interpose.
+      - name: Check kernel symbols bind locally
+        run: "! readelf -rW pg_ducklake/pg_ducklake.so | grep -E 'JUMP_SLOT.*Register_'"
 
       - name: pg_ducklake installcheck
         id: pgducklake_installcheck

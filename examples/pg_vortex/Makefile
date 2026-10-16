@@ -19,6 +19,8 @@ OBJS += $(PGDDB_OBJS)
 PG_VORTEX_LINK_FLAGS = $(FULL_DUCKDB_LIB) -lcurl -lssl -lcrypto -lstdc++ -llz4
 ifeq ($(shell uname -s),Linux)
 	PG_VORTEX_LINK_FLAGS += -Wl,--exclude-libs,ALL
+# Bind the bundled kernel to this .so, not a copy in another loaded extension.
+	PG_VORTEX_LINK_FLAGS += -Wl,-Bsymbolic
 endif
 # duckdb-vortex's Rust deps need macOS Security/CoreFoundation; the
 # object-extraction bundle loses cmake's link metadata, so add them here.

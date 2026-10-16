@@ -49,23 +49,23 @@ static std::vector<GetPostgresToDuckValueFn_hook_t> g_pg_to_duck_value_fn_hooks;
 
 bool convert_unsupported_numeric_to_double = false; // see pgddb_types.hpp
 
-extern "C" __attribute__((visibility("default"))) void
+void
 Register_ConvertPostgresToBaseDuckColumnType(ConvertPostgresToBaseDuckColumnType_hook_t fn) {
 	g_pg_to_base_duck_hooks.push_back(fn);
 }
-extern "C" __attribute__((visibility("default"))) void
+void
 Register_GetPostgresDuckDBType(GetPostgresDuckDBType_hook_t fn) {
 	g_duck_to_pg_hooks.push_back(fn);
 }
-extern "C" __attribute__((visibility("default"))) void
+void
 Register_GetPostgresArrayDuckDBType(GetPostgresArrayDuckDBType_hook_t fn) {
 	g_duck_to_pg_array_hooks.push_back(fn);
 }
-extern "C" __attribute__((visibility("default"))) void
+void
 Register_ConvertDuckToPostgresValue(ConvertDuckToPostgresValue_hook_t fn) {
 	g_duck_value_to_pg_hooks.push_back(fn);
 }
-extern "C" __attribute__((visibility("default"))) void
+void
 Register_GetPostgresToDuckValueFn(GetPostgresToDuckValueFn_hook_t fn) {
 	g_pg_to_duck_value_fn_hooks.push_back(fn);
 }

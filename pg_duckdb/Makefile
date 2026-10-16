@@ -35,6 +35,8 @@ PG_DUCKDB_LINK_FLAGS = $(FULL_DUCKDB_LIB) -lcurl -lssl -lcrypto -lstdc++ -llz4
 # safety net there).
 ifeq ($(shell uname -s),Linux)
 	PG_DUCKDB_LINK_FLAGS += -Wl,--exclude-libs,ALL
+# Bind the bundled kernel to this .so, not a copy in another loaded extension.
+	PG_DUCKDB_LINK_FLAGS += -Wl,-Bsymbolic
 endif
 
 # Ensure -lstdc++fs is included for GCC 8 builds
