@@ -31,6 +31,7 @@ extern "C" {
 #include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_foreign_table.h"
+#include "catalog/pg_type.h"
 #include "catalog/pg_user_mapping.h"
 #include "commands/defrem.h"
 #include "executor/spi.h"
@@ -147,6 +148,46 @@ FindServerName(const char *server_prefix) {
 			return server_name;
 		}
 	}
+}
+
+/*
+ * Drop the helper-created servers (prefix or prefix_N) with the same type and
+ * scope, which DuckDB cannot tell apart from the new secret, and return the
+ * name to create it under. Must run inside SPI.
+ */
+std::string
+ReplaceServerName(const char *server_prefix, const std::string &type, const std::string &scope) {
+	Oid argtypes[3] = {TEXTOID, TEXTOID, TEXTOID};
+	Datum values[3] = {CStringGetTextDatum(server_prefix), CStringGetTextDatum(type.c_str()),
+	                   scope.empty() ? (Datum)0 : CStringGetTextDatum(scope.c_str())};
+	char nulls[3] = {' ', ' ', scope.empty() ? 'n' : ' '};
+	auto ret = SPI_execute_with_args(R"(
+SELECT s.srvname
+FROM pg_catalog.pg_foreign_server s
+JOIN pg_catalog.pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+WHERE w.fdwname = 'ducklake_secret'
+  AND lower(s.srvtype) = lower($2)
+  AND (s.srvname = $1 OR s.srvname ~ ('^' || $1 || '_[0-9]+$'))
+  AND (SELECT option_value FROM pg_catalog.pg_options_to_table(s.srvoptions)
+       WHERE option_name = 'scope') IS NOT DISTINCT FROM $3
+ORDER BY length(s.srvname), s.srvname)",
+	                                 3, argtypes, values, nulls, true, 0);
+	if (ret != SPI_OK_SELECT) {
+		elog(ERROR, "Could not look up existing '%s' secrets: %s", type.c_str(), SPI_result_code_string(ret));
+	}
+
+	std::vector<std::string> names;
+	for (uint64 i = 0; i < SPI_processed; i++) {
+		names.push_back(SPI_getvalue(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1));
+	}
+	for (const auto &name : names) {
+		auto query = std::string("DROP SERVER ") + quote_identifier(name.c_str()) + " CASCADE";
+		ret = SPI_exec(query.c_str(), 0);
+		if (ret != SPI_OK_UTILITY) {
+			elog(ERROR, "Could not drop '%s' SERVER: %s", name.c_str(), SPI_result_code_string(ret));
+		}
+	}
+	return names.empty() ? FindServerName(server_prefix) : names[0];
 }
 
 std::string
@@ -407,7 +448,8 @@ DECLARE_PG_FUNCTION(ducklake_create_s3_secret) {
 	auto secret_name = "simple_" + lc_type + "_secret";
 
 	SPI_connect();
-	auto server_name = pgducklake::FindServerName(secret_name.c_str());
+	auto scope = PG_NARGS() > 8 ? pgddb::pg::GetArgString(fcinfo, 8) : "";
+	auto server_name = pgducklake::ReplaceServerName(secret_name.c_str(), lc_type, scope);
 	{
 		std::ostringstream create_server_query;
 		create_server_query << "CREATE SERVER " << server_name << " TYPE '" << type
@@ -444,7 +486,8 @@ DECLARE_PG_FUNCTION(ducklake_create_s3_secret) {
 DECLARE_PG_FUNCTION(ducklake_create_azure_secret) {
 	auto connection_string = pgddb::pg::GetArgString(fcinfo, 0);
 	SPI_connect();
-	auto server_name = pgducklake::FindServerName("azure_secret");
+	auto scope = PG_NARGS() > 1 ? pgddb::pg::GetArgString(fcinfo, 1) : "";
+	auto server_name = pgducklake::ReplaceServerName("azure_secret", "azure", scope);
 	{
 		std::ostringstream create_server_query;
 		create_server_query << "CREATE SERVER " << server_name << " TYPE 'azure' FOREIGN DATA WRAPPER ducklake_secret";
