@@ -210,25 +210,43 @@ async def test_create_s3_secret_named_args(s3lake, s3):
         await conn.close()
 
 
-async def test_two_s3_secrets_get_unique_names(s3lake):
-    # FindServerName: two create_s3_secret calls of the same type yield distinct
-    # server names rather than colliding.
+async def test_create_s3_secret_replaces_same_scope(s3lake, s3):
+    # Re-running create_s3_secret with the same type and scope replaces the
+    # secret (a stale duplicate would shadow it); another scope gets its own.
     conn = await s3lake.connect(configure=False)
     try:
         await _load_httpfs(conn)
         srv = s3lake.s3.server
 
-        async def mk():
+        async def mk(key_id, scope=""):
             return await conn.fetchval(
                 "SELECT ducklake.create_s3_secret('s3', $1, $2, endpoint => $3, "
-                "url_style => 'path', use_ssl => 'false')",
-                srv.access_key,
+                "url_style => 'path', use_ssl => 'false', scope => $4)",
+                key_id,
                 srv.secret_key,
                 srv.endpoint,
+                scope,
             )
 
-        assert await mk() == "simple_s3_secret"
-        assert await mk() == "simple_s3_secret_1"
+        assert await mk("stale_key") == "simple_s3_secret"
+        assert await mk(srv.access_key) == "simple_s3_secret"
+        assert await mk("other_key", "s3://other-bucket") == "simple_s3_secret_1"
+        names = await conn.fetch(
+            "SELECT s.srvname FROM pg_foreign_server s "
+            "JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw "
+            "WHERE w.fdwname = 'ducklake_secret' ORDER BY 1"
+        )
+        assert [r[0] for r in names] == ["simple_s3_secret", "simple_s3_secret_1"]
+
+        # The replacement credentials are the ones used.
+        await conn.execute(
+            f"SET ducklake.default_table_path = '{s3lake.table_path}'"
+        )
+        await conn.execute("CALL ducklake.set_option('data_inlining_row_limit', 0)")
+        await conn.execute("CREATE TABLE t (id int) USING ducklake")
+        await conn.execute("INSERT INTO t VALUES (1)")
+        assert await conn.fetchval("SELECT count(*) FROM t") == 1
+        assert any(name.endswith(".parquet") for name in s3.object_names())
     finally:
         await conn.close()
 
