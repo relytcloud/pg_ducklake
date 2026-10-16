@@ -45,6 +45,24 @@ async def test_duckdb_reads_pg_writes(local_lake, pg):
         ddb.close()
 
 
+async def test_duckdb_filters_over_direct_insert_stats(local_lake, pg):
+    # Table-level min/max persisted after a direct (inlined) insert must cover
+    # its rows; duckdb trusts them to fold filters that look provably false.
+    await pg.execute("CALL ducklake.set_option('data_inlining_row_limit', 100)")
+    await pg.execute("CREATE TABLE t (id int) USING ducklake")
+    await pg.execute("INSERT INTO t VALUES (1), (2)")
+    await pg.execute("INSERT INTO t SELECT i FROM generate_series(1000, 1199) i")
+    await pg.execute("CALL ducklake.set_option('data_inlining_row_limit', 0)")
+
+    ddb = local_lake.duckdb(read_only=True)
+    try:
+        assert ddb.execute(
+            "SELECT count(*) FROM lake.public.t WHERE id < 500"
+        ).fetchone() == (2,)
+    finally:
+        ddb.close()
+
+
 async def test_duckdb_writes_pg_reads(local_lake, pg):
     if os.environ.get("E2E_PG_HOST"):
         pytest.skip(

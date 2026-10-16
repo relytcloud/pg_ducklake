@@ -59,10 +59,10 @@ SELECT * FROM dim_t ORDER BY id;
 -- 3. global column stats must not claim ranges that exclude
 --    fast-path rows
 -- ============================================================
--- The fast path cannot maintain min/max/contains_null, so it must degrade
--- them to NULL (= unknown). Stale claims are trusted by DuckLake readers of
--- this catalog (global stats feed DuckDB optimizer statistics, which fold
--- provably-false filters) and are perpetuated by later stats merges.
+-- The fast path widens min/max/contains_null with the rows it inlines.
+-- Stale claims are trusted by DuckLake readers of this catalog (global stats
+-- feed DuckDB optimizer statistics, which fold provably-false filters) and
+-- are perpetuated by later stats merges.
 
 CREATE TABLE stats_t (id int) USING ducklake;
 INSERT INTO stats_t SELECT i FROM generate_series(1, 200) i;  -- normal path, real stats
@@ -75,7 +75,7 @@ INSERT INTO stats_t VALUES (1000);  -- outside the recorded min/max
 INSERT INTO stats_t VALUES (NULL);  -- violates contains_null = false
 SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
 
--- stats must no longer claim [1,200] / no-nulls
+-- stats now cover [1,1000] and nulls
 SELECT s.min_value, s.max_value, s.contains_null
 FROM ducklake.ducklake_table_column_stats s
 JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
@@ -85,7 +85,21 @@ SELECT count(*) FROM stats_t WHERE id = 1000;
 SELECT count(*) FROM stats_t WHERE id IS NULL;
 SELECT count(*) FROM stats_t;
 
+-- A later normal-path write merges into the widened stats instead of
+-- replacing them, which unknown (NULL) stats would cause.
+CREATE TABLE stats_merge_t (id int, v text, f float8) USING ducklake;
+INSERT INTO stats_merge_t VALUES (5, 'm', 'NaN'), (1, NULL, 2.5);
+INSERT INTO stats_merge_t SELECT i, 'z', i FROM generate_series(1000, 1199) i;
+SELECT c.column_name, s.min_value, s.max_value, s.contains_null, s.contains_nan
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+JOIN ducklake.ducklake_column c ON c.table_id = s.table_id AND c.column_id = s.column_id AND c.end_snapshot IS NULL
+WHERE t.table_name = 'stats_merge_t'
+ORDER BY c.column_order;
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
+DROP TABLE stats_merge_t;
 CALL ducklake.set_option('data_inlining_row_limit', 0);

@@ -216,8 +216,14 @@ DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
 		return InvalidOid;
 	}
 
-	// VARCHAR and BLOB are stored as BYTEA
-	if (pg_strcasecmp(duckdb_type, "VARCHAR") == 0 || pg_strcasecmp(duckdb_type, "BLOB") == 0) {
+	// No safe min/max column stats can be kept for these; the DuckDB writer maintains them.
+	if (pg_strcasecmp(duckdb_type, "BLOB") == 0 || pg_strcasecmp(duckdb_type, "INTERVAL") == 0 ||
+	    pg_strcasecmp(duckdb_type, "TIMETZ") == 0) {
+		return InvalidOid;
+	}
+
+	// VARCHAR is stored as BYTEA
+	if (pg_strcasecmp(duckdb_type, "VARCHAR") == 0) {
 		return BYTEAOID;
 	}
 
