@@ -4,6 +4,7 @@ test: ddl_triggers
 test: basic
 test: virtual_columns
 test: dml_row_count
+test: auto_explain
 test: merge
 test: transaction
 test: non_ducklake_commit

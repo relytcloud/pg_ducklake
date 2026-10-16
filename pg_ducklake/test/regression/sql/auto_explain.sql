@@ -1,0 +1,28 @@
+-- auto_explain must not re-run DuckDB queries when it explains them at executor end.
+LOAD 'auto_explain';
+
+CREATE TABLE ae (a int, b text) USING ducklake;
+CALL ducklake.set_option('data_inlining_row_limit', 0, 'ae'::regclass);
+INSERT INTO ae VALUES (1, 'x');
+
+SET auto_explain.log_min_duration = 0;
+
+INSERT INTO ae VALUES (2, 'y');
+INSERT INTO ae SELECT i, 'z' FROM generate_series(3, 4) i;
+SELECT count(*) FROM ae;
+SELECT a, b FROM ae ORDER BY a;
+
+SET auto_explain.log_analyze = on;
+INSERT INTO ae VALUES (5, 'w');
+SELECT a, b FROM ae ORDER BY a;
+
+RESET auto_explain.log_analyze;
+RESET auto_explain.log_min_duration;
+
+-- Each INSERT ran once: no duplicated rows or extra data files.
+SELECT count(*) FROM ae;
+SELECT count(*) FROM ducklake.ducklake_data_file f
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'ae' AND t.end_snapshot IS NULL AND f.end_snapshot IS NULL;
+
+DROP TABLE ae;

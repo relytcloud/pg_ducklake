@@ -38,6 +38,7 @@ typedef struct DuckdbScanState {
 	ParamListInfo params;
 	duckdb::Connection *duckdb_connection;
 	duckdb::PreparedStatement *prepared_statement;
+	bool is_explain_query;
 	bool is_executed;
 	bool fetch_next;
 	duckdb::unique_ptr<duckdb::QueryResult> query_results;
@@ -145,6 +146,7 @@ Duckdb_BeginCustomScan_Cpp(CustomScanState *cscanstate, EState *estate, int /*ef
 	duckdb_scan_state->duckdb_connection = pgddb::GetConnection();
 	duckdb_scan_state->prepared_statement = prepared_query.release();
 	duckdb_scan_state->params = estate->es_param_list_info;
+	duckdb_scan_state->is_explain_query = is_explain_query;
 	duckdb_scan_state->is_executed = false;
 	duckdb_scan_state->fetch_next = true;
 	duckdb_scan_state->css.ss.ps.ps_ResultTupleDesc = duckdb_scan_state->css.ss.ss_ScanTupleSlot->tts_tupleDescriptor;
@@ -356,6 +358,10 @@ Duckdb_ExplainCustomScan_Cpp(CustomScanState *node, ExplainState *es) {
 	explain_format = pgddb::pg::DuckdbExplainFormat(es);
 
 	DuckdbScanState *duckdb_scan_state = (DuckdbScanState *)node;
+	// Outside EXPLAIN (e.g. auto_explain) the prepared query is the real one and already ran.
+	if (!duckdb_scan_state->is_explain_query) {
+		return;
+	}
 	ExecuteQuery(duckdb_scan_state);
 
 	auto chunk = duckdb_scan_state->query_results->Fetch();
