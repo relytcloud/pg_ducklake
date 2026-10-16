@@ -329,3 +329,16 @@ CREATE FUNCTION ducklake.reset_native_writer_stats()
     RETURNS void
     LANGUAGE C VOLATILE
     AS 'MODULE_PATHNAME', 'ducklake_reset_native_writer_stats';
+
+-- DDL creates inlined data tables in the ducklake schema as the calling role.
+DO $$
+DECLARE
+    superuser_role text := current_setting('ducklake.superuser_role');
+BEGIN
+    IF superuser_role != '' AND EXISTS (
+        SELECT FROM pg_catalog.pg_roles WHERE rolname = superuser_role
+    ) THEN
+        EXECUTE format('GRANT CREATE ON SCHEMA ducklake TO %I', superuser_role);
+    END IF;
+END
+$$;

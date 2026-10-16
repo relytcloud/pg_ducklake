@@ -148,9 +148,28 @@ SELECT count(*) FROM ducklake.time_travel('acl_test', :latest_snap);
 
 RESET ROLE;
 -- ============================================================
+-- 8. Superuser-role member can create tables with inlined data
+-- ============================================================
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+GRANT CREATE ON SCHEMA public TO test_lake_admin;
+SET ROLE test_lake_admin;
+CREATE TABLE acl_admin_owned (id int) USING ducklake;
+INSERT INTO acl_admin_owned VALUES (1);
+SELECT * FROM acl_admin_owned;
+ id 
+----
+  1
+(1 row)
+
+DROP TABLE acl_admin_owned;
+RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM test_lake_admin;
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+-- ============================================================
 -- Cleanup
 -- ============================================================
 DROP TABLE acl_test;
+REASSIGN OWNED BY test_lake_admin TO CURRENT_USER;
 REVOKE ALL ON ALL TABLES IN SCHEMA ducklake FROM test_no_access;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA ducklake FROM test_no_access;
 DROP USER test_lake_admin, test_lake_writer, test_lake_reader, test_no_access;

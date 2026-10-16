@@ -48,7 +48,8 @@ Role names are configurable via `postgresql.conf` GUCs (set before
 `CREATE EXTENSION`). Set a GUC to an empty string to skip creating that role.
 
 All three roles have full access to the `ducklake` metadata schema (required
-for DuckDB's SPI-based metadata manager).
+for DuckDB's SPI-based metadata manager). `ducklake_superuser` also has `CREATE`
+on that schema, because DDL creates the inlined data tables there.
 
 ### Usage
 
