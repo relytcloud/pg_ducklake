@@ -3,6 +3,7 @@ test: recycle_ddb
 test: ddl_triggers
 test: basic
 test: virtual_columns
+test: system_columns
 test: dml_row_count
 test: auto_explain
 test: merge

@@ -1,0 +1,72 @@
+-- System columns of DuckLake tables: plain SELECT outputs are computed in PG,
+-- other uses raise feature_not_supported.
+CREATE TABLE sc (id int, v text) USING ducklake;
+INSERT INTO sc VALUES (1, 'a'), (2, 'b');
+SELECT t.*, ctid FROM sc t ORDER BY id LIMIT 1001;
+ id | v | ctid 
+----+---+------
+  1 | a | 
+  2 | b | 
+(2 rows)
+
+SELECT id, xmin, xmax, cmin, cmax FROM sc ORDER BY id;
+ id | xmin | xmax | cmin | cmax 
+----+------+------+------+------
+  1 |      |      |      |     
+  2 |      |      |      |     
+(2 rows)
+
+SELECT tableoid AS sc_oid FROM sc LIMIT 1 \gset
+SELECT :sc_oid = 'sc'::regclass::oid AS tableoid_ok;
+ tableoid_ok 
+-------------
+ t
+(1 row)
+
+SELECT ctid, xmin, tableoid FROM sc \gdesc
+  Column  | Type 
+----------+------
+ ctid     | tid
+ xmin     | xid
+ tableoid | oid
+(3 rows)
+
+SELECT ctid FROM sc;
+ ctid 
+------
+ 
+ 
+(2 rows)
+
+-- Unsupported uses
+SELECT tableoid::regclass, id FROM sc ORDER BY id;
+ERROR:  system column "tableoid" is not supported in queries on DuckLake tables
+SELECT ctid, count(*) FROM sc GROUP BY ctid;
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+SELECT id FROM sc WHERE ctid = '(0,1)';
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+SELECT id FROM sc ORDER BY ctid;
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+SELECT ctid::text FROM sc;
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+SELECT count(ctid) FROM sc;
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+SELECT id FROM sc WHERE id IN (SELECT id FROM sc WHERE xmin IS NOT NULL);
+ERROR:  system column "xmin" is not supported in queries on DuckLake tables
+UPDATE sc SET v = 'c' WHERE ctid = '(0,1)';
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+DELETE FROM sc WHERE id = 1 RETURNING ctid;
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+-- Heap table system columns in a DuckDB-executed query
+CREATE TABLE sc_heap (id int);
+INSERT INTO sc_heap VALUES (1);
+SELECT h.ctid, s.id FROM sc s JOIN sc_heap h USING (id);
+ERROR:  system column "ctid" is not supported in queries on DuckLake tables
+SELECT * FROM sc ORDER BY id;
+ id | v 
+----+---
+  1 | a
+  2 | b
+(2 rows)
+
+DROP TABLE sc, sc_heap;
