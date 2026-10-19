@@ -117,10 +117,23 @@ JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS 
 WHERE t.table_name = 'stats_typmod_t';
 SELECT count(*) FROM stats_typmod_t WHERE n >= 1.235;
 
+-- Types without safe bounds: VALUES falls back to the DuckDB writer, while
+-- UNNEST($n), which has no fallback, still writes them.
+CREATE TABLE stats_unbounded_t (id int, b bytea, iv interval) USING ducklake;
+SELECT ducklake.reset_direct_insert_stats();
+PREPARE stats_unbounded_ins(int[], bytea[], interval[]) AS
+    INSERT INTO stats_unbounded_t SELECT unnest($1), unnest($2), unnest($3);
+EXECUTE stats_unbounded_ins(ARRAY[1, 2], ARRAY['\x01', '\x02']::bytea[], ARRAY['1 day', '2 days']::interval[]);
+DEALLOCATE stats_unbounded_ins;
+INSERT INTO stats_unbounded_t VALUES (3, '\x03', '3 days');
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+SELECT * FROM stats_unbounded_t ORDER BY id;
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
 DROP TABLE stats_merge_t;
 DROP TABLE stats_null_first_t;
 DROP TABLE stats_typmod_t;
+DROP TABLE stats_unbounded_t;
 CALL ducklake.set_option('data_inlining_row_limit', 0);
