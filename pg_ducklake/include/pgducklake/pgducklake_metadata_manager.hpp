@@ -80,4 +80,16 @@ TableInliningState GetTableInliningState(Oid table_oid, uint64_t *table_id_out, 
 
 bool GetTableInliningInfo(Oid table_oid, uint64_t *table_id_out, uint64_t *schema_version_out);
 
+/* lockmode is a PG LOCKMODE, spelled int because this header forward-declares
+ * PG types rather than including them. */
+Relation OpenInlinedDataTable(uint64_t table_id, uint64_t schema_version, int lockmode, bool missing_ok);
+
+/* table_multi_insert does not apply typmods, so a value stored without this
+ * keeps its own scale and reads back as a different number. */
+struct InlinedTypmodCoercion;
+
+/* NULL when the column needs no coercion. */
+InlinedTypmodCoercion *MakeInlinedTypmodCoercion(Oid inlined_type, int32_t inlined_typmod);
+Datum ApplyInlinedTypmodCoercion(const InlinedTypmodCoercion *coercion, Datum value);
+
 } // namespace pgducklake

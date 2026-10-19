@@ -1,0 +1,83 @@
+-- uint8 is the only allowlisted type whose source and destination differ:
+-- DuckLake exposes it to PostgreSQL as smallint while DuckDB inlines it as
+-- integer, so it is the one type that exercises the widening conversion rather
+-- than an identity or text store.  Before the allowlist that mismatch raised.
+--
+-- No PostgreSQL DDL can create the column, so the catalog rows are forged the
+-- way metadata_sync.sql forges its own and the snapshot trigger builds the PG
+-- side.
+--
+-- Keep this in a file of its own.  The same forge written into
+-- inlined_type_mapping fails there -- ensure_inlined_data_table raises "Table
+-- with name ... does not exist", the DROP fails behind it, and the stranded
+-- relation surfaces in unrelated IMPORT FOREIGN SCHEMA tests much later in the
+-- schedule -- while the identical call succeeds mid-file in copy_from.sql.
+-- What differs between those two is not understood, so do not fold this back
+-- into another file on the assumption that it will behave.
+
+CALL ducklake.set_option('data_inlining_row_limit', 1000);
+
+-- Establishes the ducklake schema and a snapshot to forge on top of.
+CREATE TABLE u8_seed (x int) USING ducklake;
+DROP TABLE u8_seed;
+
+SELECT snapshot_id AS u8_snap, next_catalog_id AS u8_cat, next_file_id AS u8_file,
+       schema_version AS u8_sv
+FROM ducklake.ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1 \gset
+SELECT schema_id AS u8_sid FROM ducklake.ducklake_schema
+WHERE schema_name = 'public' AND end_snapshot IS NULL \gset
+
+BEGIN;
+INSERT INTO ducklake.ducklake_table
+  (table_id, table_uuid, begin_snapshot, end_snapshot, schema_id,
+   table_name, path, path_is_relative)
+VALUES (:u8_cat, gen_random_uuid(), :u8_snap + 1, NULL,
+        :u8_sid, 'u8_ext', NULL, true);
+INSERT INTO ducklake.ducklake_column
+  (column_id, begin_snapshot, end_snapshot, table_id, column_order,
+   column_name, column_type, initial_default, default_value,
+   nulls_allowed, parent_column)
+VALUES
+  (:u8_cat + 1, :u8_snap + 1, NULL, :u8_cat, 1, 'id', 'int32',
+   NULL, NULL, true, NULL),
+  (:u8_cat + 2, :u8_snap + 1, NULL, :u8_cat, 2, 'u', 'uint8',
+   NULL, NULL, true, NULL);
+-- schema_version + 1, not the current one: a real client's CREATE TABLE bumps
+-- it, and DuckDB caches the whole loaded catalog under the version it was read
+-- at.  Reusing the current version hides the new table from any session that
+-- has already scanned a DuckLake table at that version.
+INSERT INTO ducklake.ducklake_snapshot
+  (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id)
+VALUES (:u8_snap + 1, now(), :u8_sv + 1, :u8_cat + 3, :u8_file);
+COMMIT;
+
+-- smallint on the facade, integer in the heap: the mismatch that used to raise.
+SELECT attname, format_type(atttypid, atttypmod) AS facade_type
+FROM pg_attribute WHERE attrelid = 'u8_ext'::regclass AND attnum > 0
+ORDER BY attnum;
+
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('u8_ext'::regclass);
+SELECT it.table_name AS u8_inl FROM ducklake.ducklake_inlined_data_tables it
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'u8_ext' AND t.end_snapshot IS NULL
+ORDER BY it.schema_version DESC LIMIT 1 \gset
+SELECT attname, format_type(atttypid, atttypmod) AS heap_type
+FROM pg_attribute WHERE attrelid = ('ducklake.' || :'u8_inl')::regclass
+  AND attnum > 0 ORDER BY attnum;
+
+SELECT ducklake.reset_direct_insert_stats();
+INSERT INTO u8_ext VALUES (1, 0), (2, 200), (3, 255);
+-- Guards against a silent decline to the fallback, which would store the same
+-- values and cover no widening.  It does not prove the widening ran: the
+-- pre-fix build reports ok here too, because the counter is bumped before the
+-- store raises.  The heap read below is what fails without the fix.
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+
+-- Read the raw heap rather than selecting from u8_ext: a reverse-synced table
+-- reads back zero rows through the facade, a sync defect unrelated to the
+-- widening, so the obvious spelling would pass while covering nothing.
+SELECT row_id, id, u, pg_typeof(u) AS stored_type
+FROM ducklake.:u8_inl ORDER BY row_id;
+
+DROP TABLE u8_ext;
+CALL ducklake.set_option('data_inlining_row_limit', 0);

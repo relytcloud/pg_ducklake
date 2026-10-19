@@ -115,8 +115,11 @@ CREATE TABLE copy_nested (id int, values int[]) USING ducklake;
 INSERT INTO copy_nested SELECT i, ARRAY[i, i + 1] FROM generate_series(1, 200) AS i;
 CALL ducklake.set_option('data_inlining_row_limit', 100);
 SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_nested'::regclass);
+-- Nested columns inline as VARCHAR in DuckDB's text format ([1, 2]); array_out
+-- writes {1,2}, which the reader cannot cast back.  COPY has no path to decline
+-- to, so it refuses.  Terminated with \. even though it fails: psql still enters
+-- COPY mode on some builds, and an unterminated block eats the rest of the file.
 COPY copy_nested FROM STDIN WITH (FORMAT csv);
-1000,"{1000,2000}"
 \.
 SELECT c.parent_column IS NOT NULL AS descendant,
        s.min_value IS NULL AND s.max_value IS NULL AND
@@ -133,8 +136,143 @@ FROM ducklake.ducklake_inlined_data_tables it
 JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'copy_nested' AND t.end_snapshot IS NULL
 ORDER BY it.schema_version DESC LIMIT 1 \gset
-SELECT id, values FROM ducklake.:nested_inl WHERE id = 1000;
+-- The refusal is total: no partial row reached the inlined heap.
+SELECT count(*) AS nested_rows_written FROM ducklake.:nested_inl WHERE id = 1000;
 DROP TABLE copy_nested;
+
+-- The refusal covers the columns COPY can put a value in, not every column of
+-- the table: an omitted, nullable, defaultless nested column can only ever be
+-- NULL, and nothing serializes a NULL.
+CREATE TABLE copy_partial_nested (id int, tags int[]) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_partial_nested'::regclass);
+COPY copy_partial_nested (id) FROM STDIN WITH (FORMAT csv);
+1
+2
+\.
+SELECT id, tags FROM copy_partial_nested ORDER BY id;
+-- Selecting it is still refused.  Terminated with \. for the same reason as above.
+COPY copy_partial_nested (id, tags) FROM STDIN WITH (FORMAT csv);
+\.
+SELECT count(*) AS rows_after_refusal FROM copy_partial_nested;
+DROP TABLE copy_partial_nested;
+
+-- bytea and uuid are identity conversions: the Datum is stored as it arrives,
+-- so a wrong entry stores bytes the reader misreads rather than failing.  Both
+-- are read back through the facade and out of the heap.  types.sql notes a
+-- read-back bug for BLOB columns; it does not reproduce on this path, so the
+-- values here are compared rather than only counted.
+CREATE TABLE copy_binary (id int, b bytea, u uuid) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_binary'::regclass);
+COPY copy_binary FROM STDIN;
+1	\\x00ff01	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+2	\\x	00000000-0000-0000-0000-000000000000
+3	\N	\N
+\.
+SELECT id, b, u FROM copy_binary ORDER BY id;
+SELECT it.table_name AS binary_inl
+FROM ducklake.ducklake_inlined_data_tables it
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'copy_binary' AND t.end_snapshot IS NULL
+ORDER BY it.schema_version DESC LIMIT 1 \gset
+SELECT id, b, u FROM ducklake.:binary_inl ORDER BY id;
+DROP TABLE copy_binary;
+
+-- time, timetz and interval are identity conversions too, and COPY has no
+-- fallback to decline to, so a mis-keyed entry is a hard failure here.
+-- DuckLake serializes interval as '%d months %d days %lld microseconds' and
+-- PG14's parser uses a 32-bit intermediate for the microsecond field, so the
+-- values below keep it under ~35 minutes -- see the note in types.sql.
+CREATE TABLE copy_time (id int, t time, ttz timetz, iv interval) USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_time'::regclass);
+COPY copy_time FROM STDIN;
+1	12:30:00	12:30:00+05:30	1 day 30 minutes
+2	00:00:00	00:00:00+00	-1 days
+3	23:59:59.999999	23:59:59.999999-08	1 year 2 mons 3 days
+\.
+SELECT id, t, ttz, iv FROM copy_time ORDER BY id;
+DROP TABLE copy_time;
+
+-- The other half of the omitted-column rule: a column COPY cannot store is
+-- refused once a default would put a value in it, even though the statement
+-- names no value for it.
+--
+-- A nested column cannot be the example.  DuckLake rejects a default on one
+-- outright, so no LIST column with a default can exist to be omitted:
+CREATE TABLE copy_default_nested (id int, tags int[] DEFAULT '{1,2}') USING ducklake;
+
+-- "char" stands in for it.  It reaches DuckLake's varchar by a route the
+-- allowlist does not describe -- the Datum is not a varlena -- so it is
+-- unsupported for the same reason, and it takes a default.  No data block
+-- follows, but the block is still terminated: psql enters COPY mode on some
+-- builds even when the statement fails.
+CREATE TABLE copy_default_unsupported (id int, c "char" DEFAULT 'x') USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_default_unsupported'::regclass);
+COPY copy_default_unsupported (id) FROM STDIN WITH (FORMAT csv);
+\.
+SELECT count(*) AS rows_after_refusal FROM copy_default_unsupported;
+-- The standard path stores the same default without complaint.
+INSERT INTO copy_default_unsupported (id) VALUES (1);
+SELECT id, c FROM copy_default_unsupported ORDER BY id;
+DROP TABLE copy_default_unsupported;
+
+-- Without the default the same column can only ever be NULL, so COPY runs.
+CREATE TABLE copy_nodefault_unsupported (id int, c "char") USING ducklake;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_nodefault_unsupported'::regclass);
+COPY copy_nodefault_unsupported (id) FROM STDIN WITH (FORMAT csv);
+1
+2
+\.
+SELECT id, c FROM copy_nodefault_unsupported ORDER BY id;
+DROP TABLE copy_nodefault_unsupported;
+
+-- The nested cases above declare the column as int[], so a shape test on the
+-- facade OID would refuse them too.  Only an externally synchronized LIST
+-- separates the two: DuckLakeTypeToPgType has no LIST branch, so it reaches
+-- PostgreSQL as text over a VARCHAR heap column, and the refusal below can come
+-- from nothing but the DuckLake type.  The catalog rows are forged the way
+-- metadata_sync.sql forges them -- no PostgreSQL DDL can create this shape.
+SELECT snapshot_id AS syn_snap, next_catalog_id AS syn_cat, next_file_id AS syn_file,
+       schema_version AS syn_sv
+FROM ducklake.ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1 \gset
+SELECT schema_id AS syn_sid FROM ducklake.ducklake_schema
+WHERE schema_name = 'public' AND end_snapshot IS NULL \gset
+BEGIN;
+INSERT INTO ducklake.ducklake_table
+  (table_id, table_uuid, begin_snapshot, end_snapshot, schema_id,
+   table_name, path, path_is_relative)
+VALUES (:syn_cat, gen_random_uuid(), :syn_snap + 1, NULL,
+        :syn_sid, 'copy_synced_nested', NULL, true);
+-- A LIST is two rows: the column, and the 'element' child that describes it.
+INSERT INTO ducklake.ducklake_column
+  (column_id, begin_snapshot, end_snapshot, table_id, column_order,
+   column_name, column_type, initial_default, default_value,
+   nulls_allowed, parent_column)
+VALUES
+  (:syn_cat + 1, :syn_snap + 1, NULL, :syn_cat, 1, 'id', 'int32',
+   NULL, NULL, true, NULL),
+  (:syn_cat + 2, :syn_snap + 1, NULL, :syn_cat, 2, 'tags', 'list',
+   NULL, NULL, true, NULL),
+  (:syn_cat + 3, :syn_snap + 1, NULL, :syn_cat, 3, 'element', 'int32',
+   NULL, NULL, true, :syn_cat + 2);
+-- schema_version + 1, not the current one: a real client's CREATE TABLE bumps
+-- it, and DuckDB caches the whole loaded catalog under the version it was read
+-- at.  Reusing the current version hides the new table from any session that
+-- has already scanned a DuckLake table at that version.
+INSERT INTO ducklake.ducklake_snapshot
+  (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id)
+VALUES (:syn_snap + 1, now(), :syn_sv + 1, :syn_cat + 4, :syn_file);
+COMMIT;
+-- text, not integer[]: this is what the old facade-OID guard saw and let past.
+SELECT attname, format_type(atttypid, atttypmod) AS facade_type
+FROM pg_attribute WHERE attrelid = 'copy_synced_nested'::regclass AND attnum > 0
+ORDER BY attnum;
+SELECT count(*) FROM ducklake.ensure_inlined_data_table('copy_synced_nested'::regclass);
+-- No data block follows, but the block is still terminated: psql enters COPY
+-- mode on some builds even when the statement fails.
+COPY copy_synced_nested FROM STDIN;
+\.
+SELECT count(*) AS synced_rows_after_refusal FROM copy_synced_nested;
+DROP TABLE copy_synced_nested;
 
 CALL ducklake.set_option('data_inlining_row_limit', 0);
 
