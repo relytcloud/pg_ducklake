@@ -163,8 +163,42 @@ SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 
  unmatched      | unsupported_insert_shape |     1
 (2 rows)
 
+-- Stats with a known contains_null but no bounds mean "no values yet":
+-- a column whose first insert is all NULL still gets bounds later.
+CREATE TABLE stats_null_first_t (id int) USING ducklake;
+INSERT INTO stats_null_first_t VALUES (NULL);
+INSERT INTO stats_null_first_t VALUES (1), (2);
+INSERT INTO stats_null_first_t SELECT i FROM generate_series(1000, 1199) i;
+SELECT count(*) FROM stats_null_first_t WHERE id < 500;
+ count 
+-------
+     2
+(1 row)
+
+-- Bounds cover the stored value: numeric is inlined as numeric(18,3).
+CREATE TABLE stats_typmod_t (n numeric) USING ducklake;
+PREPARE stats_typmod_ins(numeric[]) AS INSERT INTO stats_typmod_t SELECT unnest($1);
+EXECUTE stats_typmod_ins(ARRAY[1.23456, 0.5]::numeric[]);
+DEALLOCATE stats_typmod_ins;
+SELECT s.min_value, s.max_value
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+WHERE t.table_name = 'stats_typmod_t';
+ min_value | max_value 
+-----------+-----------
+ 0.500     | 1.235
+(1 row)
+
+SELECT count(*) FROM stats_typmod_t WHERE n >= 1.235;
+ count 
+-------
+     1
+(1 row)
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
 DROP TABLE stats_merge_t;
+DROP TABLE stats_null_first_t;
+DROP TABLE stats_typmod_t;
 CALL ducklake.set_option('data_inlining_row_limit', 0);

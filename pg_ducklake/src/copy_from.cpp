@@ -5,6 +5,7 @@
 #include "pgducklake/catalog_sync.hpp"
 #include "pgducklake/copy_from.hpp"
 #include "pgducklake/direct_insert.hpp"
+#include "pgducklake/inline_col_stats.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
 extern "C" {
@@ -132,6 +133,13 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 
 	ColumnConvInfo *conv = BuildColumnConvInfo(user_tupdesc, inlined_tupdesc);
 
+	Oid *src_types = (Oid *)palloc(sizeof(Oid) * natts);
+	for (int i = 0; i < natts; i++) {
+		src_types[i] = TupleDescAttr(user_tupdesc, i)->atttypid;
+	}
+	char *inlined_table_name = psprintf("ducklake.%s", RelationGetRelationName(inlined_rel));
+	InlineColStats *col_stats = BeginInlineColStats(table_id, inlined_table_name, natts, src_types);
+
 	uint64_t begin_snapshot = GetNextSnapshotId();
 	uint64_t next_row_id = GetNextRowIdForTable(table_id, schema_version);
 
@@ -173,6 +181,7 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 
 		for (int i = 0; i < natts; i++) {
 			int dst = i + INLINED_SYSTEM_COLS;
+			ObserveInlineColStats(col_stats, i, copy_values[i], copy_nulls[i]);
 			if (copy_nulls[i]) {
 				slot_values[dst] = (Datum)0;
 				slot_isnull[dst] = true;
@@ -251,7 +260,7 @@ DucklakeCopyFromStdin(CopyStmt *stmt, const char *query_string) {
 		MemoryContext old_ctx = CurrentMemoryContext;
 		PG_TRY();
 		{
-			CreateSnapshotForDirectInsert(begin_snapshot, table_id, rows_inserted);
+			CreateSnapshotForDirectInsert(begin_snapshot, table_id, rows_inserted, col_stats);
 		}
 		PG_CATCH();
 		{

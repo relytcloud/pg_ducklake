@@ -5,6 +5,7 @@
 #include "pgducklake/direct_insert.hpp"
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/guc.hpp"
+#include "pgducklake/inline_col_stats.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
 #include <cstring>
@@ -112,6 +113,7 @@ struct DirectInsertScanState {
 	uint64_t table_id;
 	uint64_t schema_version;
 	char *inlined_table_name;
+	pgducklake::InlineColStats *col_stats;
 	List *column_names; // List of String nodes
 	List *column_types; // List of Oid (inlined table types)
 
@@ -1225,7 +1227,8 @@ DirectInsert_ExecCustomScan(CustomScanState *node) {
 		}
 
 		pgducklake::SkipSnapshotSyncGuard sync_guard;
-		pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted);
+		pgducklake::CreateSnapshotForDirectInsert(state->begin_snapshot, state->table_id, state->rows_inserted,
+		                                          state->col_stats);
 	}
 	PG_CATCH();
 	{
@@ -1382,6 +1385,9 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
 		}
 	}
 
+	state->col_stats =
+	    pgducklake::BeginInlineColStats(state->table_id, state->inlined_table_name, num_params, element_types);
+
 	uint64_t current_row_id = state->next_row_id;
 
 	for (int row = 0; row < arr_length; row++) {
@@ -1389,6 +1395,7 @@ DirectInsertIntoInlinedTable(DirectInsertScanState *state) {
 		values[1] = Int64GetDatum(state->begin_snapshot);
 
 		for (int i = 0; i < num_params; i++) {
+			pgducklake::ObserveInlineColStats(state->col_stats, i, elem_values[i][row], elem_nulls[i][row]);
 			if (elem_nulls[i][row]) {
 				values[i + 2] = (Datum)0;
 				nulls[i + 2] = 'n';
@@ -1513,6 +1520,9 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
 		DateOrder = DATEORDER_YMD;
 	}
 
+	state->col_stats =
+	    pgducklake::BeginInlineColStats(state->table_id, state->inlined_table_name, num_cols, state->values_src_types);
+
 	int batch_size = (num_rows < MAX_BUFFERED_TUPLES) ? num_rows : MAX_BUFFERED_TUPLES;
 	TupleTableSlot **slots = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * batch_size);
 	for (int i = 0; i < batch_size; i++) {
@@ -1547,6 +1557,7 @@ DirectInsertValuesIntoInlinedTable(DirectInsertScanState *state) {
 
 			bool isnull;
 			Datum d = ExecEvalExprSwitchContext(state->values_estates[flat], econtext, &isnull);
+			pgducklake::ObserveInlineColStats(state->col_stats, col, d, isnull);
 
 			if (isnull) {
 				sv[dst] = (Datum)0;

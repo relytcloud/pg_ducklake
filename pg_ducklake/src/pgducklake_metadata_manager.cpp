@@ -4,17 +4,14 @@
 #include "pgducklake/constants.hpp"
 #include "pgducklake/duckdb_manager.hpp"
 #include "pgducklake/guc.hpp"
+#include "pgducklake/inline_col_stats.hpp"
 #include "pgducklake/pgducklake_metadata_manager.hpp"
 
-#include <cstdio>
 #include <cstring>
-#include <string>
-#include <vector>
 
 #include "pgddb/pgddb_types.hpp"
 #include "pgddb/pgddb_utils.hpp"
 
-#include <common/ducklake_types.hpp>
 #include <common/ducklake_util.hpp>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/statement_type.hpp>
@@ -26,8 +23,6 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
-#include <storage/ducklake_metadata_info.hpp>
-#include <storage/ducklake_stats.hpp>
 
 extern "C" {
 #include "postgres.h"
@@ -749,294 +744,9 @@ GetNextSnapshotId() {
 	return next_snapshot_id;
 }
 
-namespace {
-
-/* How the inlined column yields DuckLake min/max values. */
-enum class BoundsKind {
-	NONE,     // bounds not maintained
-	ORDERED,  // native PG ordering matches DuckDB's
-	STRING,   // bytea compared bytewise, as DuckDB compares strings
-	FLOATING, // NaN tracked as contains_nan, not as a bound
-	CAST,     // varchar holding DuckDB text, ordered via a PG cast
-};
-
-struct DirectInsertColumnStats {
-	uint64_t column_id;
-	std::string column_name;
-	std::string column_type;
-	BoundsKind kind;
-	const char *order_cast;
-
-	bool observed_null = false;
-	bool observed_nan = false;
-	bool has_value = false;
-	std::string min_value;
-	std::string max_value;
-
-	duckdb::DuckLakeGlobalColumnStatsInfo stats;
-};
-
 void
-SetBoundsKind(DirectInsertColumnStats &col) {
-	col.kind = BoundsKind::NONE;
-	col.order_cast = nullptr;
-	duckdb::LogicalType type;
-	try {
-		type = duckdb::DuckLakeTypes::FromString(col.column_type);
-	} catch (...) {
-		return;
-	}
-	switch (type.id()) {
-	case duckdb::LogicalTypeId::BOOLEAN:
-	case duckdb::LogicalTypeId::TINYINT:
-	case duckdb::LogicalTypeId::SMALLINT:
-	case duckdb::LogicalTypeId::INTEGER:
-	case duckdb::LogicalTypeId::BIGINT:
-	case duckdb::LogicalTypeId::UTINYINT:
-	case duckdb::LogicalTypeId::USMALLINT:
-	case duckdb::LogicalTypeId::UINTEGER:
-	case duckdb::LogicalTypeId::DECIMAL:
-	case duckdb::LogicalTypeId::TIME:
-	case duckdb::LogicalTypeId::UUID:
-		col.kind = BoundsKind::ORDERED;
-		break;
-	case duckdb::LogicalTypeId::VARCHAR:
-		col.kind = BoundsKind::STRING;
-		break;
-	case duckdb::LogicalTypeId::FLOAT:
-	case duckdb::LogicalTypeId::DOUBLE:
-		col.kind = BoundsKind::FLOATING;
-		break;
-	case duckdb::LogicalTypeId::UBIGINT:
-	case duckdb::LogicalTypeId::HUGEINT:
-	case duckdb::LogicalTypeId::UHUGEINT:
-		col.kind = BoundsKind::CAST;
-		col.order_cast = "numeric";
-		break;
-	case duckdb::LogicalTypeId::DATE:
-		col.kind = BoundsKind::CAST;
-		col.order_cast = "date";
-		break;
-	case duckdb::LogicalTypeId::TIMESTAMP:
-	case duckdb::LogicalTypeId::TIMESTAMP_SEC:
-	case duckdb::LogicalTypeId::TIMESTAMP_MS:
-	case duckdb::LogicalTypeId::TIMESTAMP_NS:
-		col.kind = BoundsKind::CAST;
-		col.order_cast = "timestamp";
-		break;
-	case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-		col.kind = BoundsKind::CAST;
-		col.order_cast = "timestamptz";
-		break;
-	default:
-		break;
-	}
-}
-
-/* Merge one column's contribution with DuckLake's own rules; makes no PG calls. */
-void
-MergeDirectInsertColumnStats(DirectInsertColumnStats &col, bool was_empty) {
-	auto &stats = col.stats;
-	bool seed_bounds = was_empty || stats.has_contains_null;
-	stats.has_contains_null = was_empty || stats.has_contains_null;
-	stats.contains_null = stats.contains_null || col.observed_null;
-	if (col.kind == BoundsKind::FLOATING) {
-		stats.has_contains_nan = was_empty || stats.has_contains_nan;
-		stats.contains_nan = stats.contains_nan || col.observed_nan;
-	}
-	if (col.kind == BoundsKind::NONE) {
-		/* No safe bounds for this type: mark everything unknown. */
-		stats.has_contains_null = stats.has_contains_nan = stats.has_min = stats.has_max = false;
-		return;
-	}
-	if (!col.has_value) {
-		return;
-	}
-
-	try {
-		auto type = duckdb::DuckLakeTypes::FromString(col.column_type);
-		auto current = duckdb::DuckLakeColumnStats::FromGlobalStats(type, stats);
-		duckdb::DuckLakeColumnStats contribution(type);
-		contribution.min = duckdb::Value(col.min_value).DefaultCastAs(type).ToString();
-		contribution.max = duckdb::Value(col.max_value).DefaultCastAs(type).ToString();
-		contribution.has_min = contribution.has_max = contribution.any_valid = true;
-		current.MergeStats(contribution);
-
-		/* Persisted NULL bounds with unknown contains_null are unknown, not "no values yet". */
-		stats.has_min = (seed_bounds || stats.has_min) && current.has_min;
-		stats.has_max = (seed_bounds || stats.has_max) && current.has_max;
-		stats.min_val = current.min;
-		stats.max_val = current.max;
-	} catch (...) {
-		stats.has_min = stats.has_max = false;
-	}
-}
-
-/* Fold the rows a direct insert just inlined into ducklake_table_column_stats. Runs inside SPI. */
-void
-UpdateColumnStatsForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted) {
-	StringInfoData query;
-	initStringInfo(&query);
-	appendStringInfo(&query, "SELECT record_count FROM ducklake.ducklake_table_stats WHERE table_id = %llu",
-	                 (unsigned long long)table_id);
-	if (SPI_execute(query.data, false, 1) != SPI_OK_SELECT || SPI_processed != 1) {
-		elog(ERROR, "CreateSnapshotForDirectInsert: failed to read table stats");
-	}
-	bool isnull;
-	/* All-NULL stats of an empty table mean "no values yet"; otherwise they mean unknown. */
-	bool was_empty =
-	    DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull)) == rows_inserted;
-
-	resetStringInfo(&query);
-	appendStringInfo(&query, R"(
-SELECT c.column_id, c.column_name, c.column_type,
-       s.contains_null, s.contains_nan, s.min_value, s.max_value
-FROM ducklake.ducklake_column c
-JOIN ducklake.ducklake_table_column_stats s ON s.table_id = c.table_id AND s.column_id = c.column_id
-WHERE c.table_id = %llu AND c.end_snapshot IS NULL AND c.parent_column IS NULL
-ORDER BY c.column_order)",
-	                 (unsigned long long)table_id);
-	if (SPI_execute(query.data, false, 0) != SPI_OK_SELECT) {
-		elog(ERROR, "CreateSnapshotForDirectInsert: failed to read column stats");
-	}
-
-	std::vector<DirectInsertColumnStats> cols(SPI_processed);
-	for (uint64 i = 0; i < SPI_processed; i++) {
-		HeapTuple tuple = SPI_tuptable->vals[i];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		auto &col = cols[i];
-		bool isnull;
-		col.column_id = DatumGetInt64(SPI_getbinval(tuple, tupdesc, 1, &isnull));
-		col.column_name = SPI_getvalue(tuple, tupdesc, 2);
-		col.column_type = SPI_getvalue(tuple, tupdesc, 3);
-		Datum d = SPI_getbinval(tuple, tupdesc, 4, &isnull);
-		col.stats.has_contains_null = !isnull;
-		col.stats.contains_null = !isnull && DatumGetBool(d);
-		d = SPI_getbinval(tuple, tupdesc, 5, &isnull);
-		col.stats.has_contains_nan = !isnull;
-		col.stats.contains_nan = !isnull && DatumGetBool(d);
-		char *min_value = SPI_getvalue(tuple, tupdesc, 6);
-		char *max_value = SPI_getvalue(tuple, tupdesc, 7);
-		col.stats.has_min = min_value != nullptr;
-		col.stats.min_val = min_value ? min_value : "";
-		col.stats.has_max = max_value != nullptr;
-		col.stats.max_val = max_value ? max_value : "";
-		SetBoundsKind(col);
-	}
-	if (cols.empty()) {
-		return;
-	}
-
-	resetStringInfo(&query);
-	appendStringInfo(&query, R"(
-SELECT table_name FROM ducklake.ducklake_inlined_data_tables
-WHERE table_id = %llu ORDER BY schema_version DESC LIMIT 1)",
-	                 (unsigned long long)table_id);
-	if (SPI_execute(query.data, false, 1) != SPI_OK_SELECT || SPI_processed != 1) {
-		elog(ERROR, "CreateSnapshotForDirectInsert: inlined data table not found for table %llu",
-		     (unsigned long long)table_id);
-	}
-	std::string inlined_table = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-
-	/* Per column: has NULL, min, max, has NaN. */
-	resetStringInfo(&query);
-	appendStringInfoString(&query, "SELECT ");
-	for (size_t i = 0; i < cols.size(); i++) {
-		auto &col = cols[i];
-		const char *c = quote_identifier(col.column_name.c_str());
-		std::string not_null = std::string(c) + " IS NOT NULL";
-		std::string key = c;
-		std::string value = c;
-		const char *out = "::text";
-		if (col.kind == BoundsKind::FLOATING) {
-			not_null += std::string(" AND ") + c + " <> 'NaN'";
-			out = "::float8";
-		} else if (col.kind == BoundsKind::CAST) {
-			key = std::string(c) + "::" + col.order_cast;
-		}
-		auto pick = [&](const char *dir) {
-			std::string v =
-			    "(array_agg(" + value + " ORDER BY " + key + " " + dir + ") FILTER (WHERE " + not_null + "))[1]";
-			return col.kind == BoundsKind::STRING ? "convert_from(" + v + ", 'UTF8')" : v + out;
-		};
-		appendStringInfo(&query, "%sbool_or(%s IS NULL), %s, %s, %s", i ? ", " : "", c,
-		                 col.kind == BoundsKind::NONE ? "NULL" : pick("ASC").c_str(),
-		                 col.kind == BoundsKind::NONE ? "NULL" : pick("DESC").c_str(),
-		                 col.kind == BoundsKind::FLOATING ? (std::string("bool_or(") + c + " = 'NaN')").c_str()
-		                                                  : "NULL");
-	}
-	appendStringInfo(&query, " FROM ducklake.%s WHERE begin_snapshot = %llu", quote_identifier(inlined_table.c_str()),
-	                 (unsigned long long)snapshot_id);
-	if (SPI_execute(query.data, false, 1) != SPI_OK_SELECT || SPI_processed != 1) {
-		elog(ERROR, "CreateSnapshotForDirectInsert: failed to compute column stats");
-	}
-
-	HeapTuple tuple = SPI_tuptable->vals[0];
-	TupleDesc tupdesc = SPI_tuptable->tupdesc;
-	for (size_t i = 0; i < cols.size(); i++) {
-		auto &col = cols[i];
-		int base = (int)i * 4;
-		bool isnull;
-		Datum d = SPI_getbinval(tuple, tupdesc, base + 1, &isnull);
-		col.observed_null = !isnull && DatumGetBool(d);
-		d = SPI_getbinval(tuple, tupdesc, base + 4, &isnull);
-		col.observed_nan = !isnull && DatumGetBool(d);
-		if (col.kind == BoundsKind::FLOATING) {
-			Datum min_d = SPI_getbinval(tuple, tupdesc, base + 2, &isnull);
-			if (!isnull) {
-				Datum max_d = SPI_getbinval(tuple, tupdesc, base + 3, &isnull);
-				char buf[64];
-				snprintf(buf, sizeof(buf), "%.17g", DatumGetFloat8(min_d));
-				col.min_value = buf;
-				snprintf(buf, sizeof(buf), "%.17g", DatumGetFloat8(max_d));
-				col.max_value = buf;
-				col.has_value = true;
-			}
-		} else {
-			char *min_value = SPI_getvalue(tuple, tupdesc, base + 2);
-			char *max_value = SPI_getvalue(tuple, tupdesc, base + 3);
-			if (min_value && max_value) {
-				col.min_value = min_value;
-				col.max_value = max_value;
-				col.has_value = true;
-			}
-		}
-	}
-
-	for (auto &col : cols) {
-		MergeDirectInsertColumnStats(col, was_empty);
-	}
-
-	for (auto &col : cols) {
-		auto &stats = col.stats;
-		Oid argtypes[6] = {INT8OID, INT8OID, BOOLOID, BOOLOID, TEXTOID, TEXTOID};
-		Datum values[6] = {Int64GetDatum((int64)table_id),
-		                   Int64GetDatum((int64)col.column_id),
-		                   BoolGetDatum(stats.contains_null),
-		                   BoolGetDatum(stats.contains_nan),
-		                   stats.has_min ? CStringGetTextDatum(stats.min_val.c_str()) : (Datum)0,
-		                   stats.has_max ? CStringGetTextDatum(stats.max_val.c_str()) : (Datum)0};
-		char nulls[6] = {' ',
-		                 ' ',
-		                 stats.has_contains_null ? ' ' : 'n',
-		                 stats.has_contains_nan ? ' ' : 'n',
-		                 stats.has_min ? ' ' : 'n',
-		                 stats.has_max ? ' ' : 'n'};
-		int ret = SPI_execute_with_args(R"(
-UPDATE ducklake.ducklake_table_column_stats
-SET contains_null = $3, contains_nan = $4, min_value = $5, max_value = $6
-WHERE table_id = $1 AND column_id = $2)",
-		                                6, argtypes, values, nulls, false, 0);
-		if (ret != SPI_OK_UPDATE) {
-			elog(ERROR, "CreateSnapshotForDirectInsert: failed to update column stats: %d", ret);
-		}
-	}
-}
-
-} // namespace
-
-void
-CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted) {
+CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t rows_inserted,
+                              InlineColStats *col_stats) {
 	int ret;
 
 	elog(DEBUG1, "CreateSnapshotForDirectInsert: creating snapshot %llu", (unsigned long long)snapshot_id);
@@ -1131,7 +841,8 @@ CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t r
 		elog(ERROR, "CreateSnapshotForDirectInsert: failed to update table stats: %d", ret);
 	}
 
-	if (SPI_processed == 0) {
+	bool initializing = SPI_processed == 0;
+	if (initializing) {
 		StringInfoData stats_insert;
 		initStringInfo(&stats_insert);
 		appendStringInfo(&stats_insert,
@@ -1164,7 +875,7 @@ CreateSnapshotForDirectInsert(uint64_t snapshot_id, uint64_t table_id, int64_t r
 		elog(DEBUG1, "CreateSnapshotForDirectInsert: created new stats row for table %llu",
 		     (unsigned long long)table_id);
 	}
-	UpdateColumnStatsForDirectInsert(snapshot_id, table_id, rows_inserted);
+	MergeInlineColStats(col_stats, table_id, initializing);
 
 	SPI_finish();
 	elog(DEBUG1, "CreateSnapshotForDirectInsert: successfully created snapshot %llu", (unsigned long long)snapshot_id);
