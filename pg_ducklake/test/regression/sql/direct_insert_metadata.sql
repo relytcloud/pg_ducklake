@@ -94,16 +94,13 @@ SELECT count(*) FROM stats_t;
 -- Seeded from parquet so contains_null starts known-false. An inline-only
 -- table would leave it unknown instead, which section 6 covers.
 CALL ducklake.set_option('data_inlining_row_limit', 0);
-CREATE TABLE nullstats (id int, v int, f double precision, w int, bs bytea) USING ducklake;
-INSERT INTO nullstats SELECT i, i, i::float8, i, '\x01'::bytea FROM generate_series(1, 200) i;
+CREATE TABLE nullstats (id int, v int, f double precision, w int) USING ducklake;
+INSERT INTO nullstats SELECT i, i, i::float8, i FROM generate_series(1, 200) i;
 CALL ducklake.set_option('data_inlining_row_limit', 100);
-INSERT INTO nullstats VALUES (901, 7, 1.5, 7, '\x02');  -- normal path: creates the inlined data table
+INSERT INTO nullstats VALUES (901, 7, 1.5, 7);  -- normal path: creates the inlined data table
 
--- f (DOUBLE) and bs (BLOB) are excluded from min/max by StatsEligible, so they
--- pin that null-ness is not gated by that exclusion. BLOB additionally is the
--- only fast-path-reachable type whose persisted row can carry extra_stats.
 SELECT ducklake.reset_direct_insert_stats();
-INSERT INTO nullstats VALUES (902, NULL, NULL, 8, NULL), (903, NULL, NULL, 9, NULL);
+INSERT INTO nullstats VALUES (902, NULL, NULL, 8), (903, NULL, NULL, 9);
 SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
 
 -- v's bounds must stay at [1,200]: an all-NULL batch moves no bound.
@@ -116,32 +113,17 @@ SELECT count(*) FROM nullstats WHERE v IS NULL;
 SELECT count(*) FROM nullstats WHERE f IS NULL;
 
 -- A batch with no NULLs must not reset it: the flip is one-way.
-INSERT INTO nullstats VALUES (904, 8, 2.5, 10, '\x03');
+INSERT INTO nullstats VALUES (904, 8, 2.5, 10);
 SELECT s.column_id, s.contains_null
 FROM ducklake.ducklake_table_column_stats s
 JOIN ducklake.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
 WHERE t.table_name = 'nullstats' ORDER BY s.column_id;
 SELECT count(*) FROM nullstats WHERE v IS NULL;
 
--- Seed extra_stats so the COPY assertion proves invalidation rather than only
--- observing the default NULL.
-UPDATE ducklake.ducklake_table_column_stats s SET extra_stats = 'seeded'
-FROM ducklake.ducklake_table t, ducklake.ducklake_column c
-WHERE t.table_id = s.table_id AND c.table_id = s.table_id
-  AND c.column_id = s.column_id AND t.table_name = 'nullstats'
-  AND t.end_snapshot IS NULL AND c.end_snapshot IS NULL
-  AND c.column_name = 'bs';
-SELECT s.extra_stats = 'seeded' AS extra_stats_seeded
-FROM ducklake.ducklake_table_column_stats s
-JOIN ducklake.ducklake_table t USING (table_id)
-JOIN ducklake.ducklake_column c USING (table_id, column_id)
-WHERE t.table_name = 'nullstats' AND t.end_snapshot IS NULL
-  AND c.column_name = 'bs' AND c.end_snapshot IS NULL;
-
 -- w's first NULL, so column 4 must flip here and nowhere earlier -- otherwise
 -- this asserts nothing about the COPY writer.
-COPY nullstats (id, v, f, w, bs) FROM STDIN WITH (FORMAT csv, NULL '');
-905,,3.5,,\x04
+COPY nullstats (id, v, f, w) FROM STDIN WITH (FORMAT csv, NULL '');
+905,,3.5,
 \.
 SELECT s.column_id, s.contains_null
 FROM ducklake.ducklake_table_column_stats s
@@ -150,12 +132,6 @@ WHERE t.table_name = 'nullstats' ORDER BY s.column_id;
 SELECT count(*) FROM nullstats WHERE v IS NULL;
 SELECT count(*) FROM nullstats WHERE w IS NULL;
 SELECT count(*) FROM nullstats;
-SELECT s.extra_stats IS NULL AS extra_stats_invalidated
-FROM ducklake.ducklake_table_column_stats s
-JOIN ducklake.ducklake_table t USING (table_id)
-JOIN ducklake.ducklake_column c USING (table_id, column_id)
-WHERE t.table_name = 'nullstats' AND t.end_snapshot IS NULL
-  AND c.column_name = 'bs' AND c.end_snapshot IS NULL;
 
 -- ============================================================
 -- 5. the UNNEST writer maintains it too
@@ -385,6 +361,54 @@ JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'seed_bounds' AND t.end_snapshot IS NULL;
 SELECT count(*) FROM seed_bounds WHERE id < 500;
 
+-- 11. VALUES into a table with a type without safe bounds takes the regular
+-- writer, which keeps stats.
+CREATE TABLE unsafe_bounds (id int, b bytea, i interval) USING ducklake;
+INSERT INTO unsafe_bounds VALUES (0, NULL, NULL);
+SELECT ducklake.reset_direct_insert_stats();
+INSERT INTO unsafe_bounds VALUES (1, '\x01', '1 day'), (2, '\x02', '2 days');
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+INSERT INTO unsafe_bounds
+SELECT i, '\xff'::bytea, (i - 1000) * INTERVAL '1 hour' FROM generate_series(1000, 1199) i;
+SELECT s.contains_null, s.min_value, s.max_value
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'unsafe_bounds' AND t.end_snapshot IS NULL
+  AND c.column_name = 'i' AND c.end_snapshot IS NULL;
+SELECT count(*) FROM unsafe_bounds WHERE b < '\x10';
+SELECT count(*) FROM unsafe_bounds WHERE i < INTERVAL '3 days';
+
+-- Parameterized UNNEST has no DuckDB fallback and still writes natively.
+PREPARE unsafe_bounds_ins (int[], bytea[], interval[]) AS
+  INSERT INTO unsafe_bounds SELECT UNNEST($1), UNNEST($2), UNNEST($3);
+SELECT ducklake.reset_direct_insert_stats();
+EXECUTE unsafe_bounds_ins(ARRAY[4, 5], ARRAY['\x04', '\x05']::bytea[], ARRAY['4 days', '5 days']::interval[]);
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+DEALLOCATE unsafe_bounds_ins;
+SELECT count(*) FROM unsafe_bounds WHERE i >= INTERVAL '4 days';
+
+-- COPY still writes them natively, invalidating what it cannot maintain.
+-- Seed extra_stats so the assertion proves invalidation rather than only
+-- observing the default NULL.
+UPDATE ducklake.ducklake_table_column_stats s SET extra_stats = 'seeded'
+FROM ducklake.ducklake_table t, ducklake.ducklake_column c
+WHERE t.table_id = s.table_id AND c.table_id = s.table_id
+  AND c.column_id = s.column_id AND t.table_name = 'unsafe_bounds'
+  AND t.end_snapshot IS NULL AND c.end_snapshot IS NULL
+  AND c.column_name = 'b';
+COPY unsafe_bounds FROM STDIN WITH (FORMAT csv, NULL '');
+3,\x03,3 days
+\.
+SELECT s.extra_stats IS NULL AS extra_stats_invalidated
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+JOIN ducklake.ducklake_column c USING (table_id, column_id)
+WHERE t.table_name = 'unsafe_bounds' AND t.end_snapshot IS NULL
+  AND c.column_name = 'b' AND c.end_snapshot IS NULL;
+SELECT count(*) FROM unsafe_bounds WHERE b < '\x10';
+SELECT count(*) FROM unsafe_bounds;
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
@@ -398,4 +422,5 @@ DROP TABLE one_sided_stats;
 DROP TABLE type_change_stats;
 DROP TABLE unchanged_stats;
 DROP TABLE seed_bounds;
+DROP TABLE unsafe_bounds;
 CALL ducklake.set_option('data_inlining_row_limit', 0);

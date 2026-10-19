@@ -132,6 +132,11 @@ struct InlineColStats {
 	InlineColStatsEntry *entries;
 };
 
+bool
+InlineColStatsBoundsSafe(const char *column_type) {
+	return GetTypeProperties(column_type).bounds_safe;
+}
+
 InlineColStats *
 CreateInlineColStats(uint64_t table_id, int num_cols) {
 	MemoryContext context = AllocSetContextCreate(CurTransactionContext, "InlineColStats", ALLOCSET_SMALL_SIZES);

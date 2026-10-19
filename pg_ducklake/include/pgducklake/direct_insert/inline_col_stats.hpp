@@ -13,6 +13,9 @@ struct InlineColStats;
  * top-level source columns. SPI must already be connected. */
 InlineColStats *CreateInlineColStats(uint64_t table_id, int num_cols);
 
+/* Whether the native writers can maintain min/max for a scalar DuckLake type. */
+bool InlineColStatsBoundsSafe(const char *column_type);
+
 /* Bind a source PostgreSQL type, then fold the batch's source Datums. */
 void SetupInlineColStatsColumn(InlineColStats *stats, int column, Oid source_type);
 void ObserveInlineColStatsDatum(InlineColStats *stats, int column, Datum value);

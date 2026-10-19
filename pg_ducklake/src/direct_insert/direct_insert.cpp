@@ -70,6 +70,7 @@ struct InliningInfoCache {
 
 struct InlinedColumnTypesCache {
 	List *col_types; // List of Oid, palloc'd in TopMemoryContext
+	bool has_unbounded_column;
 };
 
 static std::unordered_map<Oid, InliningInfoCache> inlining_info_cache;
@@ -269,13 +270,20 @@ DuckDBTypeToInlinedOid(const char *duckdb_type, Oid element_type) {
 	return element_type;
 }
 
+/* No safe min/max for this column; a later DuckDB write would narrow unset bounds.
+ * LIST bounds live on its child columns. */
+static bool
+HasUnboundedStats(const char *duckdb_type) {
+	return pg_strcasecmp(duckdb_type, "LIST") != 0 && !InlineColStatsBoundsSafe(duckdb_type);
+}
+
 /*
  * Determine the inlined-table PG type for each user column from
  * ducklake_column metadata.  element_types is the user-facing PG type per
  * column (List of Oid).  Returns false on bail-out.
  */
 static bool
-GetInlinedColumnTypes(uint64_t table_id, List *element_types, List **inlined_col_types_out) {
+GetInlinedColumnTypes(uint64_t table_id, List *element_types, List **inlined_col_types_out, bool *has_unbounded_out) {
 	int ret;
 	int num_cols = list_length(element_types);
 
@@ -322,6 +330,7 @@ ORDER BY column_order)",
 
 		Oid element_type = lfirst_oid(lc);
 		Oid inlined_oid = DuckDBTypeToInlinedOid(duckdb_type, element_type);
+		*has_unbounded_out = *has_unbounded_out || HasUnboundedStats(duckdb_type);
 		pfree(duckdb_type);
 
 		if (!OidIsValid(inlined_oid)) {
@@ -597,16 +606,18 @@ CheckInsertPreconditions(Query *parse, InsertPreconditionResult *result_out, Dir
  */
 static bool
 GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, List *element_types,
-                            List **inlined_col_types_out) {
+                            List **inlined_col_types_out, bool *has_unbounded_out) {
 	TableSchemaKey col_key = {table_id, schema_version};
 	auto col_cache_it = inlined_col_types_cache.find(col_key);
 	if (col_cache_it != inlined_col_types_cache.end()) {
 		*inlined_col_types_out = col_cache_it->second.col_types;
+		*has_unbounded_out = col_cache_it->second.has_unbounded_column;
 		return true;
 	}
 
 	List *inlined_col_types = NIL;
-	if (!GetInlinedColumnTypes(table_id, element_types, &inlined_col_types)) {
+	bool has_unbounded = false;
+	if (!GetInlinedColumnTypes(table_id, element_types, &inlined_col_types, &has_unbounded)) {
 		return false;
 	}
 
@@ -617,8 +628,9 @@ GetCachedInlinedColumnTypes(uint64_t table_id, uint64_t schema_version, List *el
 		persistent = lappend_oid(persistent, lfirst_oid(lc_oid));
 	}
 	MemoryContextSwitchTo(old_ctx);
-	inlined_col_types_cache[col_key] = {persistent};
+	inlined_col_types_cache[col_key] = {persistent, has_unbounded};
 	*inlined_col_types_out = persistent;
+	*has_unbounded_out = has_unbounded;
 	return true;
 }
 
@@ -819,7 +831,9 @@ TryMatchUnnest(Query *parse, const InsertPreconditionResult *precond, DirectInse
 	}
 
 	List *inlined_col_types = NIL;
-	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, element_types, &inlined_col_types)) {
+	bool has_unbounded;
+	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, element_types, &inlined_col_types,
+	                                 &has_unbounded)) {
 		*reason_out = DI_R_COL_TYPES_UNSUPPORTED;
 		return false;
 	}
@@ -1184,8 +1198,12 @@ TryMatchValues(Query *parse, const InsertPreconditionResult *precond, ValuesInse
 		target_col_names = lappend(target_col_names, pstrdup(NameStr(attr->attname)));
 	}
 
+	/* Unbounded columns go to the DuckDB writer, which maintains their stats. */
 	List *inlined_col_types = NIL;
-	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, src_col_types, &inlined_col_types)) {
+	bool has_unbounded;
+	if (!GetCachedInlinedColumnTypes(precond->table_id, precond->schema_version, src_col_types, &inlined_col_types,
+	                                 &has_unbounded) ||
+	    has_unbounded) {
 		pfree(exprs);
 		*reason_out = DI_R_COL_TYPES_UNSUPPORTED;
 		return false;
