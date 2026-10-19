@@ -371,6 +371,20 @@ FROM ducklake.ducklake_table_column_stats s
 JOIN ducklake.ducklake_table t USING (table_id)
 WHERE t.table_name = 'unchanged_stats' AND t.end_snapshot IS NULL;
 
+-- 10. Unset bounds with a known contains_null mean "no values yet": a direct
+-- insert must seed them, or the next regular write narrows them to its range.
+CREATE TABLE seed_bounds (id int) USING ducklake;
+INSERT INTO seed_bounds VALUES (NULL);
+SELECT ducklake.reset_direct_insert_stats();
+INSERT INTO seed_bounds VALUES (1), (2);
+SELECT pattern, reason, count FROM ducklake.direct_insert_stats() WHERE count > 0;
+INSERT INTO seed_bounds SELECT i FROM generate_series(1000, 1199) i;
+SELECT s.contains_null, s.min_value, s.max_value
+FROM ducklake.ducklake_table_column_stats s
+JOIN ducklake.ducklake_table t USING (table_id)
+WHERE t.table_name = 'seed_bounds' AND t.end_snapshot IS NULL;
+SELECT count(*) FROM seed_bounds WHERE id < 500;
+
 -- Cleanup
 DROP TABLE dim_t;
 DROP TABLE stats_t;
@@ -383,4 +397,5 @@ DROP TABLE floatstats_mixed;
 DROP TABLE one_sided_stats;
 DROP TABLE type_change_stats;
 DROP TABLE unchanged_stats;
+DROP TABLE seed_bounds;
 CALL ducklake.set_option('data_inlining_row_limit', 0);

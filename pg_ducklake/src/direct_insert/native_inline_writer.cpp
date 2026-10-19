@@ -375,6 +375,8 @@ MergeColumnStat(const NativeInlineColumnStat &incoming, const char *min_value, c
 		return ColumnStatMergeResult::OK;
 	}
 
+	/* Unset bounds with a known contains_null mean "no values yet"; otherwise unknown. */
+	bool seed_bounds = initializing || has_contains_null;
 	result->has_contains_null = initializing || has_contains_null;
 	result->contains_null = contains_null || incoming.observed_null;
 	result->has_contains_nan = has_contains_nan;
@@ -423,10 +425,8 @@ MergeColumnStat(const NativeInlineColumnStat &incoming, const char *min_value, c
 		}
 		current.MergeStats(contribution);
 
-		/* Missing persisted sides are unknown over a pre-existing table. Only
-		 * the first write can seed them from this batch alone. */
-		result->has_min = (initializing || persisted.has_min) && current.has_min;
-		result->has_max = (initializing || persisted.has_max) && current.has_max;
+		result->has_min = (seed_bounds || persisted.has_min) && current.has_min;
+		result->has_max = (seed_bounds || persisted.has_max) && current.has_max;
 		if (result->has_min && !CopyToMalloc(current.min, &result->min_value, &result->min_value_size)) {
 			return ColumnStatMergeResult::OUT_OF_MEMORY;
 		}
