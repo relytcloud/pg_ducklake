@@ -914,6 +914,9 @@ AdmitSessions() {
 			continue;
 		}
 		g_sessions.push_back(std::move(session));
+		// The backend queued its first frame before this worker was attached as the
+		// receiver, so nothing will wake us for it: pump the new session on the next pass.
+		SetLatch(MyLatch);
 	}
 }
 
