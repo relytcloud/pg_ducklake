@@ -73,7 +73,9 @@ namespace pgducklake {
 void SetAllowSubtransaction(bool allow);
 
 /* Pin this process's DuckDB instance to one thread, ignoring ducklake.threads.
- * Called by the maintenance worker; must run before the instance initializes. */
+ * Called by the maintenance worker; must run before the instance initializes.
+ * Client backends are single-threaded by default through ducklake.threads = 1
+ * (see its description in guc.cpp for why). */
 void ForceSingleThreadedDuckDB();
 
 /* Set per-statement in the planner hook: force a DuckDB transaction for queries
