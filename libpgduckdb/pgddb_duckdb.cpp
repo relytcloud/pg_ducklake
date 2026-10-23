@@ -120,12 +120,12 @@ DuckDBManager::Initialize() {
 	// read PG heap relations. The name is DuckDB-internal (never user-visible),
 	// so fixed here; the deparser's db_and_schema fallback (pgddb_ruleutils.cpp)
 	// routes every unclaimed relation to this catalog.
-	{
+	if (attach_postgres_catalog) {
 		auto &dbconfig = duckdb::DBConfig::GetConfig(*database->instance);
 		duckdb::StorageExtension::Register(dbconfig, "pgduckdb", duckdb::make_shared_ptr<PostgresStorageExtension>());
 		duckdb::OptimizerExtension::Register(dbconfig, PostgresOrderPushdownOptimizer());
+		QueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 	}
-	QueryOrThrow(context, "ATTACH DATABASE 'pgduckdb' (TYPE pgduckdb)");
 
 	/*
 	 * Force lazy SecretManager init while LocalFileSystem is still permitted.

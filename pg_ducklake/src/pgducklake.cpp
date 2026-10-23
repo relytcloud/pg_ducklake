@@ -25,6 +25,7 @@ namespace pgducklake {
 // Bootstrap entry points wired up by _PG_init; declared here since it is their only caller.
 void InitGUCs();
 void InitMaintenanceWorker();
+void InitDuckdbWorker();
 void InitDirectInsertStatsShmem();
 void InitDuckDBManager();
 void RegisterDirectInsertNode();
@@ -56,6 +57,7 @@ _PG_init(void) {
 	duckdb::DuckLakeMetadataManager::Register(PGDUCKLAKE_DUCKDB_CATALOG, pgducklake::PgDuckLakeMetadataManager::Create);
 	pgducklake::InitGUCs();
 	pgducklake::InitMaintenanceWorker();
+	pgducklake::InitDuckdbWorker();
 	pgducklake::InitDirectInsertStatsShmem();
 	pgducklake::InitNativeWriterStatsShmem();
 	pgducklake::InitNativeWriterQueueShmem();

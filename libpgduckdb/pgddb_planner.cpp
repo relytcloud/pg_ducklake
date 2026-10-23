@@ -188,8 +188,8 @@ IsAllowedPostgresInsert(Query *query, bool throw_error) {
 	return true;
 }
 
-duckdb::unique_ptr<duckdb::PreparedStatement>
-Prepare(const Query *query, const char *explain_prefix) {
+std::string
+DeparseQuery(const Query *query) {
 	Query *copied_query = (Query *)copyObjectImpl(query);
 	if (IsPostgresInsert(copied_query)) {
 		int select_rti = FindInsertSelectRTI(copied_query);
@@ -208,13 +208,18 @@ Prepare(const Query *query, const char *explain_prefix) {
 		}
 		copied_query = select_query;
 	}
-	const char *query_string = pgddb_get_querydef(copied_query);
+	return pgddb_get_querydef(copied_query);
+}
+
+duckdb::unique_ptr<duckdb::PreparedStatement>
+Prepare(const Query *query, const char *explain_prefix) {
+	std::string query_string = DeparseQuery(query);
 
 	if (explain_prefix) {
-		query_string = psprintf("%s %s", explain_prefix, query_string);
+		query_string = std::string(explain_prefix) + " " + query_string;
 	}
 
-	elog(DEBUG2, "(PGDuckDB/DuckdbPrepare) Preparing: %s", query_string);
+	elog(DEBUG2, "(PGDuckDB/DuckdbPrepare) Preparing: %s", query_string.c_str());
 
 	auto con = pgddb::GetConnection();
 	return con->context->Prepare(query_string);

@@ -5,6 +5,7 @@
 #include <common/ducklake_encryption.hpp>
 #include <common/ducklake_options.hpp>
 #include <common/ducklake_snapshot.hpp>
+#include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <metadata_manager/postgres_metadata_manager.hpp>
 #include <storage/ducklake_metadata_info.hpp>
@@ -12,6 +13,17 @@
 #include <storage/ducklake_transaction.hpp>
 
 namespace pgducklake {
+
+/* Worker RPC request: one kind byte followed by the placeholder-substituted SQL. */
+constexpr char WORKER_REQUEST_QUERY = 'Q';  // Query()/Execute(): materialized or error result
+constexpr char WORKER_REQUEST_COMMIT = 'C'; // ExecuteCommit(): empty or error result
+
+/* In-process SPI primitives behind Query()/Execute() and ExecuteCommit(); the
+ * duckdb worker's RPC service runs them on the dispatching backend. The SQL
+ * must be fully placeholder-substituted. */
+duckdb::unique_ptr<duckdb::QueryResult> ExecuteMetadataQueryLocally(const duckdb::string &sql);
+/* Throws duckdb::TransactionException on failure, like ExecuteCommit(). */
+duckdb::unique_ptr<duckdb::QueryResult> ExecuteMetadataCommitLocally(const duckdb::string &sql);
 
 class PgDuckLakeMetadataManager : public duckdb::PostgresMetadataManager {
 public:
@@ -52,6 +64,9 @@ public:
 
 private:
 	static void EnsureSnapshotTrigger();
+	// Worker session thread: the dispatched connection whose backend answers
+	// metadata RPCs; null in-process and on the worker main thread.
+	duckdb::shared_ptr<duckdb::ClientContext> WorkerSessionContext();
 
 protected:
 	duckdb::string GetInlinedTableQueries(duckdb::DuckLakeSnapshot commit_snapshot,

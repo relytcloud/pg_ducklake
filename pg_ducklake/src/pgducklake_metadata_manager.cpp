@@ -10,6 +10,8 @@
 
 #include "pgddb/pgddb_types.hpp"
 #include "pgddb/pgddb_utils.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
+#include "pgddb/worker/worker_protocol.hpp"
 
 #include <common/ducklake_util.hpp>
 #include <duckdb/common/allocator.hpp>
@@ -320,8 +322,48 @@ CreateSPIExecuteInSubtransaction(const duckdb::string &query) {
 	return PostgresFunctionGuard(CreateSPIExecuteInSubtransactionBody, &query);
 }
 
+duckdb::unique_ptr<duckdb::QueryResult>
+ExecuteMetadataQueryLocally(const duckdb::string &sql) {
+	return CreateSPIResult(sql);
+}
+
+duckdb::unique_ptr<duckdb::QueryResult>
+ExecuteMetadataCommitLocally(const duckdb::string &sql) {
+	/* Skip the snapshot sync trigger: nothing to reverse-sync, and it crashes on a DuckDB worker thread
+	 * (PG's InterruptHoldoffCount is not thread-safe). */
+	SkipSnapshotSyncGuard sync_guard;
+	return CreateSPIExecuteInSubtransaction(sql);
+}
+
+/* Worker: SPI is reachable only from the main thread while it primes the engine or refreshes secrets. */
+static void
+RequireWorkerSpiAccess() {
+	if (pgddb::InDuckdbWorker() && !(pgddb::OnWorkerMainThread() && IsTransactionState())) {
+		throw duckdb::IOException("DuckLake metadata query issued outside a worker session");
+	}
+}
+
+static std::string
+WorkerRequest(char kind, const duckdb::string &sql) {
+	std::string request(1, kind);
+	request += sql;
+	return request;
+}
+
 PgDuckLakeMetadataManager::PgDuckLakeMetadataManager(duckdb::DuckLakeTransaction &transaction_)
     : duckdb::PostgresMetadataManager(transaction_) {
+}
+
+duckdb::shared_ptr<duckdb::ClientContext>
+PgDuckLakeMetadataManager::WorkerSessionContext() {
+	if (!pgddb::InDuckdbWorker()) {
+		return nullptr;
+	}
+	auto context = transaction.context.lock();
+	if (context && pgddb::HasWorkerSession(*context)) {
+		return context;
+	}
+	return nullptr;
 }
 
 PgDuckLakeMetadataManager::~PgDuckLakeMetadataManager() {
@@ -344,6 +386,11 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Query(duckdb::string query) {
 	SubstitutePathPlaceholders(query, transaction);
 	SubstitutePgCatalogPlaceholders(query);
+	if (auto context = WorkerSessionContext()) {
+		return pgddb::DecodeQueryResult(
+		    pgddb::WorkerSessionRequest(*context, WorkerRequest(WORKER_REQUEST_QUERY, query)));
+	}
+	RequireWorkerSpiAccess();
 	return CreateSPIResult(query);
 }
 
@@ -361,10 +408,14 @@ BuildProjection(const duckdb::vector<duckdb::string> &columns_to_read) {
 	return result;
 }
 
-/* Route through DuckDB, not SPI: PostgresTableReader holds GlobalProcessLock per 32-tuple batch, not whole op. */
+/* Route through DuckDB, not SPI: PostgresTableReader holds GlobalProcessLock per 32-tuple batch, not whole op.
+ * A worker session has no "pgduckdb" catalog; the base SQL reaches the heap table over the backend's SPI. */
 duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ReadInlinedData(duckdb::DuckLakeSnapshot snapshot, const duckdb::string &inlined_table_name,
                                            const duckdb::vector<duckdb::string> &columns_to_read) {
+	if (WorkerSessionContext()) {
+		return DuckLakeMetadataManager::ReadInlinedData(snapshot, inlined_table_name, columns_to_read);
+	}
 	auto projection = BuildProjection(columns_to_read);
 	auto query =
 	    duckdb::StringUtil::Format(R"(
@@ -374,7 +425,9 @@ WHERE %llu >= begin_snapshot AND (%llu < end_snapshot OR end_snapshot IS NULL)
 ORDER BY row_id;)",
 	                               projection, PGDUCKLAKE_PG_SCHEMA, duckdb::SQLIdentifier(inlined_table_name),
 	                               (unsigned long long)snapshot.snapshot_id, (unsigned long long)snapshot.snapshot_id);
-	elog(DEBUG1, "ReadInlinedData via DuckDB: %s", query.c_str());
+	if (!pgddb::InDuckdbWorker()) {
+		elog(DEBUG1, "ReadInlinedData via DuckDB: %s", query.c_str());
+	}
 	return transaction.ExecuteRaw(query);
 }
 
@@ -389,6 +442,9 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ReadAllInlinedDataForFlush(duckdb::DuckLakeSnapshot snapshot,
                                                       const duckdb::string &inlined_table_name,
                                                       const duckdb::vector<duckdb::string> &columns_to_read) {
+	if (WorkerSessionContext()) {
+		return DuckLakeMetadataManager::ReadAllInlinedDataForFlush(snapshot, inlined_table_name, columns_to_read);
+	}
 	auto projection = BuildProjection(columns_to_read);
 	auto query = duckdb::StringUtil::Format(R"(
 SELECT %s
@@ -397,7 +453,9 @@ WHERE %llu >= begin_snapshot
 ORDER BY row_id, begin_snapshot;)",
 	                                        projection, PGDUCKLAKE_PG_SCHEMA, duckdb::SQLIdentifier(inlined_table_name),
 	                                        (unsigned long long)snapshot.snapshot_id);
-	elog(DEBUG1, "ReadAllInlinedDataForFlush via DuckDB: %s", query.c_str());
+	if (!pgddb::InDuckdbWorker()) {
+		elog(DEBUG1, "ReadAllInlinedDataForFlush via DuckDB: %s", query.c_str());
+	}
 	return transaction.ExecuteRaw(query);
 }
 
@@ -458,6 +516,11 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::Execute(duckdb::string query) {
 	SubstitutePathPlaceholders(query, transaction);
 	SubstitutePgCatalogPlaceholders(query);
+	if (auto context = WorkerSessionContext()) {
+		return pgddb::DecodeQueryResult(
+		    pgddb::WorkerSessionRequest(*context, WorkerRequest(WORKER_REQUEST_QUERY, query)));
+	}
+	RequireWorkerSpiAccess();
 	return CreateSPIResult(query);
 }
 
@@ -471,10 +534,17 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgDuckLakeMetadataManager::ExecuteCommit(duckdb::DuckLakeSnapshot snapshot, duckdb::string query) {
 	DuckLakeMetadataManager::FillSnapshotArgs(query, snapshot);
 	SubstitutePgCatalogPlaceholders(query);
-	/* Skip the snapshot sync trigger: nothing to reverse-sync, and it crashes on a DuckDB worker thread
-	 * (PG's InterruptHoldoffCount is not thread-safe). */
-	SkipSnapshotSyncGuard sync_guard;
-	return CreateSPIExecuteInSubtransaction(query);
+	if (auto context = WorkerSessionContext()) {
+		auto result = pgddb::DecodeQueryResult(
+		    pgddb::WorkerSessionRequest(*context, WorkerRequest(WORKER_REQUEST_COMMIT, query)));
+		// Same type as the in-process failure so DuckLake's commit retry loop keeps working.
+		if (result->HasError()) {
+			throw duckdb::TransactionException("%s", result->GetError().c_str());
+		}
+		return result;
+	}
+	RequireWorkerSpiAccess();
+	return ExecuteMetadataCommitLocally(query);
 }
 
 bool

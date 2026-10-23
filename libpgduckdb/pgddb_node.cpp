@@ -4,6 +4,7 @@
 
 #include "pgddb/pgddb_planner.hpp"
 #include "pgddb/pgddb_types.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
 #include "pgddb/vendor/pg_explain.hpp"
 #include "pgddb/pg/explain.hpp"
 
@@ -42,6 +43,8 @@ typedef struct DuckdbScanState {
 	bool is_executed;
 	bool fetch_next;
 	duckdb::unique_ptr<duckdb::QueryResult> query_results;
+	// Set when the query runs in the shared duckdb worker instead of in-process.
+	duckdb::unique_ptr<RemoteResult> remote_result;
 	duckdb::idx_t column_count;
 	duckdb::unique_ptr<duckdb::DataChunk> current_data_chunk;
 	duckdb::idx_t current_row;
@@ -53,7 +56,8 @@ CleanupDuckdbScanState(DuckdbScanState *state) {
 	ExecClearTuple(state->css.ss.ss_ScanTupleSlot);
 
 	state->query_results.reset();
-	state->current_data_chunk.reset();
+	state->current_data_chunk.reset(); // may reference the remote result's memory
+	state->remote_result.reset();
 
 	if (state->prepared_statement) {
 		delete state->prepared_statement;
@@ -78,6 +82,30 @@ Duckdb_CreateCustomScanState(CustomScan *cscan) {
 	duckdb_scan_state->query = (const Query *)linitial(cscan->custom_private);
 	custom_scan_state->methods = &scan_exec_methods;
 	return (Node *)custom_scan_state;
+}
+
+// The plan was built from a plan-time prepare; the executed query must agree.
+static void
+CheckResultTypes(DuckdbScanState *state, const duckdb::vector<duckdb::LogicalType> &result_types) {
+	size_t target_list_length = static_cast<size_t>(list_length(state->custom_scan->custom_scan_tlist));
+
+	if (result_types.size() != target_list_length) {
+		elog(ERROR,
+		     "(PGDuckDB/CreatePlan) Number of columns returned by DuckDB query changed between planning and "
+		     "execution, expected %zu got %zu",
+		     target_list_length, result_types.size());
+	}
+
+	for (size_t i = 0; i < result_types.size(); i++) {
+		Oid postgres_column_oid = pgddb::GetPostgresDuckDBType(result_types[i], true);
+
+		TargetEntry *target_entry = list_nth_node(TargetEntry, state->custom_scan->custom_scan_tlist, i);
+		Var *var = castNode(Var, target_entry->expr);
+		if (var->vartype != postgres_column_oid) {
+			elog(ERROR, "Types returned by duckdb query changed between planning and execution, expected %d got %d",
+			     var->vartype, postgres_column_oid);
+		}
+	}
 }
 
 static void
@@ -110,6 +138,23 @@ Duckdb_BeginCustomScan_Cpp(CustomScanState *cscanstate, EState *estate, int /*ef
 		}
 	}
 
+	duckdb_scan_state->params = estate->es_param_list_info;
+	duckdb_scan_state->is_explain_query = is_explain_query;
+	duckdb_scan_state->is_executed = false;
+	duckdb_scan_state->fetch_next = true;
+	duckdb_scan_state->css.ss.ps.ps_ResultTupleDesc = duckdb_scan_state->css.ss.ss_ScanTupleSlot->tts_tupleDescriptor;
+
+	// Shared duckdb worker: the query is prepared and run there; no local
+	// prepared statement, and cancel interrupts stay enabled for the wait loop.
+	// The result schema is checked on the first Exec, where the worker's
+	// errors surface like in-process ones.
+	if (!is_explain_query && pgddb_dispatch_hook) {
+		duckdb_scan_state->remote_result = pgddb_dispatch_hook(duckdb_scan_state->query, estate->es_param_list_info);
+		if (duckdb_scan_state->remote_result) {
+			return;
+		}
+	}
+
 	duckdb::unique_ptr<duckdb::PreparedStatement> prepared_query =
 	    Prepare(duckdb_scan_state->query, explain_prefix->data);
 
@@ -119,37 +164,11 @@ Duckdb_BeginCustomScan_Cpp(CustomScanState *cscanstate, EState *estate, int /*ef
 	}
 
 	if (!is_explain_query) {
-		auto &prepared_result_types = prepared_query->GetTypes();
-
-		size_t target_list_length = static_cast<size_t>(list_length(duckdb_scan_state->custom_scan->custom_scan_tlist));
-
-		if (prepared_result_types.size() != target_list_length) {
-			elog(ERROR,
-			     "(PGDuckDB/CreatePlan) Number of columns returned by DuckDB query changed between planning and "
-			     "execution, expected %zu got %zu",
-			     target_list_length, prepared_result_types.size());
-		}
-
-		for (size_t i = 0; i < prepared_result_types.size(); i++) {
-			Oid postgres_column_oid = pgddb::GetPostgresDuckDBType(prepared_result_types[i], true);
-
-			TargetEntry *target_entry =
-			    list_nth_node(TargetEntry, duckdb_scan_state->custom_scan->custom_scan_tlist, i);
-			Var *var = castNode(Var, target_entry->expr);
-			if (var->vartype != postgres_column_oid) {
-				elog(ERROR, "Types returned by duckdb query changed between planning and execution, expected %d got %d",
-				     var->vartype, postgres_column_oid);
-			}
-		}
+		CheckResultTypes(duckdb_scan_state, prepared_query->GetTypes());
 	}
 
 	duckdb_scan_state->duckdb_connection = pgddb::GetConnection();
 	duckdb_scan_state->prepared_statement = prepared_query.release();
-	duckdb_scan_state->params = estate->es_param_list_info;
-	duckdb_scan_state->is_explain_query = is_explain_query;
-	duckdb_scan_state->is_executed = false;
-	duckdb_scan_state->fetch_next = true;
-	duckdb_scan_state->css.ss.ps.ps_ResultTupleDesc = duckdb_scan_state->css.ss.ss_ScanTupleSlot->tts_tupleDescriptor;
 	HOLD_CANCEL_INTERRUPTS();
 }
 
@@ -255,7 +274,12 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 		}
 
 		bool already_executed = duckdb_scan_state->is_executed;
-		if (!already_executed) {
+		if (!already_executed && duckdb_scan_state->remote_result) {
+			auto &types = duckdb_scan_state->remote_result->Types();
+			CheckResultTypes(duckdb_scan_state, types);
+			duckdb_scan_state->column_count = types.size();
+			duckdb_scan_state->is_executed = true;
+		} else if (!already_executed) {
 			ExecuteQuery(duckdb_scan_state);
 
 			// PG only sets es_processed via ModifyTable, which our CustomScan replaced.
@@ -279,7 +303,9 @@ Duckdb_ExecCustomScan_Cpp(CustomScanState *node) {
 		}
 
 		if (duckdb_scan_state->fetch_next) {
-			duckdb_scan_state->current_data_chunk = duckdb_scan_state->query_results->Fetch();
+			duckdb_scan_state->current_data_chunk = duckdb_scan_state->remote_result
+			                                            ? duckdb_scan_state->remote_result->Fetch()
+			                                            : duckdb_scan_state->query_results->Fetch();
 			duckdb_scan_state->current_row = 0;
 			duckdb_scan_state->fetch_next = false;
 			if (!duckdb_scan_state->current_data_chunk || duckdb_scan_state->current_data_chunk->size() == 0) {

@@ -85,6 +85,9 @@ protected:
 	// (e.g. PostgresTableReader scans) are not thread-safe off it. -1 leaves
 	// DuckDB's default (all cores).
 	int duckdb_threads;
+	// Register and ATTACH the "pgduckdb" heap catalog. The duckdb worker turns
+	// this off: its DuckDB threads must never reach a PostgreSQL heap scan.
+	bool attach_postgres_catalog = true;
 
 public:
 	static duckdb::unique_ptr<duckdb::QueryResult> QueryOrThrow(duckdb::ClientContext &context,

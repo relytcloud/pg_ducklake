@@ -10,6 +10,8 @@
 #include "pgddb/catalog/pgddb_storage.hpp"
 #include "pgddb/pg/transactions.hpp"
 #include "pgddb/scan/postgres_table_reader.hpp"
+#include "pgddb/utility/signal_guard.hpp"
+#include "pgddb/worker/duckdb_worker.hpp"
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
@@ -211,14 +213,43 @@ DuckDBManager::IsInitialized() {
 	return instance_ != nullptr && instance_->database != nullptr;
 }
 
+/* DuckDB hands even a lone task to a scheduler thread, so the priming ATTACH
+ * (whose DuckLake metadata SQL must stay on the worker main thread) runs with
+ * one thread and ducklake.worker_threads is applied afterwards. */
+static void
+SetWorkerThreads(duckdb::ClientContext &context) {
+	// New scheduler threads inherit this thread's signal mask.
+	pgddb::ThreadSignalBlockGuard guard;
+	if (worker_threads > 0) {
+		DuckDBQueryOrThrow(context, "SET threads = " + std::to_string(worker_threads));
+	} else {
+		DuckDBQueryOrThrow(context, "RESET threads");
+	}
+}
+
 DuckDBManager &
 DuckDBManager::Get() {
 	if (!instance_) {
 		instance_ = duckdb::make_uniq<DuckDBManager>();
 	}
 	if (!instance_->database) {
-		instance_->duckdb_threads = g_force_single_thread ? 1 : threads;
+		bool in_worker = pgddb::InDuckdbWorker();
+		if (in_worker) {
+			// The shared worker's engine: worker_* GUCs and no "pgduckdb" catalog,
+			// since its DuckDB threads must never reach a PostgreSQL heap scan.
+			instance_->duckdb_threads = 1;
+			instance_->duckdb_maximum_memory = worker_memory_limit;
+			if (worker_temp_directory[0] != '\0') {
+				instance_->duckdb_temp_directory = strdup(worker_temp_directory);
+			}
+			instance_->attach_postgres_catalog = false;
+		} else {
+			instance_->duckdb_threads = g_force_single_thread ? 1 : threads;
+		}
 		instance_->Initialize();
+		if (in_worker && !g_force_single_thread) {
+			SetWorkerThreads(*instance_->connection->context);
+		}
 	}
 	return *instance_;
 }

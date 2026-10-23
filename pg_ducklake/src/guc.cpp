@@ -1,6 +1,8 @@
 #include "pgducklake/guc.hpp"
 #include "pgducklake/maintenance_worker.hpp"
 
+#include <climits>
+
 extern "C" {
 #include "postgres.h"
 
@@ -49,6 +51,15 @@ int maintenance_max_workers = 3;
 bool maintenance_flush_inlined_data = true;
 bool maintenance_expire_snapshots = true;
 bool maintenance_cleanup_old_files = false;
+
+bool use_shared_worker = false;
+int max_worker_sessions = 8;
+int worker_threads = -1;
+int worker_memory_limit = 0;
+char *worker_temp_directory = strdup("");
+int worker_page_size = 1024;
+int worker_arena_pages = 64;
+int worker_reserved_pages = 1;
 
 void
 InitGUCs() {
@@ -168,6 +179,46 @@ InitGUCs() {
 	DefineCustomBoolVariable("ducklake.maintenance_cleanup_old_files",
 	                         "Clean up unreferenced data files during maintenance.", NULL,
 	                         &maintenance_cleanup_old_files, false, PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("ducklake.use_shared_worker",
+	                         "Run eligible read-only queries in the shared per-database DuckDB worker instead of "
+	                         "this backend's own DuckDB instance.",
+	                         NULL, &use_shared_worker, false, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.max_worker_sessions",
+	                        "Maximum number of dispatched queries the shared DuckDB worker runs concurrently.",
+	                        "Further dispatches wait for a free session.", &max_worker_sessions, 8, 1, 1024, PGC_SIGHUP,
+	                        0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+	    "ducklake.worker_threads", "Number of DuckDB threads of the shared worker's engine (-1 = all cores).",
+	    "Applied when the worker starts.", &worker_threads, -1, -1, 1024, PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.worker_memory_limit",
+	                        "Memory limit of the shared worker's DuckDB engine (0 = DuckDB default, 80% of RAM).",
+	                        "Applied when the worker starts.", &worker_memory_limit, 0, 0, INT_MAX, PGC_SIGHUP,
+	                        GUC_UNIT_MB, NULL, NULL, NULL);
+
+	DefineCustomStringVariable("ducklake.worker_temp_directory",
+	                           "DuckDB temp directory of the shared worker's engine, so it can spill under its "
+	                           "memory limit (empty = no spilling).",
+	                           "Applied when the worker starts.", &worker_temp_directory, "", PGC_SIGHUP, 0, NULL, NULL,
+	                           NULL);
+
+	DefineCustomIntVariable("ducklake.worker_page_size", "Size of one result page of the shared worker's arena.",
+	                        "Result chunks are written into arena pages and read in place by the dispatching "
+	                        "backend. Applied when the worker starts.",
+	                        &worker_page_size, 1024, 64, 1024 * 1024, PGC_SIGHUP, GUC_UNIT_KB, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.worker_arena_pages", "Number of result pages in the shared worker's arena.",
+	                        "Bounds the memory results in flight can take; sessions that outrun their backends wait "
+	                        "for a page. Applied when the worker starts.",
+	                        &worker_arena_pages, 64, 1, 1024 * 1024, PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable("ducklake.worker_reserved_pages", "Arena pages reserved for each dispatched query.",
+	                        "A query is admitted only once its reserved pages are free and always makes progress on "
+	                        "them; the remaining pages are a shared overflow.",
+	                        &worker_reserved_pages, 1, 1, 1024, PGC_SIGHUP, 0, NULL, NULL, NULL);
 }
 
 } // namespace pgducklake

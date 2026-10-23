@@ -14,4 +14,7 @@ void RegisterDucklakeFunctions(duckdb::DatabaseInstance &db);
  * must run in DuckDB; the C stub errors when called directly. */
 bool IsDucklakeOnlyFunction(Oid funcid);
 
+/* True if any FuncExpr or Aggref anywhere in the query is a ducklake-only function. */
+bool QueryReferencesDucklakeOnlyFunc(const Query *query);
+
 } // namespace pgducklake

@@ -1,0 +1,59 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1_count s2_count s2_sum s1_count
+step s1_count: SELECT count(*) FROM swc;
+count
+-----
+  100
+(1 row)
+
+step s2_count: SELECT count(*) FROM swc;
+count
+-----
+  100
+(1 row)
+
+step s2_sum: SELECT sum(i) FROM swc;
+ sum
+----
+5050
+(1 row)
+
+step s1_count: SELECT count(*) FROM swc;
+count
+-----
+  100
+(1 row)
+
+
+starting permutation: s1_begin s1_insert s2_count s1_commit s2_count
+step s1_begin: BEGIN;
+step s1_insert: INSERT INTO swc VALUES (101);
+step s2_count: SELECT count(*) FROM swc;
+count
+-----
+  100
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_count: SELECT count(*) FROM swc;
+count
+-----
+  101
+(1 row)
+
+
+starting permutation: s3_insert s1_count s2_sum
+step s3_insert: INSERT INTO swc VALUES (102);
+step s1_count: SELECT count(*) FROM swc;
+count
+-----
+  101
+(1 row)
+
+step s2_sum: SELECT sum(i) FROM swc;
+ sum
+----
+5152
+(1 row)
+
