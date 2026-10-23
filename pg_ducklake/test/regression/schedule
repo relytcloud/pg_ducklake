@@ -18,6 +18,7 @@ test: native_producer_semantics
 test: copy_from
 test: insert_cte
 test: insert_postgres_table
+test: insert_select_duckdb_row
 test: ctas
 test: gucs
 test: default_table_path

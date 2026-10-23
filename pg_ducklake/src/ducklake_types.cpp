@@ -54,6 +54,40 @@ LookupDucklakeType(const char *type_name, Oid *cache) {
 	return type_oid;
 }
 
+// pg_duckdb's `duckdb.row` / `duckdb.unresolved_type` (what its read_parquet() & co. return). Statements
+// we plan ourselves, such as INSERT into a DuckLake table, can contain them; InvalidOid when pg_duckdb
+// is not installed.
+static Oid
+LookupPgDuckdbType(const char *type_name, Oid *cache) {
+	if (OidIsValid(*cache))
+		return *cache;
+	Oid nsp = get_namespace_oid("duckdb", /*missing_ok=*/true);
+	if (!OidIsValid(nsp))
+		return InvalidOid;
+	Oid type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid, PointerGetDatum(type_name), ObjectIdGetDatum(nsp));
+	if (OidIsValid(type_oid))
+		*cache = type_oid;
+	return type_oid;
+}
+
+static Oid
+PgDuckdbRowOid() {
+	static Oid cached = InvalidOid;
+	return LookupPgDuckdbType("row", &cached);
+}
+
+static Oid
+PgDuckdbUnresolvedTypeOid() {
+	static Oid cached = InvalidOid;
+	return LookupPgDuckdbType("unresolved_type", &cached);
+}
+
+// True for a row type whose `r['col']` we deparse as `r.col`: ours or pg_duckdb's.
+static bool
+IsRowType(Oid type_oid) {
+	return OidIsValid(type_oid) && (type_oid == DuckdbRowOid() || type_oid == PgDuckdbRowOid());
+}
+
 Oid
 DuckdbRowOid() {
 	static Oid cached = InvalidOid;
@@ -134,7 +168,8 @@ ConvertDuckToPostgresValueHook(Oid pg_oid, duckdb::Value &value, TupleTableSlot 
 static bool
 IsFakeTypeHook(Oid type_oid) {
 	return OidIsValid(type_oid) && (type_oid == DuckdbRowOid() || type_oid == UnresolvedTypeOid() ||
-	                                type_oid == DuckdbStructOid() || type_oid == VariantOid());
+	                                type_oid == DuckdbStructOid() || type_oid == VariantOid() ||
+	                                type_oid == PgDuckdbRowOid() || type_oid == PgDuckdbUnresolvedTypeOid());
 }
 
 // Returning -1 suppresses the "::ducklake.variant" cast get_const_expr would
@@ -148,14 +183,14 @@ ShowTypeHook(Const *constval, int original_showtype) {
 
 static bool
 VarIsRowHook(Var *var) {
-	return var && var->vartype == DuckdbRowOid();
+	return var && IsRowType(var->vartype);
 }
 
 static bool
 FuncReturnsRowHook(RangeTblFunction *rtfunc) {
 	if (rtfunc && rtfunc->funcexpr && IsA(rtfunc->funcexpr, FuncExpr)) {
 		FuncExpr *fexpr = castNode(FuncExpr, rtfunc->funcexpr);
-		if (fexpr->funcresulttype == DuckdbRowOid())
+		if (IsRowType(fexpr->funcresulttype))
 			return true;
 	}
 	return false;
@@ -170,7 +205,7 @@ StripFirstSubscriptHook(SubscriptingRef *sbsref, StringInfo buf) {
 		return sbsref;
 	}
 	Var *var = (Var *)sbsref->refexpr;
-	if (var->vartype != DuckdbRowOid()) {
+	if (!IsRowType(var->vartype)) {
 		return sbsref;
 	}
 	if (sbsref->refupperindexpr == NIL) {
