@@ -342,3 +342,26 @@ BEGIN
     END IF;
 END
 $$;
+
+-- native SRF: diagnostics for the shared per-database DuckDB worker (see
+-- docs/shared_worker.md): the worker's pid, the number of dispatched queries
+-- it is running right now, and the number it has run since it started. One
+-- row; every column is NULL while no worker is registered for this database.
+-- Diagnostic API: granted to the superuser role only (below).
+CREATE FUNCTION ducklake.worker_stats()
+    RETURNS TABLE (worker_pid int, active_sessions int, total_sessions bigint)
+    LANGUAGE C VOLATILE PARALLEL RESTRICTED ROWS 1
+    AS 'MODULE_PATHNAME', 'ducklake_worker_stats';
+REVOKE ALL ON FUNCTION ducklake.worker_stats() FROM PUBLIC;
+
+DO $$
+DECLARE
+    superuser_role text := current_setting('ducklake.superuser_role');
+BEGIN
+    IF superuser_role != '' AND EXISTS (
+        SELECT FROM pg_catalog.pg_roles WHERE rolname = superuser_role
+    ) THEN
+        EXECUTE format('GRANT EXECUTE ON FUNCTION ducklake.worker_stats() TO %I', superuser_role);
+    END IF;
+END
+$$;

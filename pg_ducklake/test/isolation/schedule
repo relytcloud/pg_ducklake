@@ -22,3 +22,4 @@ test: ducklake/stats/global_stats_transactions
 test: ducklake/transaction/concurrent_table_creation
 test: ducklake/transaction/transaction_conflicts
 test: ducklake/transaction/transaction_conflicts_delete
+test: shared_worker_concurrent

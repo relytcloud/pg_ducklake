@@ -870,6 +870,12 @@ DucklakeUtilityHook(PlannedStmt *pstmt, const char *query_string, bool read_only
 } // namespace
 
 namespace pgducklake {
+
+bool
+QueryReferencesDucklakeOnlyFunc(const Query *query) {
+	return ::QueryReferencesDucklakeOnlyFunc((Node *)query, NULL);
+}
+
 void
 InitHooks() {
 	// Install planner hook after pg_duckdb (LIFO: our hook runs first).

@@ -18,4 +18,5 @@
 ## How-to Guides
 
 - [Foreign Data Wrapper](foreign_data_wrapper.md) -- access remote DuckLake catalogs (full DML) and frozen snapshots (read-only)
+- [Shared DuckDB Worker](shared_worker.md) -- run read-only queries in one DuckDB engine per database instead of one per backend
 - [Building from Source](compilation.md) -- compile and install on Ubuntu and macOS

@@ -291,3 +291,4 @@ test: ducklake/update/update_rollback
 test: ducklake/update/update_same_transaction
 test: ducklake/virtualcolumns/ducklake_snapshot_id
 test: ducklake/virtualcolumns/ducklake_virtual_columns
+test: shared_worker

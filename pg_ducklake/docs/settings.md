@@ -21,6 +21,7 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 | [`ducklake.maintenance_flush_inlined_data`](#ducklakemaintenance_flush_inlined_data) | `true` | Reload (`SIGHUP`) |
 | [`ducklake.maintenance_max_workers`](#ducklakemaintenance_max_workers) | `3` | Requires restart |
 | [`ducklake.maintenance_naptime`](#ducklakemaintenance_naptime) | `60` | Reload (`SIGHUP`) |
+| [`ducklake.max_worker_sessions`](#ducklakemax_worker_sessions) | `8` | Reload (`SIGHUP`) |
 | [`ducklake.native_writer_max_retry_count`](#ducklakenative_writer_retry_settings) | `10` | Per-session |
 | [`ducklake.native_writer_reservation_queue`](#ducklakenative_writer_reservation_queue) | `true` | Per-session |
 | [`ducklake.native_writer_reservation_queue_capacity`](#ducklakenative_writer_reservation_queue_capacity) | `256` | Requires restart; superuser only |
@@ -30,7 +31,14 @@ Use `SELECT * FROM ducklake.options()` to list all DuckLake catalog options and 
 | [`ducklake.reader_role`](#ducklakereader_role) | `"ducklake_reader"` | Requires restart |
 | [`ducklake.superuser_role`](#ducklakesuperuser_role) | `"ducklake_superuser"` | Requires restart |
 | [`ducklake.test_native_writer_fault`](#ducklaketest_native_writer_fault) | `off` | Superuser by default; test use |
+| [`ducklake.use_shared_worker`](#ducklakeuse_shared_worker) | `false` | Per-session |
 | [`ducklake.vacuum_delete_threshold`](#ducklakevacuum_delete_threshold) | `0.1` | Per-session |
+| [`ducklake.worker_arena_pages`](#ducklakeworker_arena_pages) | `64` | Reload (`SIGHUP`) |
+| [`ducklake.worker_memory_limit`](#ducklakeworker_memory_limit) | `0` | Reload (`SIGHUP`) |
+| [`ducklake.worker_page_size`](#ducklakeworker_page_size) | `1MB` | Reload (`SIGHUP`) |
+| [`ducklake.worker_reserved_pages`](#ducklakeworker_reserved_pages) | `1` | Reload (`SIGHUP`) |
+| [`ducklake.worker_temp_directory`](#ducklakeworker_temp_directory) | `""` | Reload (`SIGHUP`) |
+| [`ducklake.worker_threads`](#ducklakeworker_threads) | `-1` | Reload (`SIGHUP`) |
 | [`ducklake.writer_role`](#ducklakewriter_role) | `"ducklake_writer"` | Requires restart |
 
 ## DuckLake Catalog Options
@@ -244,6 +252,65 @@ Role with SELECT-only access to DuckLake tables. Created during `CREATE EXTENSIO
 - **Access**: Requires restart (superuser-only)
 
 See [access_control.md](access_control.md) for role usage details.
+
+### `ducklake.use_shared_worker`
+
+Run eligible read-only queries in the shared per-database DuckDB worker instead of this backend's own DuckDB instance. See [shared_worker.md](shared_worker.md) for what is dispatched and what stays in-process.
+
+- **Default**: `false`
+- **Access**: Per-session
+
+### `ducklake.max_worker_sessions`
+
+Maximum number of dispatched queries the shared worker runs concurrently. Further dispatches wait for a free session.
+
+- **Default**: `8`
+- **Range**: 1 -- 1024
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.worker_threads`
+
+Number of DuckDB threads of the shared worker's engine; `-1` uses DuckDB's default (all cores). Applied when the worker starts.
+
+- **Default**: `-1`
+- **Range**: -1 -- 1024
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.worker_memory_limit`
+
+Memory limit of the shared worker's DuckDB engine, in megabytes; `0` keeps DuckDB's default (80% of RAM). Applied when the worker starts.
+
+- **Default**: `0`
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.worker_temp_directory`
+
+DuckDB temp directory of the shared worker's engine, so it can spill to disk under its memory limit. Empty disables spilling. Applied when the worker starts.
+
+- **Default**: `""` (empty string)
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.worker_page_size`
+
+Size of one result page of the shared worker's arena. The worker writes each result chunk into a page and the dispatching backend reads it in place; a chunk that does not fit is split across pages, and a single row larger than a page is sent through the message queue instead. Applied when the worker starts.
+
+- **Default**: `1MB`
+- **Range**: `64kB` to `1GB`
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.worker_arena_pages`
+
+Number of result pages in the shared worker's arena, shared by every dispatched query of the database. Together with `ducklake.worker_page_size` it bounds the memory that results in flight can take; a query whose backend consumes slowly waits for a page instead of buffering. Applied when the worker starts.
+
+- **Default**: `64`
+- **Access**: Reload (`SIGHUP`)
+
+### `ducklake.worker_reserved_pages`
+
+Arena pages reserved for each dispatched query. A query is admitted only once that many pages are free for it, and it always makes progress on them, so a client that stops reading its result never blocks the other queries; the remaining pages of the arena are a shared overflow. Read each time a query is admitted.
+
+- **Default**: `1`
+- **Access**: Reload (`SIGHUP`)
 
 ### DuckLake Catalog Options
 
