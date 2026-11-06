@@ -62,7 +62,7 @@ SHOW ducklake.native_writer_retry_backoff;
 SHOW ducklake.threads;
  ducklake.threads 
 ------------------
- -1
+ 1
 (1 row)
 
 -- Test setting GUCs
@@ -161,7 +161,7 @@ RESET ducklake.threads;
 SHOW ducklake.threads;
  ducklake.threads 
 ------------------
- -1
+ 1
 (1 row)
 
 SHOW ducklake.enable_metadata_sync;
