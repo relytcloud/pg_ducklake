@@ -13,6 +13,16 @@ SELECT * FROM t;
 INSERT INTO t VALUES (2, 'after');
 SELECT * FROM t ORDER BY a;
 
+-- A failed catalog attach must not outlive its transaction. Inside a SAVEPOINT
+-- the attach on a fresh instance always fails; after the transaction ends, the
+-- next statement must create a new instance and attach the catalog again.
+CALL ducklake.recycle_ddb();
+BEGIN;
+SAVEPOINT s;
+SELECT * FROM t;
+ROLLBACK;
+SELECT * FROM t ORDER BY a;
+
 DROP TABLE t;
 
 -- A catalog can store a non-default data path, for example after migration to
