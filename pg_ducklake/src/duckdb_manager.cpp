@@ -113,6 +113,7 @@ DuckDBManager::OnPostInit(duckdb::ClientContext &context) {
 	pgducklake::RegisterDucklakeFunctions(*context.db);
 
 	ducklake_attach_catalog();
+	post_init_done_ = true;
 }
 
 void
@@ -237,6 +238,14 @@ DuckDBManager::Reset() {
 	instance_->last_pushed_table_path_.clear();
 	instance_->has_table_path_override_ = false;
 	instance_->table_path_override_.clear();
+	instance_->post_init_done_ = false;
+}
+
+void
+DuckDBManager::ResetIfPostInitFailed() {
+	if (instance_ && instance_->database && !instance_->post_init_done_) {
+		Reset();
+	}
 }
 
 static duckdb::Connection *
@@ -309,6 +318,14 @@ DuckLakeXactCallback_Cpp(XactEvent event) {
 		// reset would leave the gate open and silently disable the SAVEPOINT
 		// guard; every such escape ends in an abort, so close it here.
 		SetAllowSubtransaction(false);
+	}
+	if (event == XACT_EVENT_ABORT || event == XACT_EVENT_COMMIT) {
+		// Discard an instance whose initialization failed in this transaction,
+		// so the next statement creates a fresh one and attaches the catalog.
+		// COMMIT covers a failure caught by a plpgsql EXCEPTION block. Never on
+		// subtransaction abort: DuckLake runs internal subtransactions during
+		// the attach itself, and resetting there destroys the instance under it.
+		pgducklake::DuckDBManager::ResetIfPostInitFailed();
 	}
 	if (!pgducklake::DuckDBManager::IsInitialized()) {
 		return;
