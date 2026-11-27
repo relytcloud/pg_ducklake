@@ -116,10 +116,15 @@ InitGUCs() {
 	                         PGC_SUSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
-	    "ducklake.threads", "Maximum number of DuckDB threads per Postgres backend (-1 = DuckDB default, all cores).",
-	    "Takes effect when the DuckDB instance initializes; SET before the first DuckLake query in a "
-	    "session, or call ducklake.recycle_ddb() to re-apply.",
-	    &threads, -1, -1, 1024, PGC_USERSET, 0, NULL, NULL, NULL);
+	    "ducklake.threads",
+	    "Maximum number of DuckDB threads per Postgres backend (1 = single-threaded, -1 = DuckDB default, all cores).",
+	    "Defaults to 1 because DuckDB runs the metadata manager's Postgres SPI calls on its own task threads "
+	    "when it has more than one, and any extension built with pgrx (pg_parquet, vchord, pg_ripple, ...) that "
+	    "has a hook or callback registered aborts the whole server when Postgres invokes it on a thread other "
+	    "than the backend's own. Raise it only on a server where no such extension is loaded. Superuser-only, "
+	    "since a crash is reachable from it. Takes effect when the DuckDB instance initializes; SET before "
+	    "the first DuckLake query in a session, or call ducklake.recycle_ddb() to re-apply.",
+	    &threads, 1, -1, 1024, PGC_SUSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable("ducklake.enable_metadata_sync",
 	                         "Enable reverse metadata sync from DuckDB to PostgreSQL. "
