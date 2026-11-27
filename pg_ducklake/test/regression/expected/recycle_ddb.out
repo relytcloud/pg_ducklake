@@ -25,6 +25,22 @@ SELECT * FROM t ORDER BY a;
  2 | after
 (2 rows)
 
+-- A failed catalog attach must not outlive its transaction. Inside a SAVEPOINT
+-- the attach on a fresh instance always fails; after the transaction ends, the
+-- next statement must create a new instance and attach the catalog again.
+CALL ducklake.recycle_ddb();
+BEGIN;
+SAVEPOINT s;
+SELECT * FROM t;
+ERROR:  Failed to attach DuckLake catalog: Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB
+ROLLBACK;
+SELECT * FROM t ORDER BY a;
+ a |   b    
+---+--------
+ 1 | before
+ 2 | after
+(2 rows)
+
 DROP TABLE t;
 -- A catalog can store a non-default data path, for example after migration to
 -- S3. Reattaching must read that path instead of forcing the local default.

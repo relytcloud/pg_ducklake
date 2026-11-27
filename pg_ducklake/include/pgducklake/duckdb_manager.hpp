@@ -12,6 +12,9 @@ public:
 	static bool IsInitialized();
 	static DuckDBManager &Get();
 	static void Reset();
+	// Reset() if the instance was created but OnPostInit() never completed.
+	// Called at top-level transaction end.
+	static void ResetIfPostInitFailed();
 
 	// Mark cached secrets stale (next GetConnection reloads them). No-op if the
 	// instance is not yet initialized. Called from syscache invalidation.
@@ -40,6 +43,12 @@ private:
 	void LoadSecrets(duckdb::ClientContext &context);
 
 	bool secrets_valid_ = false;
+	// Set when OnPostInit() returns. Initialize() assigns `database` before it
+	// calls OnPostInit(), so an error part-way through (a cancel or timeout
+	// while attaching the DuckLake catalog) would otherwise leave an instance
+	// that counts as initialized but has no "pgducklake" catalog, and nothing
+	// would ever attach it.
+	bool post_init_done_ = false;
 	bool has_table_path_override_ = false;
 	std::string table_path_override_;
 	// Last value pushed to DuckDB's ducklake_default_table_path, so
